@@ -1,0 +1,15 @@
+{
+  "name": "accessibility-audit",
+  "version": "0.6.0",
+  "description": "Isolated evidence-backed WCAG 2.2 auditing with desktop, mobile, reflow, link and tab checks, element screenshots, and validated Excel reporting.",
+  "author": {
+    "name": "Carla Goncalves"
+  },
+  "license": "MIT",
+  "keywords": ["accessibility", "wcag", "axe", "playwright", "testing"],
+  "logo": "assets/logo.svg",
+  "skills": "./skills/",
+  "rules": "./rules/",
+  "commands": "./commands/",
+  "mcpServers": "./mcp.json"
+}

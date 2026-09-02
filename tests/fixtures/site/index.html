@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Audit fixture</title>
+    <style>
+      body { font-family: sans-serif; margin: 0; }
+      header, main { padding: 1rem; }
+      #menu[hidden] { display: none; }
+      a:focus, button:focus, input:focus { outline: 3px solid #005fcc; outline-offset: 2px; }
+      .small { width: 18px; height: 18px; padding: 0; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav aria-label="Primary">
+        <a href="/"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="></a>
+        <a id="meaningful-image-link" href="/about"><img alt="About us" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="></a>
+        <a href="/missing">Missing destination</a>
+        <div id="menu" hidden><a href="/jobs">Jobs</a></div>
+        <button id="menu-toggle" aria-expanded="false" aria-controls="menu">Menu</button>
+        <button aria-label="Search">Search</button>
+      </nav>
+    </header>
+    <main>
+      <h1>Fixture page</h1>
+      <button class="small" aria-label="Save"></button>
+      <input type="text">
+      <div id="information-tabs" role="tablist" aria-label="Information">
+        <button id="tab-first" role="tab" aria-selected="true" aria-controls="missing-panel">First</button>
+        <button id="tab-second" role="tab" aria-selected="false" tabindex="-1">Second</button>
+      </div>
+    </main>
+    <script>
+      const toggle = document.querySelector('#menu-toggle');
+      const menu = document.querySelector('#menu');
+      toggle.addEventListener('click', () => {
+        const open = toggle.getAttribute('aria-expanded') !== 'true';
+        toggle.setAttribute('aria-expanded', String(open));
+        menu.hidden = !open;
+      });
+    </script>
+  </body>
+</html>

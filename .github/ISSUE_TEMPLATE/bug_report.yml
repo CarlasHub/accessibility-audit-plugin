@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a reproducible plugin, audit, or workbook defect.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, private page content, or sensitive screenshots.
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      placeholder: 0.6.0
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Client
+      options:
+        - Cursor
+        - Claude Code
+        - Codex
+        - Terminal CLI
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem
+      description: State what happened and what should have happened.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: Include the command or tool call with secrets removed.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Relevant output
+      description: Paste a minimal, redacted error or validation result.
+      render: shell
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and Node.js version
+    validations:
+      required: true

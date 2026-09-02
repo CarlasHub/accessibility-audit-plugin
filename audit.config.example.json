@@ -1,0 +1,17 @@
+{
+  "auditor": "Automated",
+  "allowedHosts": ["preview.example.test"],
+  "stagingOnly": true,
+  "headless": true,
+  "channel": "chrome",
+  "timeoutMs": 30000,
+  "maxTabStops": 120,
+  "maxLinksPerPage": 200,
+  "concurrency": 2,
+  "captureScreenshots": true,
+  "viewports": [
+    { "name": "desktop", "width": 1440, "height": 1000 },
+    { "name": "mobile", "width": 390, "height": 844, "isMobile": true },
+    { "name": "reflow-320", "width": 320, "height": 800, "isMobile": true }
+  ]
+}

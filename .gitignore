@@ -1,0 +1,9 @@
+node_modules/
+dist/
+artifacts/
+Accessibility Audit Results/
+accessibility-audit-results/
+coverage/
+.DS_Store
+*.log
+*.tgz

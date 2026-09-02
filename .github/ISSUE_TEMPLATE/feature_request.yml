@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose a scoped improvement to the plugin.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Accessibility testing problem
+      description: Describe the concrete problem, affected workflow, and why existing behavior is insufficient.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Requested outcome
+      description: Describe observable behavior, output, or acceptance criteria.
+    validations:
+      required: true
+  - type: textarea
+    id: false_positive_risk
+    attributes:
+      label: False-positive and safety considerations
+      description: Explain how the change should distinguish confirmed, review, and manual findings.

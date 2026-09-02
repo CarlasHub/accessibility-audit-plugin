@@ -1,0 +1,19 @@
+{
+  "name": "accessibility-audit-marketplace",
+  "owner": {
+    "name": "Carla Goncalves"
+  },
+  "metadata": {
+    "description": "Private distribution catalog for the Accessibility Audit plugin."
+  },
+  "plugins": [
+    {
+      "name": "accessibility-audit",
+      "source": "./",
+      "description": "Evidence-backed WCAG 2.2 A/AA page audits with validated Excel and JSON evidence.",
+      "version": "0.6.0",
+      "category": "development",
+      "tags": ["accessibility", "wcag", "testing"]
+    }
+  ]
+}
