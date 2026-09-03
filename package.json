@@ -1,8 +1,8 @@
 {
   "name": "accessibility-audit-plugin",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "private": true,
-  "description": "Cross-platform Codex, Claude Code, Cursor, and GitHub Copilot plugin for structured WCAG 2.2 accessibility audits.",
+  "description": "Cross-platform Codex, Claude Code, Claude Desktop, Cursor, and GitHub Copilot plugin for structured WCAG 2.2 accessibility audits.",
   "author": "Carla Goncalves",
   "repository": {
     "type": "git",
@@ -19,6 +19,7 @@
     "playwright",
     "cursor-plugin",
     "claude-code-plugin",
+    "claude-desktop-plugin",
     "codex-plugin",
     "github-copilot-plugin",
     "copilot-cli-plugin"
@@ -52,6 +53,7 @@
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json",
     "build:marketplace": "npm run build && node scripts/build-marketplace-payload.mjs",
+    "package:claude-desktop": "npm run build:marketplace && node scripts/package-claude-desktop.mjs",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",

@@ -49,10 +49,13 @@ describe('user documentation', () => {
     expect(readme).toContain('--auditor "Auditor Name"');
     expect(installation).toContain('## 3A. Install in Cursor');
     expect(installation).toContain('## 3B. Install in Claude Code');
-    expect(installation).toContain('## 3C. Install in Codex');
-    expect(installation).toContain('## 3D. Install in GitHub Copilot CLI');
-    expect(installation).toContain('## 3E. Install in GitHub Copilot in VS Code');
+    expect(installation).toContain('## 3C. Install in Claude Desktop Chat');
+    expect(installation).toContain('## 3D. Install in Codex');
+    expect(installation).toContain('## 3E. Install in GitHub Copilot CLI');
+    expect(installation).toContain('## 3F. Install in GitHub Copilot in VS Code');
     expect(installation).toContain('Developer: Reload Window');
+    expect(installation).toContain('npm run package:claude-desktop');
+    expect(installation).toContain('Run Accessibility Audit');
     expect(installation).toContain('claude --plugin-dir');
     expect(installation).toContain('codex plugin marketplace add');
     expect(installation).toContain('copilot plugin marketplace add');

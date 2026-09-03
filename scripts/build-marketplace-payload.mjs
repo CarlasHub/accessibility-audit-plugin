@@ -84,7 +84,7 @@ function copilotHooks() {
 
 function payloadReadme(harness) {
   const client = harness === 'claude'
-    ? 'Claude Code'
+    ? 'Claude Code and Claude Desktop'
     : harness === 'copilot-cli'
       ? 'GitHub Copilot CLI'
       : 'GitHub Copilot in VS Code';

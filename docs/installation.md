@@ -8,6 +8,7 @@ This guide installs the Accessibility Audit plugin without adding dependencies o
 |---|---|---|
 | Cursor | Built checkout under Cursor's local plugin directory, normally by symlink | Any project opened in Cursor |
 | Claude Code | Built checkout passed with `--plugin-dir`, or a built local marketplace | Any directory from which Claude Code is started |
+| Claude Desktop Chat | Generated custom-plugin ZIP uploaded through Customize | A local Chat conversation on the computer running the plugin MCP server |
 | Codex | Built checkout registered as a local marketplace in Codex CLI | Any directory from which Codex CLI is started |
 | GitHub Copilot CLI | Generated `copilot-cli` payload installed directly or through the RAI Ops marketplace | Any directory from which Copilot CLI is started |
 | GitHub Copilot in VS Code | Generated `copilot-vscode` payload distributed through the RAI Ops marketplace | Any project opened in VS Code |
@@ -23,7 +24,7 @@ You need:
 - Git access to the private repository;
 - Node.js 22 or later;
 - npm;
-- Cursor, Claude Code, Codex CLI, or a supported GitHub Copilot client, depending on the client being tested;
+- Cursor, Claude Code, Claude Desktop, Codex CLI, or a supported GitHub Copilot client, depending on the client being tested;
 - Microsoft Excel or another OOXML-compatible application to open the generated report.
 
 Verify the basic tools:
@@ -139,7 +140,39 @@ Open `/plugin`, check the **Installed** and **Errors** tabs, and confirm that th
 
 Private Git marketplace installation uses the same marketplace name, but it is a release/distribution workflow. The user must have Git credentials that can read the private repository, and the published plugin snapshot must contain its runnable build. See the [Claude Code marketplace documentation](https://code.claude.com/docs/en/plugin-marketplaces).
 
-## 3C. Install in Codex
+## 3C. Install in Claude Desktop Chat
+
+Create the uploadable custom-plugin ZIP from the isolated plugin checkout:
+
+```sh
+npm ci
+npm run package:claude-desktop
+```
+
+The packaging command rebuilds the marketplace payload, checks the Claude manifest and required runtime files, creates a ZIP without an extra wrapper directory, validates its ZIP central directory, and writes:
+
+```text
+artifacts/accessibility-audit-claude-desktop-<version>.zip
+artifacts/accessibility-audit-claude-desktop-<version>.zip.sha256
+```
+
+Install it in Claude Desktop:
+
+1. Open **Customize** from the left sidebar.
+2. Open **Plugins**.
+3. Use the custom-plugin upload option and select the generated ZIP. Do not unzip it.
+4. Review the trust warning. The plugin runs a local MCP server and headless browser on this computer.
+5. Confirm that **Accessibility Audit** appears under personal plugins and is enabled.
+6. Start a new conversation in the **Chat** tab.
+7. Type `/`, select **Run Accessibility Audit**, add the URL or page-list path, and send the message.
+
+The plugin asks for the exact scope, auditor, and landing-page QA URL before starting. The editable auditor default is `Automated`. It writes results under `Accessibility Audit Results` in the user's home directory unless another output directory is confirmed.
+
+The plugin must be used from Claude Desktop on the computer where it is installed because its MCP server is local. It is not available from `claude.ai` on another computer. Hooks do not run in Chat, but the MCP launcher independently verifies and installs the bundled runtime before starting. An organisation administrator can disable custom plugins or local MCP servers.
+
+To verify installation, open a new Chat conversation, type `/`, and confirm that **Run Accessibility Audit** appears. If the skill appears but execution fails, inspect the plugin or connector error in **Customize → Plugins** and confirm that `node --version` reports 22 or later.
+
+## 3D. Install in Codex
 
 Use Codex CLI, not the Codex IDE extension. From a terminal, register the built checkout as a local marketplace and install the plugin:
 
@@ -164,7 +197,7 @@ Use the Accessibility Audit plugin to audit https://preview.example.test/.
 
 Codex supports local paths and configured Git marketplaces, but the local built-checkout route above is the supported developer installation for this repository. See the [official OpenAI plugin documentation](https://developers.openai.com/codex/plugins) and [plugin packaging documentation](https://developers.openai.com/plugins/build/plugins).
 
-## 3D. Install in GitHub Copilot CLI
+## 3E. Install in GitHub Copilot CLI
 
 Build and validate the generated marketplace payload from the isolated source checkout:
 
@@ -191,7 +224,7 @@ copilot plugin install accessibility-audit@radancy
 
 The first activation installs the bundled production runtime into `COPILOT_PLUGIN_DATA`; it does not add packages or files to the open project.
 
-## 3E. Install in GitHub Copilot in VS Code
+## 3F. Install in GitHub Copilot in VS Code
 
 The generated `copilot-vscode` payload follows the marketplace’s VS Code harness convention. Publish it through the RAI Ops marketplace, then use the organisation-approved plugin installation flow in VS Code. After installation:
 
@@ -258,6 +291,10 @@ Remove only the `~/.cursor/plugins/local/accessibility-audit` local-plugin entry
 /plugin uninstall accessibility-audit@accessibility-audit-marketplace
 /plugin marketplace remove accessibility-audit-marketplace
 ```
+
+### Claude Desktop Chat
+
+Open **Customize → Plugins**, locate **Accessibility Audit** under personal plugins, and use its menu to uninstall it. To update it, generate a new ZIP with `npm run package:claude-desktop`, remove the installed copy, upload the new ZIP, and start a new Chat conversation.
 
 ### Codex
 

@@ -11,7 +11,7 @@
       "name": "accessibility-audit",
       "source": "./",
       "description": "Evidence-backed WCAG 2.2 A/AA page audits with validated Excel and JSON evidence.",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "development",
       "tags": ["accessibility", "wcag", "testing"]
     }

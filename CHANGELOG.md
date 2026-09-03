@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.1 - 2026-09-03
+
+- Added a reproducible, checksum-verified Claude Desktop custom-plugin ZIP for local Chat conversations.
+- Added Claude Desktop Chat installation, activation, update, removal, and troubleshooting guidance.
+
 ## 0.9.0 - 2026-09-03
 
 - Added generated, self-contained marketplace payloads for Claude Code, GitHub Copilot CLI, and GitHub Copilot in VS Code.

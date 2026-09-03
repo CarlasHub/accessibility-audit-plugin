@@ -182,6 +182,19 @@ For a persistent local installation, add the built checkout as a Claude marketpl
 
 Remote private-marketplace publication is a separate release workflow: the user needs repository access and the published snapshot must include runnable build output. See [Installation](docs/installation.md#3b-install-in-claude-code) and the [Claude Code plugin marketplace documentation](https://code.claude.com/docs/en/plugin-marketplaces).
 
+## Claude Desktop Chat installation
+
+Build the self-contained custom-plugin file:
+
+```sh
+npm ci
+npm run package:claude-desktop
+```
+
+The command validates the archive structure and writes `artifacts/accessibility-audit-claude-desktop-<version>.zip` plus its SHA-256 file. In Claude Desktop, open **Customize**, select **Plugins**, use the custom-plugin upload option, and choose that ZIP. The ZIP contains the skill and its local MCP runtime; do not unzip it before uploading.
+
+Open a new conversation in the **Chat** tab, type `/`, select **Run Accessibility Audit**, and provide one or more explicit URLs or a supported page-list file. The local MCP server requires Node.js 22 or later on the same computer. Organisation policy may prohibit custom plugins or local MCP servers. See [Installation](docs/installation.md#3c-install-in-claude-desktop-chat) for verification, updating, and removal.
+
 ## GitHub Copilot installation
 
 The repository generates separate, marketplace-ready payloads for GitHub Copilot CLI and GitHub Copilot in VS Code. These payloads include compiled code, bundled production dependencies, skills, MCP configuration, and an isolated runtime launcher:
@@ -189,6 +202,7 @@ The repository generates separate, marketplace-ready payloads for GitHub Copilot
 ```sh
 npm ci
 npm run build:marketplace
+npm run package:claude-desktop
 npm run validate:marketplace
 npm run test:marketplace
 ```

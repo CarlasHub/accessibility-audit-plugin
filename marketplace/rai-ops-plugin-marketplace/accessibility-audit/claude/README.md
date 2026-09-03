@@ -1,10 +1,10 @@
-# Accessibility Audit for Claude Code
+# Accessibility Audit for Claude Code and Claude Desktop
 
 Accessibility Audit runs evidence-backed WCAG 2.2 A/AA checks against explicit authorized page URLs and writes a validated Excel report, JSON evidence, linked component screenshots, and a portable ZIP. It does not crawl a site or certify conformance.
 
 ## Use
 
-Ask Claude Code to use the Accessibility Audit plugin with one URL, several URLs, or one XLSX/CSV/TXT/JSON page-list file. The plugin confirms the exact scope, landing-page QA URL, and auditor before starting. The editable auditor default is `Automated`.
+Ask Claude Code and Claude Desktop to use the Accessibility Audit plugin with one URL, several URLs, or one XLSX/CSV/TXT/JSON page-list file. The plugin confirms the exact scope, landing-page QA URL, and auditor before starting. The editable auditor default is `Automated`.
 
 The audit runs headlessly at desktop, mobile, and 320px reflow sizes. It reports progress and supports graceful cancellation with partial output. A full-site audit requires a complete canonical URL list. Screen-reader, physical-device, content-meaning, and other judgment-based procedures remain guided manual checks.
 
