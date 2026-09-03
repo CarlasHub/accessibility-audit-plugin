@@ -198,6 +198,7 @@ export interface AuditSummary {
   generatedAt: string;
   auditor: string;
   source: string;
+  landingPageUrl: string;
   requestedUrls: string[];
   auditedUrls: string[];
   skippedUrls: Array<{ url: string; reason: string }>;
@@ -210,6 +211,7 @@ export interface AuditSummary {
 export interface AuditOptions {
   auditor: string;
   outputDir: string;
+  landingPageUrl?: string;
   allowedHosts: string[];
   stagingOnly: boolean;
   headless: boolean;

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
-const VERSION = '0.6.1';
+const VERSION = '0.7.0';
 
 async function json(path: string): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
@@ -16,6 +16,10 @@ describe('plugin packaging', () => {
       json('.claude-plugin/plugin.json')
     ]);
     expect(manifests.map((manifest) => manifest.version)).toEqual(Array(4).fill(VERSION));
+    const marketplace = await json('.claude-plugin/marketplace.json') as {
+      plugins?: Array<{ version?: string }>;
+    };
+    expect(marketplace.plugins?.[0]?.version).toBe(VERSION);
   });
 
   it('contains no retired screen-reader execution option in public manifests or MCP definitions', async () => {

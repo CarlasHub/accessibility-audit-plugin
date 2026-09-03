@@ -50,16 +50,26 @@ describe('evidence-gated link and tab findings', () => {
         description: 'Ensure content is contained by landmarks',
         help: 'All page content should be contained by landmarks',
         helpUrl: 'https://dequeuniversity.com/rules/axe/4.13/region',
-        nodes: [{
-          html: '<div>Content</div>',
-          target: ['#content'],
-          failureSummary: 'Some page content is not contained by landmarks'
-        }]
+        nodes: [
+          {
+            html: '<div>Content</div>',
+            target: ['#content'],
+            failureSummary: 'Some page content is not contained by landmarks'
+          },
+          {
+            html: '<aside>Related</aside>',
+            target: ['#related'],
+            failureSummary: 'Some page content is not contained by landmarks'
+          }
+        ]
       }]
     })));
     expect(findings).toHaveLength(1);
     expect(findings[0]?.classification).toBe('review');
     expect(findings[0]?.wcag).toEqual(['Best Practice']);
+    expect(findings[0]?.component).toBe('page structure');
+    expect(findings[0]?.selectors).toEqual(['#content', '#related']);
+    expect(findings[0]?.evidence.every((item) => !item.screenshot)).toBe(true);
   });
 
   it('does not duplicate axe unnamed-link and unnamed-control findings from DOM heuristics', () => {

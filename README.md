@@ -1,6 +1,6 @@
 # Accessibility Audit Plugin
 
-An isolated Codex, Claude Code, and Cursor plugin for evidence-backed WCAG 2.2 A/AA page testing. It runs headless Chromium checks at desktop, mobile, and 320 CSS-pixel reflow sizes, records deterministic and review findings separately, captures element-level screenshot evidence, and generates a validated Excel workbook plus JSON evidence.
+An isolated Codex, Claude Code, and Cursor plugin for evidence-backed WCAG 2.2 A/AA page testing. It runs headless Chromium checks at desktop, mobile, and 320 CSS-pixel reflow sizes, records deterministic and review findings separately, captures focused screenshot evidence for confirmed failures and blockers, and generates validated Excel, JSON, and portable ZIP output.
 
 This plugin is an automated testing aid, not a WCAG certification. Screen-reader, physical-device, content-meaning, visual-judgment, and other guided checks remain manual.
 
@@ -13,11 +13,11 @@ This plugin is an automated testing aid, not a WCAG certification. Screen-reader
 - Tab-component state, roving tabindex, arrow navigation, activation, and tab/panel relationship checks.
 - Conservative same-origin link validation for empty names, placeholders, missing fragments, confirmed 404/410 destinations, and server-error review signals.
 - Desktop, 390px mobile, and 320px reflow viewports.
-- Full-page screenshots plus issue-level element screenshots.
-- Embedded screenshot previews in the workbook `Image Inventory` worksheet.
+- Full-page fallback and issue-level element screenshots for confirmed failures and page blockers only.
+- Lightweight relative screenshot links in `Accessibility Report` and `Image Inventory`; images are not embedded in the workbook.
 - Graceful cancellation that writes and validates partial JSON and XLSX output.
 - URL, XLSX, CSV, TXT, and JSON page-list inputs.
-- Per-page findings by default, with cross-page consolidation only when the component implementation and root cause match.
+- One row for the same reusable component implementation and root cause across affected pages; page-specific findings remain separate.
 - Embedded instructions, command, skill, rules, MCP server, workbook template, validation, and CI checks.
 
 ## Requirements
@@ -116,7 +116,7 @@ A complete page-list file:
 /accessibility-audit /absolute/path/to/pages.xlsx
 ```
 
-The confirmation form shows the supplied pages or input file and asks for the auditor. `Automated` is the editable default. If the client does not support MCP forms, the tool returns `confirmation-required`; the agent confirms the same values in chat and retries once.
+The confirmation form shows the supplied pages or input file and asks for the landing-page QA URL and auditor. `Automated` is the editable auditor default. The landing page defaults to the first resolved URL. If the client does not support MCP forms, the tool returns `confirmation-required`; the agent confirms the same values in chat and retries once.
 
 The plugin tests only the URLs provided. It does not crawl a site or infer missing pages. To audit a complete site, provide a complete canonical URL list in XLSX, CSV, TXT, or JSON form.
 
@@ -135,6 +135,7 @@ node dist/cli.js audit \
   https://preview.example.test/ \
   https://preview.example.test/jobs \
   --auditor "Carla Goncalves" \
+  --landing-page https://preview.example.test/ \
   --output "accessibility-audit-results" \
   --allow-host preview.example.test \
   --staging-only \
@@ -150,7 +151,7 @@ node dist/cli.js audit pages.xlsx \
   --staging-only
 ```
 
-Interactive execution prints the targets, asks for the auditor, and asks for start confirmation. `--yes` accepts the supplied/default auditor and starts without prompts.
+Interactive execution prints the targets, asks for the auditor and landing-page QA URL, and asks for start confirmation. `--yes` accepts supplied/default values and starts without prompts.
 
 Progress is written to stderr. The final structured result is written to stdout.
 
@@ -159,7 +160,7 @@ Progress is written to stderr. The final structured result is written to stdout.
 - In Cursor, Claude, or Codex, press the client’s **Stop** control.
 - In a terminal, press `Ctrl+C` once.
 
-The plugin closes active Chromium work, retains completed evidence, writes `audit-results.json` and `Accessibility_Audit_Report.xlsx`, validates the partial workbook, and returns `status: "cancelled"`. Pressing `Ctrl+C` a second time exits immediately and can prevent report completion.
+The plugin closes active Chromium work, retains completed evidence, writes `audit-results.json` and `Accessibility_Audit_Report.xlsx`, validates the partial workbook, packages its files, and returns `status: "cancelled"`. Pressing `Ctrl+C` a second time exits immediately and can prevent report completion.
 
 ## Inputs
 
@@ -181,15 +182,16 @@ Generated files:
 
 - `Accessibility_Audit_Report.xlsx` — validated 32-column accessibility workbook.
 - `audit-results.json` — complete evidence, classifications, requested/completed/skipped pages, and guided checks.
-- `screenshots/*.png` — full-page viewport screenshots.
-- `screenshots/elements/*.png` — issue-level element screenshots.
+- `screenshots/*.png` — full-page fallback screenshots for pages with confirmed failures or blockers.
+- `screenshots/elements/*.png` — confirmed-failure element screenshots when the element is visible and stable.
+- `<output-directory>.zip` — portable copy of the workbook, JSON, and linked screenshot tree, written beside the output directory.
 
 Workbook worksheets:
 
-- `Accessibility Overview` — scope, auditor, methods, totals, limitations, and outstanding guided checks.
-- `Accessibility Report` — one evidence-backed finding per row unless a reusable component and root cause are proven identical.
+- `Accessibility Overview` — the single landing-page QA URL, scope, auditor, methods, totals, limitations, and outstanding guided checks.
+- `Accessibility Report` — one row per reusable component/root cause across affected pages; page-specific findings remain separate. All generated rows start as `Fail`, use an operational Assignment, and initialize Estimate to `0`.
 - `Page Inventroy` — requested/final URL, HTTP status, page title, viewport, and runtime errors.
-- `Image Inventory` — finding, page, viewport, selector, evidence type, screenshot filename, and embedded screenshot preview.
+- `Image Inventory` — finding, page, viewport, selector, evidence type, screenshot filename, and relative link to the PNG.
 - `Lookup WCAG 2.2` — hidden lookup data used by report formulas.
 
 The report contains no screen-reader worksheet or screen-reader execution result.
@@ -211,6 +213,8 @@ Link validation deliberately avoids broad crawling and destructive requests:
 - HTTP 5xx and placeholder destinations remain review items.
 - Empty link names include text, ARIA labels, valid labelled-by text, descendant image alternatives, input values, and titles before being reported.
 - Equivalent custom and axe link-name evidence is de-duplicated.
+- axe `region` best-practice nodes are summarized as one page-structure review row per page instead of one failed row per DOM node.
+- Target-size measurements are summarized as one page-specific review row across viewports; individual target measurements remain in JSON evidence.
 
 Tab checks do not report optional Home/End support as a failure. They separately test orientation-aware arrow navigation, Enter/Space or automatic activation, `aria-selected`, tabindex behavior, `aria-controls`, `tabpanel`, and `aria-labelledby` relationships. Broken references and keyboard-unreachable tabs are confirmed; non-standard but potentially operable authoring patterns remain review items.
 
@@ -221,6 +225,7 @@ Pass `--config audit.config.json`. Command-line values override the file.
 ```json
 {
   "auditor": "Automated",
+  "landingPageUrl": "https://preview.example.test/",
   "outputDir": "artifacts/client-audit",
   "allowedHosts": ["preview.example.test"],
   "stagingOnly": true,
@@ -290,7 +295,7 @@ Validate a generated workbook:
 node dist/cli.js validate accessibility-audit-results/Accessibility_Audit_Report.xlsx
 ```
 
-The integration suite runs real Chromium, verifies confirmed/review classifications, checks element screenshot capture and embedding, and tests graceful cancellation. Unit tests do not replace real browser or manual assistive-technology verification.
+The integration suite runs real Chromium, verifies confirmed/review classifications, checks focused screenshot capture and relative evidence links, validates the portable archive, and tests graceful cancellation. Unit tests do not replace real browser or manual assistive-technology verification.
 
 ## Troubleshooting
 
@@ -320,7 +325,7 @@ Inspect the JSON evidence, response status, final URL, authentication state, and
 
 ### Images are missing from Image Inventory
 
-Keep `captureScreenshots` enabled, confirm the output directory is writable, and inspect the JSON evidence path. The workbook validator fails when an evidence row lacks its embedded image.
+Keep `captureScreenshots` enabled, confirm the output directory is writable, and inspect the JSON evidence path. Screenshots are intentionally generated only for confirmed failures and page blockers. Keep the workbook beside its `screenshots` directory or use the generated ZIP so the relative links continue to work.
 
 ## Support and contribution
 

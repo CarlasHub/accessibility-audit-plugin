@@ -13,6 +13,7 @@ function summaryWithScreenshot(screenshot: string): AuditSummary {
     generatedAt: '2026-09-02T10:00:00.000Z',
     auditor: 'Carla Goncalves',
     source: 'test',
+    landingPageUrl: 'https://example.runmytests.com/en',
     requestedUrls: ['https://example.runmytests.com/en'],
     auditedUrls: ['https://example.runmytests.com/en'],
     skippedUrls: [],
@@ -50,7 +51,7 @@ function summaryWithScreenshot(screenshot: string): AuditSummary {
 }
 
 describe('Excel report', () => {
-  it('removes placeholders and screen-reader sheets, embeds Image Inventory evidence, and validates', async () => {
+  it('removes placeholders and screen-reader sheets, links lightweight evidence, and applies report defaults', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'a11y-report-'));
     const screenshot = join(directory, 'element.png');
     await writeFile(screenshot, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
@@ -71,11 +72,27 @@ describe('Excel report', () => {
     const inventory = workbook.getWorksheet('Image Inventory');
     expect(inventory?.getCell('C2').value).toBe('image-missing-alt');
     expect(inventory?.getCell('E2').value).toBe('Full-page screenshot');
-    expect(inventory?.getImages()).toHaveLength(1);
-    expect(workbook.getWorksheet('Accessibility Report')?.getCell('N2').value).toBe(
+    expect(inventory?.getImages()).toHaveLength(0);
+    expect(inventory?.getCell('H2').value).toEqual(expect.objectContaining({
+      text: 'Open screenshot',
+      hyperlink: 'element.png'
+    }));
+    const report = workbook.getWorksheet('Accessibility Report');
+    expect(report?.getCell('N2').value).toBe(
       'https://example.runmytests.com/en\nhttps://example.runmytests.com/jobs'
     );
-    expect(workbook.getWorksheet('Accessibility Overview')?.getCell('B9').value).toContain('element-level screenshot evidence');
+    expect(report?.getCell('S2').value).toEqual(expect.objectContaining({ hyperlink: 'element.png' }));
+    expect(report?.getCell('X2').value).toBe('Fail');
+    expect(report?.getCell('Y2').value).toBe('Accessibility Support');
+    expect(report?.getCell('AF2').value).toBe(0);
+    expect(report?.getCell('AF2').numFmt).toBe('0.00;-0.00;0');
+    expect(report?.getCell('AF2').dataValidation.formulae).toEqual(['=OR(AF2=0,MOD(AF2,0.25)=0)']);
+    const overview = workbook.getWorksheet('Accessibility Overview');
+    expect(overview?.getCell('B5').value).toEqual(expect.objectContaining({
+      text: 'https://example.runmytests.com/en',
+      hyperlink: 'https://example.runmytests.com/en'
+    }));
+    expect(overview?.getCell('B9').value).toContain('linked element-level evidence for confirmed failures and blockers');
   });
 
   it('states when screenshots were disabled and leaves the Image Inventory without evidence images', async () => {
@@ -83,13 +100,42 @@ describe('Excel report', () => {
     const path = join(directory, 'report.xlsx');
     const summary = summaryWithScreenshot('');
     summary.findings[0]!.evidence[0]!.screenshot = '';
+    summary.findings[0]!.classification = 'review';
+    summary.findings[0]!.assignment = 'Development';
     await writeExcelReport(summary, { outputPath: path });
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(path);
-    expect(workbook.getWorksheet('Accessibility Overview')?.getCell('B9').value).toContain('screenshots disabled for this run');
+    expect(workbook.getWorksheet('Accessibility Overview')?.getCell('B9').value).toContain('no screenshot evidence captured');
     const inventory = workbook.getWorksheet('Image Inventory');
     expect(inventory?.getCell('E2').value).toBe('Not captured');
     expect(inventory?.getImages()).toHaveLength(0);
+    const report = workbook.getWorksheet('Accessibility Report');
+    expect(report?.getCell('X2').value).toBe('Fail');
+    expect(report?.getCell('Y2').value).toBe('Implementation Queue');
+    expect(report?.getCell('AF2').value).toBe(0);
+  });
+
+  it('rejects non-Fail status and invalid estimate increments', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'a11y-report-invalid-defaults-'));
+    const path = join(directory, 'report.xlsx');
+    const summary = summaryWithScreenshot('');
+    summary.findings[0]!.evidence[0]!.screenshot = '';
+    await writeExcelReport(summary, { outputPath: path });
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(path);
+    const report = workbook.getWorksheet('Accessibility Report');
+    if (!report) throw new Error('Accessibility Report worksheet missing.');
+    report.getCell('X2').value = 'NA';
+    report.getCell('AF2').value = 0.1;
+    report.getCell('AF2').dataValidation = { type: 'custom', formulae: ['=FALSE'] };
+    await workbook.xlsx.writeFile(path);
+
+    const validation = await validateExcelReport(path);
+    expect(validation.valid).toBe(false);
+    expect(validation.errors).toContain('Status must default to Fail at row 2.');
+    expect(validation.errors).toContain('Estimate must be 0 or a non-negative 0.25 increment at row 2.');
+    expect(validation.errors).toContain('Estimate validation is missing or incorrect at row 2.');
   });
 });

@@ -13,7 +13,7 @@
 | WCAG text-spacing override | Yes | Yes | Yes | Reviewed until clipping/overlap is visually confirmed |
 | Target size | Yes | Yes | Yes | Reviewed because spacing and other exceptions apply |
 | Table and autoplay signals | Yes | Yes | Yes | Reviewed |
-| Full-page and issue-level screenshots | Yes | Yes | Yes | Evidence only; screenshots do not decide conformance |
+| Full-page fallback and issue-level screenshots | Yes | Yes | Yes | Captured only for confirmed failures and page blockers; screenshots do not decide conformance |
 
 All browser work is headless by default. Link requests run once from the desktop DOM because responsive variants normally reuse destinations and repeated requests increase side effects and false positives.
 

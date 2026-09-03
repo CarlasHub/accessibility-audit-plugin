@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import axe from 'axe-core';
@@ -11,6 +11,7 @@ import type {
   AxeViolationResult,
   DomCheckResult,
   ElementScreenshot,
+  Finding,
   PageAudit,
   ViewportAudit
 } from '../types.js';
@@ -90,29 +91,25 @@ async function runAxe(page: Page): Promise<AxeViolationResult[]> {
   return output.violations;
 }
 
-function elementScreenshotCandidates(audit: Omit<ViewportAudit, 'screenshot' | 'elementScreenshots' | 'errors'>): string[] {
+export function screenshotCandidatesForFindings(findings: Finding[]): string[] {
   const selectors = new Set<string>();
   const add = (selector?: string | null): void => { if (selector?.trim()) selectors.add(selector.trim()); };
-  for (const violation of audit.axe) for (const node of violation.nodes) for (const selector of node.target) add(selector);
-  for (const item of audit.dom.missingAltImages) add(item.selector);
-  for (const item of audit.dom.linkedImagesForReview) add(item.selector);
-  for (const item of audit.dom.emptyLinks) add(item.selector);
-  for (const item of audit.dom.emptyNamedControls) add(item.selector);
-  for (const item of audit.dom.unlabeledFields) add(item.selector);
-  for (const item of audit.dom.unnamedLandmarks) add(item.selector);
-  for (const item of audit.dom.smallTargets) add(item.selector);
-  for (const item of audit.dom.tablesForReview) add(item.selector);
-  for (const item of audit.dom.autoplayMedia) add(item.selector);
-  for (const item of audit.keyboard.sequence.filter((entry) => entry.obscured || !entry.visibleIndicator)) add(item.selector);
-  for (const item of audit.responsive.overflowElements) add(item.selector);
-  for (const item of audit.links) add(item.selector);
-  for (const item of audit.disclosures) {
-    if (item.error || item.afterExpanded === item.beforeExpanded || !item.controls || item.tabEnteredControlledRegion === false || (!item.escapeClosed && item.afterExpanded === 'true')) add(item.selector);
+  for (const finding of findings) {
+    if (finding.classification !== 'confirmed' && finding.classification !== 'blocker') continue;
+    for (const selector of finding.selectors) add(selector);
   }
-  for (const item of audit.tabs) {
-    if (item.error || !item.navigationMovedToTab || !item.activationWorked || item.structuralFailures.length || item.structuralReviews.length) add(item.selector);
-  }
-  return [...selectors].slice(0, 150);
+  return [...selectors].slice(0, 50);
+}
+
+export function needsFullPageScreenshotFallback(
+  findings: Finding[],
+  elementScreenshots: ElementScreenshot[]
+): boolean {
+  const capturedSelectors = new Set(elementScreenshots.map((item) => item.selector));
+  return findings.some((finding) =>
+    (finding.classification === 'confirmed' || finding.classification === 'blocker')
+    && (finding.selectors.length === 0 || !finding.selectors.some((selector) => capturedSelectors.has(selector)))
+  );
 }
 
 async function captureElementScreenshots(
@@ -189,24 +186,7 @@ async function auditViewport(
     const responsive = await runResponsiveChecks(page);
     const links = viewport.name === 'desktop' ? await runLinkChecks(page, options.maxLinksPerPage) : [];
     if (signal?.aborted) throw new Error(CANCELLED_REASON);
-    if (options.captureScreenshots) await page.screenshot({ path: screenshot, fullPage: true });
-    const elementScreenshots = options.captureScreenshots
-      ? await captureElementScreenshots(page, url, viewport.name, options.outputDir, elementScreenshotCandidates({
-          viewport,
-          url,
-          finalUrl,
-          status,
-          title,
-          axe: axeResults,
-          dom,
-          keyboard,
-          responsive,
-          disclosures,
-          tabs,
-          links
-        }))
-      : [];
-    return {
+    const preliminaryAudit: ViewportAudit = {
       viewport,
       url,
       finalUrl,
@@ -219,10 +199,27 @@ async function auditViewport(
       disclosures,
       tabs,
       links,
-      screenshot: options.captureScreenshots ? screenshot : '',
-      elementScreenshots,
+      screenshot: '',
+      elementScreenshots: [],
       errors
     };
+    const screenshotFindings = findingsFromPage({ url, viewports: [preliminaryAudit] })
+      .filter((finding) => finding.classification === 'confirmed' || finding.classification === 'blocker');
+    if (options.captureScreenshots && screenshotFindings.length > 0) {
+      preliminaryAudit.elementScreenshots = await captureElementScreenshots(
+        page,
+        url,
+        viewport.name,
+        options.outputDir,
+        screenshotCandidatesForFindings(screenshotFindings)
+      );
+      if (needsFullPageScreenshotFallback(screenshotFindings, preliminaryAudit.elementScreenshots)) {
+        await mkdir(resolve(options.outputDir, 'screenshots'), { recursive: true });
+        await page.screenshot({ path: screenshot, fullPage: true });
+        preliminaryAudit.screenshot = screenshot;
+      }
+    }
+    return preliminaryAudit;
   } catch (error) {
     const cancelled = Boolean(signal?.aborted);
     errors.push(cancelled ? CANCELLED_REASON : error instanceof Error ? error.message : String(error));
@@ -304,6 +301,36 @@ async function runPool<T, R>(
   return results.filter((result): result is R => result !== undefined);
 }
 
+async function screenshotFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) files.push(...await screenshotFiles(path));
+    else if (entry.isFile() && /\.png$/i.test(entry.name)) files.push(path);
+  }
+  return files;
+}
+
+async function pruneUnreferencedScreenshots(summary: AuditSummary, outputDir: string): Promise<void> {
+  const referenced = new Set(
+    summary.findings.flatMap((finding) =>
+      finding.evidence.map((item) => item.screenshot).filter((value): value is string => Boolean(value))
+    ).map((value) => resolve(value))
+  );
+  for (const page of summary.pages) {
+    for (const viewport of page.viewports) {
+      if (viewport.screenshot && !referenced.has(resolve(viewport.screenshot))) viewport.screenshot = '';
+      viewport.elementScreenshots = viewport.elementScreenshots.filter((item) => referenced.has(resolve(item.path)));
+    }
+  }
+  const files = await screenshotFiles(resolve(outputDir, 'screenshots'));
+  await Promise.all(files.filter((path) => !referenced.has(resolve(path))).map((path) => unlink(path)));
+}
+
 export async function runAudit(
   urls: string[],
   source: string,
@@ -311,7 +338,6 @@ export async function runAudit(
   options: AuditOptions,
   execution: AuditExecutionContext = {}
 ): Promise<AuditSummary> {
-  await mkdir(resolve(options.outputDir, 'screenshots'), { recursive: true });
   await emitProgress(execution, {
     phase: 'browser',
     message: `Starting ${options.headless ? 'headless' : 'headed'} browser checks for ${urls.length} page${urls.length === 1 ? '' : 's'}.`,
@@ -353,6 +379,7 @@ export async function runAudit(
     generatedAt,
     auditor: options.auditor,
     source,
+    landingPageUrl: options.landingPageUrl ?? urls[0] ?? '',
     requestedUrls: urls,
     auditedUrls: pages.filter((page) => page.viewports.some((viewport) =>
       !viewport.cancelled && (
@@ -371,6 +398,7 @@ export async function runAudit(
       'Screen-reader, physical-device, content-meaning, and judgment-based WCAG checks remain guided manual work.'
     ]
   };
+  await pruneUnreferencedScreenshots(summary, options.outputDir);
   const jsonPath = resolve(options.outputDir, 'audit-results.json');
   await writeFile(jsonPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
   await emitProgress(execution, {

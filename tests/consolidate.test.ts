@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Finding } from '../src/types.js';
+import { createSharedComponentKey } from '../src/audit/findings.js';
 import { assertRemediationOnlyNotes, consolidateFindings } from '../src/reporting/consolidate.js';
 
 function finding(url: string, sharedComponentKey?: string): Finding {
@@ -27,6 +28,14 @@ function finding(url: string, sharedComponentKey?: string): Finding {
 }
 
 describe('finding consolidation', () => {
+  it('normalizes generated relationship identifiers without merging different component content', () => {
+    const first = createSharedComponentKey('header button.menu', '<button id="menu-a1b2c3d4e5f6" aria-controls="panel-a1b2c3d4e5f6">Menu</button>');
+    const second = createSharedComponentKey('header button.menu', '<button id="menu-fedcba987654" aria-controls="panel-fedcba987654">Menu</button>');
+    const different = createSharedComponentKey('header button.menu', '<button id="menu-fedcba987654" aria-controls="panel-fedcba987654">Search</button>');
+    expect(first).toBe(second);
+    expect(first).not.toBe(different);
+  });
+
   it('merges the same reusable component and root cause and preserves both URLs', () => {
     const result = consolidateFindings([
       finding('https://test.example/a', 'site-header-logo'),
@@ -52,6 +61,15 @@ describe('finding consolidation', () => {
     second.issue = 'The image has an empty alternative despite communicating the organisation identity.';
     const result = consolidateFindings([first, second]);
     expect(result).toHaveLength(2);
+  });
+
+  it('merges the same page component and root cause even when responsive markup produces different fingerprints', () => {
+    const desktop = finding('https://test.example/a', 'desktop-component-fingerprint');
+    const mobile = finding('https://test.example/a', 'mobile-component-fingerprint');
+    mobile.viewports = ['mobile'];
+    const result = consolidateFindings([desktop, mobile]);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.viewports).toEqual(['desktop', 'mobile']);
   });
 
   it('merges the same finding across viewports on one page without a shared-component key', () => {

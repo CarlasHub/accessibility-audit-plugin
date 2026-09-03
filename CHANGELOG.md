@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 - 2026-09-03
+
+- Consolidate the same reusable component and root cause into one finding row across pages while preserving page-specific findings.
+- Collapse repeated axe `region` nodes and responsive target-size signals into one page-specific review row to reduce false-positive-looking duplication.
+- Default every populated report row to `Fail`, route Development and QA findings to `Implementation Queue`, and initialize Estimate to `0` with quarter-step validation.
+- Write one landing-page QA URL to Accessibility Overview through CLI, configuration, and MCP inputs.
+- Capture screenshot evidence only for confirmed failures and page blockers, keep images outside the workbook, and link them with portable relative hyperlinks.
+- Package each audit as a ZIP containing the workbook, JSON evidence, and screenshot tree.
+
 ## 0.6.1 - 2026-09-03
 
 - Count native associated `label` elements when checking form-control accessible names, preventing labelled controls from being reported as unnamed.

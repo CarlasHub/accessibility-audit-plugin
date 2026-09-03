@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -39,6 +39,9 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
     expect(result.findings.some((finding) => finding.ruleId === 'target-size-review')).toBe(true);
     expect(result.findings.some((finding) => finding.ruleId === 'tabs-broken-relationships')).toBe(true);
     expect(result.pages[0]?.viewports.some((viewport) => viewport.elementScreenshots.length > 0)).toBe(true);
+    expect(result.findings
+      .filter((finding) => finding.classification === 'review')
+      .every((finding) => finding.evidence.every((item) => !item.screenshot))).toBe(true);
     expect(result.pages[0]?.viewports[0]?.dom.emptyLinks.some((link) => link.selector === '#meaningful-image-link')).toBe(false);
     expect(result.pages[0]?.viewports[0]?.dom.emptyNamedControls.some((control) => control.selector === '#labelled-input')).toBe(false);
   });
@@ -81,7 +84,14 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       const evidence = JSON.parse(await readFile(result.jsonPath, 'utf8')) as { findings: Array<{ ruleId: string; evidence: Array<{ screenshot?: string }> }> };
       expect(evidence.findings.some((finding) => finding.ruleId === 'link-broken-destination')).toBe(true);
       expect(evidence.findings.some((finding) => finding.evidence.some((item) => item.screenshot?.includes('/screenshots/elements/')))).toBe(true);
+      const referencedScreenshots = new Set(evidence.findings.flatMap((finding) =>
+        finding.evidence.map((item) => item.screenshot).filter((value): value is string => Boolean(value))
+      ));
+      const generatedScreenshots = (await readdir(join(outputDir, 'screenshots'), { recursive: true }))
+        .filter((path) => /\.png$/i.test(path));
+      expect(generatedScreenshots).toHaveLength(referencedScreenshots.size);
       expect(result.reportPath).toMatch(/Accessibility_Audit_Report\.xlsx$/);
+      expect(Buffer.byteLength(await readFile(result.archivePath))).toBeGreaterThan(0);
     } finally {
       await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()));
     }
@@ -178,7 +188,8 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       const [exitCode] = await once(child, 'exit') as [number | null, NodeJS.Signals | null];
 
       expect(exitCode).toBe(130);
-      expect(stderr).toContain('Stopped safely. Partial Excel and JSON reports are available');
+      expect(stderr).toContain('Stopped safely. Partial Excel and JSON output is in');
+      expect(stderr).toContain('the portable ZIP is');
       const cliResult = JSON.parse(stdout) as { status: string; validation: { valid: boolean; auditor: string } };
       expect(cliResult.status).toBe('cancelled');
       expect(cliResult.validation.valid).toBe(true);

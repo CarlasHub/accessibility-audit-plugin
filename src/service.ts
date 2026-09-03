@@ -8,6 +8,7 @@ import { writeExcelReport } from './reporting/excel.js';
 import { collectUrls } from './urls.js';
 import { DEFAULT_REPORT_NAME } from './instructions.js';
 import { validateExcelReport, type WorkbookValidation } from './reporting/validate.js';
+import { createAuditArchive } from './reporting/archive.js';
 
 export interface AuditRequest {
   inputs: string[];
@@ -21,6 +22,7 @@ export interface AuditRunResult {
   status: AuditStatus;
   reportPath: string;
   jsonPath: string;
+  archivePath: string;
   requestedPageCount: number;
   auditedPageCount: number;
   skippedPageCount: number;
@@ -105,6 +107,11 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
   if (!validation.valid) {
     throw new Error(`Generated workbook validation failed at ${reportPath}: ${validation.errors.join(' ')}`);
   }
+  await emitProgress(execution, {
+    phase: 'reporting',
+    message: 'Packaging the workbook, JSON evidence, and linked screenshots as a portable ZIP archive.'
+  });
+  const archivePath = await createAuditArchive(options.outputDir, reportPath, jsonPath);
   const completedPageCount = summary.pages.filter((page) =>
     page.viewports.length === options.viewports.length &&
     page.viewports.every((viewport) => !viewport.cancelled)
@@ -115,6 +122,7 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
     status: summary.status,
     reportPath,
     jsonPath,
+    archivePath,
     requestedPageCount: collected.urls.length,
     auditedPageCount: summary.auditedUrls.length,
     skippedPageCount: summary.skippedUrls.length,
@@ -131,8 +139,8 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
   await emitProgress(execution, {
     phase: summary.status === 'cancelled' ? 'cancelled' : 'completed',
     message: summary.status === 'cancelled'
-      ? `Stopped safely. Partial Excel and JSON reports are available in ${options.outputDir}.`
-      : `Audit completed. Excel and JSON reports are available in ${options.outputDir}.`
+      ? `Stopped safely. Partial Excel and JSON output is in ${options.outputDir}; the portable ZIP is ${archivePath}.`
+      : `Audit completed. Excel, JSON, and linked screenshots are in ${options.outputDir}; the portable ZIP is ${archivePath}.`
   });
   return result;
 }

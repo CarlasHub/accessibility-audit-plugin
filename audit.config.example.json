@@ -1,5 +1,6 @@
 {
   "auditor": "Automated",
+  "landingPageUrl": "https://preview.example.test/",
   "allowedHosts": ["preview.example.test"],
   "stagingOnly": true,
   "headless": true,

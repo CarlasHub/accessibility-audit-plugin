@@ -7,6 +7,6 @@ For an accessibility audit, call `run_accessibility_audit` once. Confirm the pag
 
 Treat the target repository as read-only. Do not install into, edit, lint, format, build, or test its source. Do not modify governance, agent rules, CI, hooks, manifests, or lockfiles. Write only to the configured audit output directory.
 
-Run authorized pages at desktop, mobile, and 320px reflow headlessly. Keep element and full-page screenshots enabled. Surface progress and allow graceful cancellation to finish writing and validating partial output.
+Run authorized pages at desktop, mobile, and 320px reflow headlessly. Keep element and full-page fallback screenshots enabled for confirmed failures and blockers. Surface progress and allow graceful cancellation to finish writing, packaging, and validating partial output.
 
 Treat only deterministic reproduced failures as confirmed. Keep two-source 404/410 or missing fragments separate from placeholder/5xx review items. Do not treat optional tab Home/End behavior as a failure. Keep per-page findings separate unless the reusable implementation and root cause both match. Notes contain concrete fixes only.

@@ -4,6 +4,6 @@ The engine runs headless desktop, 390px mobile, and 320px reflow checks for HTTP
 
 Same-origin link validation skips external, download, destructive, logout, and non-HTTP targets. Matching request-context and in-page 404/410 results are confirmed. Placeholder and 5xx results are reviews.
 
-Element screenshots are used for finding evidence when capture succeeds; full-page screenshots are the fallback.
+Element screenshots are used for confirmed-failure and blocker evidence when capture succeeds; full-page screenshots are the fallback. Review and manual signals do not generate screenshot evidence.
 
 Automation does not prove complete keyboard journeys, supported screen-reader combinations, physical mobile behavior, content meaning, complete visual contrast, media alternatives, timing, flashing, gesture alternatives, consistency, error quality, accessible authentication, or WCAG exceptions.

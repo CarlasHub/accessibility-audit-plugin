@@ -1,5 +1,4 @@
-import { access } from 'node:fs/promises';
-import { basename, dirname, extname, resolve } from 'node:path';
+import { basename, dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ExcelJS, { type CellValue, type DataValidation, type Style, type Worksheet } from 'exceljs';
 import type { AuditSummary, Finding } from '../types.js';
@@ -57,7 +56,7 @@ function templateAssignment(finding: Finding): string {
   if (finding.assignment === 'Content') return 'Accessibility Support';
   if (finding.assignment === 'QA') return 'Implementation Queue';
   if (finding.assignment === 'Mixed') return 'Accessibility Support';
-  return 'Development Support Traffic';
+  return 'Implementation Queue';
 }
 
 function templateEffort(finding: Finding): string {
@@ -72,23 +71,28 @@ function jiraSeverity(finding: Finding): string {
   return 'Trivial';
 }
 
-function estimate(finding: Finding): number {
-  if (finding.effort === 'Small') return 1;
-  if (finding.effort === 'Medium') return 3;
-  if (finding.effort === 'Large') return 5;
-  return 1.5;
+function workbookRelativePath(outputPath: string, targetPath: string): string {
+  return relative(dirname(outputPath), resolve(targetPath))
+    .split(sep)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
 }
 
-function screenshots(finding: Finding): string {
+function screenshots(finding: Finding, outputPath: string): CellValue {
   const paths = [...new Set(finding.evidence.map((item) => item.screenshot).filter((value): value is string => Boolean(value)))];
-  return paths.length ? paths.join('\n') : 'Not captured';
+  if (!paths.length) return 'Not captured';
+  return {
+    text: paths.length === 1 ? 'Open screenshot' : `Open first screenshot (${paths.length} linked in Image Inventory)`,
+    hyperlink: workbookRelativePath(outputPath, paths[0]!),
+    tooltip: 'Open the screenshot file stored beside this workbook.'
+  };
 }
 
 function testingEnvironment(finding: Finding): string {
   return `Headless Chromium; ${finding.viewports.join(', ')}`;
 }
 
-function reportRowValues(summary: AuditSummary, finding: Finding, id: string, criteria: LookupEntry[]): CellValue[] {
+function reportRowValues(finding: Finding, id: string, criteria: LookupEntry[], outputPath: string): CellValue[] {
   const labels = [finding.classification, finding.ruleId, ...finding.wcag.map((criterion) => `WCAG ${criterion}`)].join(', ');
   return [
     id,
@@ -109,14 +113,14 @@ function reportRowValues(summary: AuditSummary, finding: Finding, id: string, cr
     testingEnvironment(finding),
     finding.issue,
     finding.testing,
-    screenshots(finding),
+    screenshots(finding, outputPath),
     finding.translationRequired,
     finding.classification === 'confirmed' || finding.classification === 'blocker'
       ? 'Confirmed issue supported by recorded evidence.'
       : 'Review issue requiring the guided manual confirmation described in Testing.',
     labels,
     finding.severity === 'Advisory' ? 'Minor' : finding.severity,
-    finding.classification === 'confirmed' || finding.classification === 'blocker' ? 'Fail' : 'NA',
+    'Fail',
     templateAssignment(finding),
     templateEffort(finding),
     jiraSeverity(finding),
@@ -124,7 +128,7 @@ function reportRowValues(summary: AuditSummary, finding: Finding, id: string, cr
     finding.classification === 'review' ? 'Need More Info' : 'Work in Progress',
     finding.remediation,
     'Not supplied',
-    estimate(finding)
+    0
   ];
 }
 
@@ -150,7 +154,7 @@ function setLookupFormula(
   };
 }
 
-async function populateInventorySheets(workbook: ExcelJS.Workbook, summary: AuditSummary): Promise<void> {
+function populateInventorySheets(workbook: ExcelJS.Workbook, summary: AuditSummary, outputPath: string): void {
   const pageSheet = workbook.getWorksheet('Page Inventroy');
   if (pageSheet) {
     pageSheet.spliceRows(1, pageSheet.rowCount);
@@ -200,21 +204,13 @@ async function populateInventorySheets(workbook: ExcelJS.Workbook, summary: Audi
         item.evidenceType,
         item.result,
         basename(item.screenshot),
-        'Embedded preview'
+        {
+          text: 'Open screenshot',
+          hyperlink: workbookRelativePath(outputPath, item.screenshot),
+          tooltip: 'Open the screenshot file stored beside this workbook.'
+        }
       ]);
-      try {
-        await access(item.screenshot);
-        const extension = extname(item.screenshot).toLowerCase() === '.jpg' || extname(item.screenshot).toLowerCase() === '.jpeg' ? 'jpeg' : 'png';
-        const imageId = workbook.addImage({ filename: item.screenshot, extension });
-        imageSheet.addImage(imageId, {
-          tl: { col: 7, row: row.number - 1 },
-          ext: { width: 240, height: 135 },
-          editAs: 'oneCell'
-        });
-        row.height = 108;
-      } catch {
-        row.getCell(8).value = 'Screenshot file unavailable';
-      }
+      row.getCell(8).font = { color: { argb: 'FF0563C1' }, underline: true };
     }
     if (imageSheet.rowCount === 1) {
       imageSheet.addRow(['All audited pages', 'All', 'N/A', 'N/A', 'Not captured', 'No finding screenshot evidence was generated.', 'N/A', 'N/A']);
@@ -223,7 +219,7 @@ async function populateInventorySheets(workbook: ExcelJS.Workbook, summary: Audi
     imageSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
     imageSheet.views = [{ state: 'frozen', ySplit: 1 }];
     imageSheet.autoFilter = { from: 'A1', to: `H${Math.max(1, imageSheet.rowCount)}` };
-    [42, 16, 28, 42, 22, 42, 32, 36].forEach((width, index) => { imageSheet.getColumn(index + 1).width = width; });
+    [42, 16, 28, 42, 22, 42, 32, 24].forEach((width, index) => { imageSheet.getColumn(index + 1).width = width; });
     imageSheet.eachRow((row) => { row.alignment = { vertical: 'top', wrapText: true }; });
   }
 }
@@ -242,8 +238,7 @@ function refreshOverviewResults(
   criteriaByFinding: Map<string, LookupEntry[]>
 ): void {
   const reportSeverity = (finding: Finding): string => finding.severity === 'Advisory' ? 'Minor' : finding.severity;
-  const failed = summary.findings.filter((finding) => finding.classification === 'confirmed' || finding.classification === 'blocker');
-  setFormulaResult(overview, 'F3', failed.length);
+  setFormulaResult(overview, 'F3', summary.findings.length);
   setFormulaResult(overview, 'G3', 0);
   (['Critical', 'Serious', 'Moderate', 'Minor'] as const).forEach((severity, index) => {
     setFormulaResult(overview, `${String.fromCharCode('H'.charCodeAt(0) + index)}3`, summary.findings.filter((finding) => reportSeverity(finding) === severity).length);
@@ -311,7 +306,7 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
     const criteria = criterionEntries(finding, lookup);
     criteriaByFinding.set(finding.key, criteria);
     const row = report.getRow(rowNumber);
-    row.values = reportRowValues(summary, finding, id, criteria);
+    row.values = reportRowValues(finding, id, criteria, options.outputPath);
     if (rowHeight !== undefined) row.height = rowHeight;
     for (let column = 1; column <= 32; column += 1) {
       row.getCell(column).style = clone(styleTemplate[column - 1] ?? {});
@@ -321,6 +316,20 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
     setLookupFormula(report, rowNumber, 'B', ['C', 'D', 'E'], criteria[0]!);
     setLookupFormula(report, rowNumber, 'F', ['G', 'H', 'I'], criteria[1]!);
     setLookupFormula(report, rowNumber, 'J', ['K', 'L', 'M'], criteria[2]!);
+    const screenshotCell = row.getCell(19);
+    if (screenshotCell.value && typeof screenshotCell.value === 'object' && 'hyperlink' in screenshotCell.value) {
+      screenshotCell.font = { ...screenshotCell.font, color: { argb: 'FF0563C1' }, underline: true };
+    }
+    const estimateCell = row.getCell(32);
+    estimateCell.numFmt = '0.00;-0.00;0';
+    estimateCell.dataValidation = {
+      type: 'custom',
+      allowBlank: false,
+      formulae: [`=OR(AF${rowNumber}=0,MOD(AF${rowNumber},0.25)=0)`],
+      showErrorMessage: true,
+      errorTitle: 'Invalid estimate',
+      error: 'Use 0 or quarter increments such as 0.25, 0.50, 0.75, or 1.00.'
+    };
     row.commit();
   });
 
@@ -328,10 +337,10 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
   report.views = [{ state: 'frozen', xSplit: 1, ySplit: 1 }];
   overview.getCell('B3').value = 'Not supplied';
   overview.getCell('B4').value = new Date(summary.generatedAt);
-  const audited = new Set(summary.auditedUrls);
-  overview.getCell('B5').value = summary.requestedUrls
-    .map((url) => audited.has(url) ? url : `${url} (not completed)`)
-    .join('\n');
+  const landingPageUrl = summary.landingPageUrl || summary.requestedUrls[0] || 'Not supplied';
+  overview.getCell('B5').value = /^https?:\/\//i.test(landingPageUrl)
+    ? { text: landingPageUrl, hyperlink: landingPageUrl }
+    : landingPageUrl;
   overview.getCell('B6').value = 'Not tested; staging URLs only';
   overview.getCell('B7').value = 'WCAG 2.2 AA (Includes Level A)';
   overview.getCell('B8').value = summary.auditor;
@@ -348,7 +357,7 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
     'disclosures',
     'tabs',
     'same-origin link validation',
-    hasScreenshotEvidence ? 'element-level screenshot evidence' : 'screenshots disabled for this run'
+    hasScreenshotEvidence ? 'linked element-level evidence for confirmed failures and blockers' : 'no screenshot evidence captured'
   ].join('; ') + '.';
   overview.getCell('B15').value = [
     ...summary.limitations,
@@ -357,7 +366,7 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
   ].join('\n');
   overview.getCell('B15').alignment = { vertical: 'top', wrapText: true };
   refreshOverviewResults(overview, summary, criteriaByFinding);
-  await populateInventorySheets(workbook, summary);
+  populateInventorySheets(workbook, summary, options.outputPath);
 
   workbook.creator = summary.auditor;
   workbook.lastModifiedBy = summary.auditor;

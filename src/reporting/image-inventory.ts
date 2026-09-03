@@ -9,7 +9,7 @@ export const IMAGE_INVENTORY_HEADERS = [
   'Evidence Type',
   'Result',
   'Screenshot File',
-  'Screenshot Preview'
+  'Screenshot Link'
 ] as const;
 
 export interface ImageEvidenceRow {

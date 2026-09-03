@@ -14,6 +14,7 @@ import { singleLineText } from './text.js';
 interface AuditCliOptions {
   config?: string;
   auditor?: string;
+  landingPage?: string;
   output?: string;
   allowHost?: string[];
   stagingOnly?: boolean;
@@ -50,7 +51,7 @@ function terminalText(value: string): string {
 }
 
 const program = new Command();
-program.name('accessibility-audit').description('Run structured WCAG 2.2 A/AA audits and generate the standard Excel report.').version('0.6.1');
+program.name('accessibility-audit').description('Run structured WCAG 2.2 A/AA audits and generate the standard Excel report.').version('0.7.0');
 
 program
   .command('audit')
@@ -58,6 +59,7 @@ program
   .argument('<inputs...>', 'URLs or input files')
   .option('-c, --config <path>', 'JSON configuration file')
   .option('--auditor <name>', 'Auditor name')
+  .option('--landing-page <url>', 'Landing-page QA URL written to Accessibility Overview')
   .option('-o, --output <directory>', 'Output directory')
   .option('--allow-host <host>', 'Allowed hostname; repeat for more than one', collect, [])
   .option('--staging-only', 'Reject hosts that do not look like staging, QA, preview, test, or local hosts')
@@ -74,12 +76,17 @@ program
   .action(async (inputs: string[], cli: AuditCliOptions, command: Command) => {
     const fileConfig = await readConfig(cli.config);
     let auditor = cli.auditor ?? fileConfig.auditor ?? DEFAULT_AUDITOR;
+    let landingPageUrl = cli.landingPage ?? fileConfig.landingPageUrl;
     if (!cli.yes && process.stdin.isTTY && process.stderr.isTTY) {
       process.stderr.write(`Pages/input to test:\n${inputs.map((input) => `  - ${terminalText(input)}`).join('\n')}\n`);
       const prompt = createInterface({ input: process.stdin, output: process.stderr });
       try {
         const answer = await prompt.question(`Auditor [${auditor}]: `);
         if (answer.trim()) auditor = answer.trim();
+        const landingPageAnswer = await prompt.question(
+          `Landing-page QA URL${landingPageUrl ? ` [${terminalText(landingPageUrl)}]` : ' [first resolved URL]'}: `
+        );
+        if (landingPageAnswer.trim()) landingPageUrl = landingPageAnswer.trim();
         const confirmation = await prompt.question('Start the headless desktop, mobile, reflow, link, keyboard, and screenshot checks? [Y/n] ');
         if (/^(n|no)$/i.test(confirmation.trim())) {
           process.stderr.write('Audit not started.\n');
@@ -93,6 +100,7 @@ program
     const options: Partial<AuditConfigInput> = {
       ...fileConfig,
       auditor,
+      ...(landingPageUrl ? { landingPageUrl } : {}),
       ...(cli.output ? { outputDir: cli.output } : {}),
       ...(cli.allowHost?.length ? { allowedHosts: cli.allowHost } : {}),
       ...(fromCommandLine('stagingOnly') ? { stagingOnly: Boolean(cli.stagingOnly) } : {}),

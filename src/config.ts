@@ -20,6 +20,7 @@ const viewportSchema = z.object({
 const configSchema = z.object({
   auditor: z.string().min(1).default(DEFAULT_AUDITOR),
   outputDir: z.string().min(1).default(DEFAULT_OUTPUT_DIR),
+  landingPageUrl: z.string().url().optional(),
   allowedHosts: z.array(z.string().min(1)).default([]),
   stagingOnly: z.boolean().default(false),
   headless: z.boolean().default(true),
@@ -40,6 +41,7 @@ export function resolveOptions(input: Partial<AuditConfigInput> = {}): AuditOpti
   return {
     auditor: parsed.auditor,
     outputDir: resolve(parsed.outputDir),
+    ...(parsed.landingPageUrl ? { landingPageUrl: parsed.landingPageUrl } : {}),
     allowedHosts: parsed.allowedHosts.map((host) => host.toLowerCase()),
     stagingOnly: parsed.stagingOnly,
     headless: parsed.headless,

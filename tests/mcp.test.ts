@@ -8,6 +8,7 @@ const completedAuditResult = {
   status: 'completed' as const,
   reportPath: '/tmp/report.xlsx',
   jsonPath: '/tmp/audit-results.json',
+  archivePath: '/tmp/accessibility-audit.zip',
   requestedPageCount: 1,
   auditedPageCount: 1,
   skippedPageCount: 0,
@@ -69,7 +70,7 @@ describe('MCP server', () => {
       expect(content?.type).toBe('text');
       if (content?.type !== 'text') throw new Error('Expected text prompt content.');
       expect(content.text).toContain('https://preview.example.test/');
-      expect(content.text).toContain('element screenshots');
+      expect(content.text).toContain('linked element screenshots');
     } finally {
       await client.close();
       await server.close();
@@ -103,10 +104,12 @@ describe('MCP server', () => {
   it('uses one accessible MCP form to confirm targets and edit the default auditor', async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     let receivedAuditor = '';
+    let receivedLandingPage = '';
     let receivedHeadless: boolean | undefined;
     const server = createAccessibilityAuditMcpServer({
       executeAudit: async (request) => {
         receivedAuditor = String(request.options?.auditor ?? '');
+        receivedLandingPage = String(request.options?.landingPageUrl ?? '');
         receivedHeadless = request.options?.headless;
         return { ...completedAuditResult, validation: { ...completedAuditResult.validation, auditor: receivedAuditor } };
       }
@@ -117,7 +120,7 @@ describe('MCP server', () => {
     );
     client.setRequestHandler(ElicitRequestSchema, async () => ({
       action: 'accept',
-      content: { auditor: 'Test Auditor', confirm: true }
+      content: { auditor: 'Test Auditor', landingPageUrl: 'https://preview.example.test/', confirm: true }
     }));
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     try {
@@ -127,6 +130,7 @@ describe('MCP server', () => {
       });
       expect(response.structuredContent).toEqual(expect.objectContaining({ status: 'completed' }));
       expect(receivedAuditor).toBe('Test Auditor');
+      expect(receivedLandingPage).toBe('https://preview.example.test/');
       expect(receivedHeadless).toBe(true);
     } finally {
       await client.close();

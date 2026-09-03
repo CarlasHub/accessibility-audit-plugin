@@ -25,13 +25,14 @@ export interface AccessibilityAuditMcpDependencies {
 export function createAccessibilityAuditMcpServer(
   dependencies: AccessibilityAuditMcpDependencies = {}
 ): McpServer {
-  const server = new McpServer({ name: 'accessibility-audit', version: '0.6.1' });
+  const server = new McpServer({ name: 'accessibility-audit', version: '0.7.0' });
   const execute = dependencies.executeAudit ?? executeAudit;
 
   const requestAuditConfirmation = async (
     targets: string[],
-    auditor: string
-  ): Promise<{ confirmed: boolean; auditor: string } | null> => {
+    auditor: string,
+    landingPageUrl?: string
+  ): Promise<{ confirmed: boolean; auditor: string; landingPageUrl?: string } | null> => {
     if (!server.server.getClientCapabilities()?.elicitation?.form) return null;
     const safeTarget = (value: string): string => singleLineText(value, 300);
     const targetSummary = targets.length <= 8
@@ -49,6 +50,12 @@ export function createAccessibilityAuditMcpServer(
             description: 'Name written to the workbook. The editable default is Automated.',
             default: auditor
           },
+          landingPageUrl: {
+            type: 'string',
+            title: 'Landing-page QA URL',
+            description: 'The single landing-page URL written to Accessibility Overview. Leave empty to use the first resolved URL.',
+            default: landingPageUrl ?? targets.find((target) => /^https?:\/\//i.test(target)) ?? ''
+          },
           confirm: {
             type: 'boolean',
             title: 'Start audit',
@@ -58,11 +65,18 @@ export function createAccessibilityAuditMcpServer(
         required: ['auditor', 'confirm']
       }
     });
-    if (response.action !== 'accept') return { confirmed: false, auditor };
+    if (response.action !== 'accept') return { confirmed: false, auditor, ...(landingPageUrl ? { landingPageUrl } : {}) };
     const confirmedAuditor = typeof response.content?.auditor === 'string' && response.content.auditor.trim()
       ? response.content.auditor.trim()
       : auditor;
-    return { confirmed: response.content?.confirm === true, auditor: confirmedAuditor };
+    const confirmedLandingPage = typeof response.content?.landingPageUrl === 'string' && response.content.landingPageUrl.trim()
+      ? response.content.landingPageUrl.trim()
+      : landingPageUrl;
+    return {
+      confirmed: response.content?.confirm === true,
+      auditor: confirmedAuditor,
+      ...(confirmedLandingPage ? { landingPageUrl: confirmedLandingPage } : {})
+    };
   };
 
   const mcpExecution = (
@@ -88,6 +102,7 @@ export function createAccessibilityAuditMcpServer(
 
   const commonInput = {
     auditor: z.string().min(1).default(DEFAULT_AUDITOR).describe('Name written to the workbook overview.'),
+    landingPageUrl: z.string().url().optional().describe('Single landing-page QA URL written to Accessibility Overview; defaults to the first resolved URL.'),
     outputDir: z.string().min(1).default(DEFAULT_OUTPUT_DIR).describe('Isolated directory for JSON, screenshots, and XLSX.'),
     allowedHosts: z.array(z.string()).default([]).describe('Exact hosts or parent domains permitted for the run.'),
     stagingOnly: z.boolean().default(false).describe('Reject hosts that do not look like staging, QA, preview, test, or local hosts.'),
@@ -97,7 +112,7 @@ export function createAccessibilityAuditMcpServer(
     timeoutMs: z.number().int().positive().default(30_000),
     maxTabStops: z.number().int().min(1).max(500).default(120),
     maxLinksPerPage: z.number().int().min(1).max(1000).default(200),
-    captureScreenshots: z.boolean().default(true).describe('Capture full-page and issue-level element screenshots and embed issue evidence in Image Inventory.'),
+    captureScreenshots: z.boolean().default(true).describe('Capture linked full-page and element screenshots only for confirmed failures and page blockers.'),
     templatePath: z.string().optional().describe('Optional replacement for the bundled Excel template.'),
     reportName: z.string().default(DEFAULT_REPORT_NAME)
   };
@@ -112,16 +127,17 @@ export function createAccessibilityAuditMcpServer(
         confirmed: z.boolean().default(false).describe('Set true only after the user confirms the page inputs and auditor. When false, compatible clients display a confirmation form.')
       }
     },
-    async ({ targets, auditor, outputDir, allowedHosts, stagingOnly, channel, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName, confirmed }, extra) => {
+    async ({ targets, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly, channel, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName, confirmed }, extra) => {
       let effectiveAuditor = auditor;
+      let effectiveLandingPageUrl = landingPageUrl;
       if (!confirmed) {
-        const confirmation = await requestAuditConfirmation(targets, auditor);
+        const confirmation = await requestAuditConfirmation(targets, auditor, landingPageUrl);
         if (confirmation === null) {
           const result = {
             status: 'confirmation-required',
             auditStarted: false,
-            proposedRun: { targets, auditor, browserMode: headless ? 'headless' : 'headed', captureScreenshots },
-            nextAction: `Confirm the listed pages and auditor (default: ${auditor}), then retry with confirmed true.`
+            proposedRun: { targets, auditor, landingPageUrl, browserMode: headless ? 'headless' : 'headed', captureScreenshots },
+            nextAction: `Confirm the listed pages, landing-page QA URL, and auditor (default: ${auditor}), then retry with confirmed true.`
           };
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], structuredContent: result };
         }
@@ -130,11 +146,13 @@ export function createAccessibilityAuditMcpServer(
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], structuredContent: result };
         }
         effectiveAuditor = confirmation.auditor;
+        effectiveLandingPageUrl = confirmation.landingPageUrl;
       }
       const result = await execute({
         inputs: targets,
         options: {
           auditor: effectiveAuditor,
+          ...(effectiveLandingPageUrl ? { landingPageUrl: effectiveLandingPageUrl } : {}),
           outputDir,
           allowedHosts,
           stagingOnly,
@@ -164,15 +182,17 @@ export function createAccessibilityAuditMcpServer(
       inputSchema: {
         targets: z.string().optional().describe('Explicit URLs or a page-list path.'),
         auditor: z.string().min(1).default(DEFAULT_AUDITOR),
+        landingPageUrl: z.string().url().optional(),
         outputDir: z.string().min(1).default(DEFAULT_OUTPUT_DIR),
         allowedHosts: z.array(z.string()).default([]),
         stagingOnly: z.boolean().optional()
       }
     },
-    async ({ targets, auditor, outputDir, allowedHosts, stagingOnly }) => {
+    async ({ targets, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly }) => {
       const instructions = buildEmbeddedAuditInstructions({
         ...(targets ? { targets } : {}),
         auditor,
+        ...(landingPageUrl ? { landingPageUrl } : {}),
         outputDir,
         allowedHosts,
         ...(stagingOnly === undefined ? {} : { stagingOnly })
@@ -181,7 +201,7 @@ export function createAccessibilityAuditMcpServer(
         content: [{ type: 'text', text: instructions }],
         structuredContent: {
           instructions,
-          defaults: { auditor, outputDir, reportName: DEFAULT_REPORT_NAME, headless: true, captureScreenshots: true },
+          defaults: { auditor, landingPageUrl, outputDir, reportName: DEFAULT_REPORT_NAME, headless: true, captureScreenshots: true },
           supportedInputs: ['urls', 'xlsx', 'csv', 'txt', 'json']
         }
       };
@@ -196,16 +216,17 @@ export function createAccessibilityAuditMcpServer(
       argsSchema: {
         targets: z.string().optional().describe('URLs or a project-relative page-list path.'),
         auditor: z.string().min(1).default(DEFAULT_AUDITOR),
+        landingPageUrl: z.string().url().optional(),
         outputDir: z.string().min(1).default(DEFAULT_OUTPUT_DIR)
       }
     },
-    async ({ targets, auditor, outputDir }) => ({
+    async ({ targets, auditor, landingPageUrl, outputDir }) => ({
       messages: [{
         role: 'user',
         content: {
           type: 'text',
           text: targets
-            ? `Call run_accessibility_audit once with targets [${JSON.stringify(targets)}], auditor ${JSON.stringify(auditor)}, and outputDir ${JSON.stringify(outputDir)}. Let the tool confirm the pages and editable auditor, then use its headless checks, progress, cancellation, link validation, element screenshots, and workbook validation.`
+            ? `Call run_accessibility_audit once with targets [${JSON.stringify(targets)}], auditor ${JSON.stringify(auditor)}, ${landingPageUrl ? `landingPageUrl ${JSON.stringify(landingPageUrl)}, ` : ''}and outputDir ${JSON.stringify(outputDir)}. Let the tool confirm the pages, landing-page QA URL, and editable auditor, then use its headless checks, progress, cancellation, link validation, linked element screenshots, and workbook validation.`
             : 'Ask for URL(s) or one XLSX/CSV/TXT/JSON page-list path, then call run_accessibility_audit once. Let the tool confirm the pages and editable default auditor before starting.'
         }
       }]
@@ -218,10 +239,10 @@ export function createAccessibilityAuditMcpServer(
       description: 'Audit explicit page URLs at desktop, mobile, and 320px reflow sizes; run axe, DOM, keyboard, link, component, and screenshot checks; consolidate repeated component defects; and write JSON plus the standard Excel workbook.',
       inputSchema: { urls: z.array(z.string().url()).min(1), ...commonInput }
     },
-    async ({ urls, auditor, outputDir, allowedHosts, stagingOnly, channel, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName }, extra) => {
+    async ({ urls, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly, channel, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName }, extra) => {
       const result = await execute({
         inputs: urls,
-        options: { auditor, outputDir, allowedHosts, stagingOnly, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, ...(channel ? { channel } : {}) },
+        options: { auditor, ...(landingPageUrl ? { landingPageUrl } : {}), outputDir, allowedHosts, stagingOnly, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, ...(channel ? { channel } : {}) },
         ...(templatePath ? { templatePath } : {}),
         reportName,
         execution: mcpExecution(extra)
@@ -236,10 +257,10 @@ export function createAccessibilityAuditMcpServer(
       description: 'Read URLs from an XLSX page list or text/CSV/JSON file, then run the full headless desktop/mobile accessibility audit and generate the standard Excel report.',
       inputSchema: { inputPath: z.string().min(1), ...commonInput }
     },
-    async ({ inputPath, auditor, outputDir, allowedHosts, stagingOnly, channel, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName }, extra) => {
+    async ({ inputPath, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly, channel, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName }, extra) => {
       const result = await execute({
         inputs: [inputPath],
-        options: { auditor, outputDir, allowedHosts, stagingOnly, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, ...(channel ? { channel } : {}) },
+        options: { auditor, ...(landingPageUrl ? { landingPageUrl } : {}), outputDir, allowedHosts, stagingOnly, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, ...(channel ? { channel } : {}) },
         ...(templatePath ? { templatePath } : {}),
         reportName,
         execution: mcpExecution(extra)
@@ -251,7 +272,7 @@ export function createAccessibilityAuditMcpServer(
   server.registerTool(
     'validate_accessibility_report',
     {
-      description: 'Verify the required workbook sheets, 32-column report, populated remediation, embedded Image Inventory evidence, auditor, and absence of placeholders or obsolete screen-reader sheets.',
+      description: 'Verify the required workbook sheets, 32-column report defaults, remediation, relative screenshot links, landing-page QA URL, auditor, and absence of placeholders or obsolete screen-reader sheets.',
       inputSchema: { workbookPath: z.string().min(1) }
     },
     async ({ workbookPath }) => {

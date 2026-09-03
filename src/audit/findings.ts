@@ -14,8 +14,19 @@ function normalizeComponent(selector: string): string {
     .slice(0, 180) || 'page';
 }
 
-function sharedComponentKey(component: string, signature: string): string {
-  return `${component}:${fingerprint(`${component}|${signature}`)}`;
+function stableComponentSignature(signature: string): string {
+  return signature
+    .replace(/\b(id|for|aria-controls|aria-labelledby|aria-describedby|aria-owns|name)\s*=\s*(["'])[^"']+\2/gi, '$1="[reference]"')
+    .replace(/"(controls|controlledBy|labelledBy|describedBy)"\s*:\s*"[^"]+"/gi, '"$1":"[reference]"')
+    .replace(/\bdata-(section|layout|component|field)[\w-]*\s*=\s*(["'])[^"']+\2/gi, 'data-$1="[reference]"')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, '[uuid]')
+    .replace(/\b([a-z][\w-]*[-_:])?[0-9a-f]{12,}\b/gi, '[generated-token]')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function createSharedComponentKey(component: string, signature: string): string {
+  return `${component}:${fingerprint(`${component}|${stableComponentSignature(signature)}`)}`;
 }
 
 function openingTagSignature(html: string): string {
@@ -50,6 +61,36 @@ function axeFindings(audit: ViewportAudit): Finding[] {
   return audit.axe.flatMap((violation: AxeViolationResult) => {
     const wcag = violation.tags.map(criterionFromTag).filter((item): item is string => Boolean(item));
     const isWcagViolation = wcag.length > 0;
+    if (violation.id === 'region' && violation.nodes.length > 0) {
+      const selectors = [...new Set(violation.nodes.flatMap((node) => node.target))];
+      return [makeFinding({
+        identity: 'region|page-structure',
+        ruleId: 'axe-region',
+        classification: 'review',
+        severity: severityFromAxe(violation.impact),
+        wcag: ['Best Practice'],
+        summary: violation.help,
+        issue: 'Rendered page content exists outside semantic landmark regions. The appropriate landmark boundaries require structural review.',
+        impact: 'Screen-reader users may have difficulty identifying and bypassing major page regions.',
+        testing: `axe-core region signalled content outside landmarks at ${audit.viewport.name}. This is a best-practice signal and requires review of the page structure. Rule: ${violation.helpUrl}`,
+        remediation: 'Place primary content inside main and repeated site regions inside appropriate semantic landmarks. Use additional named regions only when they identify meaningful page areas.',
+        component: 'page structure',
+        urls: [audit.url],
+        viewports: [audit.viewport.name],
+        selectors,
+        evidence: violation.nodes.map((node) => ({
+          kind: 'axe',
+          pageUrl: audit.url,
+          viewport: audit.viewport.name,
+          selector: node.target.join(', '),
+          detail: node.html,
+          screenshot: screenshotFor(audit, node.target[0])
+        })),
+        assignment: 'Development',
+        effort: 'Medium',
+        translationRequired: 'No'
+      })];
+    }
     return violation.nodes.map((node) => {
       const selectors = node.target.length ? node.target : ['page'];
       const component = normalizeComponent(selectors.join(' '));
@@ -65,7 +106,7 @@ function axeFindings(audit: ViewportAudit): Finding[] {
         testing: `axe-core ${violation.id} failed at ${audit.viewport.name}. ${isWcagViolation ? 'The rule maps to the listed WCAG criterion.' : 'This is an axe best-practice signal without a direct WCAG success-criterion mapping and requires review.'} Rule: ${violation.helpUrl}`,
         remediation: `${node.failureSummary?.replace(/^Fix (any|all) of the following:\s*/i, '') || `Correct the markup so it satisfies the ${violation.help} rule.`} Retest the component in every affected state.`,
         component,
-        sharedComponentKey: sharedComponentKey(component, `${violation.id}|${node.html}|${node.failureSummary ?? ''}`),
+        sharedComponentKey: createSharedComponentKey(component, `${violation.id}|${node.html}|${node.failureSummary ?? ''}`),
         urls: [audit.url],
         viewports: [audit.viewport.name],
         selectors,
@@ -181,7 +222,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       testing: 'The rendered DOM was inspected for img elements without an alt attribute.',
       remediation: 'Add concise alt text that communicates the image purpose. If the image is decorative, use alt="". For a linked logo, name the link by its destination, such as the organisation home page.',
       component: normalizeComponent(item.selector),
-      sharedComponentKey: sharedComponentKey(normalizeComponent(item.selector), item.html),
+      sharedComponentKey: createSharedComponentKey(normalizeComponent(item.selector), item.html),
       urls: [audit.url],
       viewports: [audit.viewport.name],
       selectors: [item.selector],
@@ -200,12 +241,17 @@ function domFindings(audit: ViewportAudit): Finding[] {
       severity: 'Serious',
       wcag: ['1.1.1', '2.4.4'],
       summary: 'Review the linked image accessible name',
-      issue: `${item.reason} Current name: “${item.name || 'empty'}”; image alt: “${item.alt}”; destination: ${item.href}.`,
+      issue: `${item.reason} Current name: “${item.name || 'empty'}”; image alt: “${item.alt}”.`,
       impact: 'Screen-reader and voice-control users may not understand or reliably request the link destination.',
       testing: 'The rendered accessible-name inputs for a linked image were compared with whether the link points to a home-page destination. Final wording requires content review.',
       remediation: 'Name the link by its destination and purpose, for example “Organisation careers home”. Ensure the image alt participates only once in that name and remove generic wording such as “logo” when it does not add useful purpose.',
       component: normalizeComponent(item.selector),
-      sharedComponentKey: sharedComponentKey(normalizeComponent(item.selector), JSON.stringify(item)),
+      sharedComponentKey: createSharedComponentKey(normalizeComponent(item.selector), JSON.stringify({
+        selector: item.selector,
+        name: item.name,
+        alt: item.alt,
+        reason: item.reason
+      })),
       urls: [audit.url],
       viewports: [audit.viewport.name],
       selectors: [item.selector],
@@ -244,7 +290,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       testing: 'The rendered visible link was checked for multiple accessible-name sources. Equivalent axe link-name failures are de-duplicated.',
       remediation: 'Provide concise visible link text that describes the destination. For an image-only link, provide meaningful image alternative text or label the link once without duplicating its name.',
       component: normalizeComponent(item.selector),
-      sharedComponentKey: sharedComponentKey(normalizeComponent(item.selector), item.html),
+      sharedComponentKey: createSharedComponentKey(normalizeComponent(item.selector), item.html),
       urls: [audit.url],
       viewports: [audit.viewport.name],
       selectors: [item.selector],
@@ -286,7 +332,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       testing: 'Visible focusable elements were checked for text, associated labels, aria-label, aria-labelledby, image alt, or title.',
       remediation: 'Provide a concise visible label where possible. Otherwise associate an existing visible label programmatically; use aria-label only when no visible label can be used.',
       component: normalizeComponent(item.selector),
-      sharedComponentKey: sharedComponentKey(normalizeComponent(item.selector), item.html),
+      sharedComponentKey: createSharedComponentKey(normalizeComponent(item.selector), item.html),
       urls: [audit.url],
       viewports: [audit.viewport.name],
       selectors: [item.selector],
@@ -310,7 +356,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       testing: 'Visible input, select, and textarea elements were checked for programmatic labels.',
       remediation: 'Add a persistent visible label and associate it with the field using for/id or native label wrapping. Keep instructions and required-state information available programmatically.',
       component: normalizeComponent(item.selector),
-      sharedComponentKey: sharedComponentKey(normalizeComponent(item.selector), item.html),
+      sharedComponentKey: createSharedComponentKey(normalizeComponent(item.selector), item.html),
       urls: [audit.url],
       viewports: [audit.viewport.name],
       selectors: [item.selector],
@@ -342,7 +388,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
         ? 'Update the link to a working destination or restore the missing resource or fragment target, then repeat the same link check.'
         : 'Replace placeholder destinations with a working URL, or use a native button when the control performs an action. Confirm transient server failures before changing the link.',
       component,
-      sharedComponentKey: sharedComponentKey(component, `${link.href}|${link.reason}`),
+      sharedComponentKey: createSharedComponentKey(component, `${link.href}|${link.reason}`),
       urls: [audit.url],
       viewports: [audit.viewport.name],
       selectors: [link.selector],
@@ -483,7 +529,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       severity: 'Moderate',
       wcag: ['2.5.8'],
       summary: 'Review controls smaller than 24 by 24 CSS pixels',
-      issue: `${audit.dom.smallTargets.length} visible target(s) measured below 24 CSS pixels in at least one dimension. The spacing and exception tests require manual validation.`,
+      issue: 'One or more visible targets measured below 24 CSS pixels in at least one dimension. Spacing and other WCAG exceptions require manual validation.',
       impact: 'People with limited dexterity may activate an adjacent control accidentally or be unable to select the target reliably.',
       testing: 'Rendered target bounds were measured. This is a review issue because WCAG 2.5.8 includes spacing and other exceptions.',
       remediation: 'Increase each target to at least 24 by 24 CSS pixels or provide enough unobstructed spacing to satisfy the WCAG spacing exception. Prefer larger touch areas for primary mobile controls.',
@@ -513,7 +559,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
         testing: 'The control was activated with Enter and aria-expanded was checked before and after.',
         remediation: 'Use a native button and update aria-expanded to match the visible state whenever the disclosure opens or closes.',
         component,
-        sharedComponentKey: sharedComponentKey(component, JSON.stringify(disclosure)),
+        sharedComponentKey: createSharedComponentKey(component, JSON.stringify(disclosure)),
         urls: [audit.url],
         viewports: [audit.viewport.name],
         selectors: [disclosure.selector],
@@ -536,7 +582,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
         testing: 'The disclosure trigger was inspected for aria-controls.',
         remediation: 'Give the controlled region a stable id and reference that id from aria-controls on the disclosure button. Keep aria-expanded synchronized with visibility.',
         component,
-        sharedComponentKey: sharedComponentKey(component, JSON.stringify(disclosure)),
+        sharedComponentKey: createSharedComponentKey(component, JSON.stringify(disclosure)),
         urls: [audit.url],
         viewports: [audit.viewport.name],
         selectors: [disclosure.selector],
@@ -559,7 +605,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
         testing: 'The disclosure was opened with Enter and the next Tab destination was compared with the aria-controls region. This remains a review signal because a single transition does not prove the complete focus order is illogical.',
         remediation: 'Place the trigger immediately before the revealed content in DOM order or move focus deliberately to the first relevant control when the interaction pattern requires it. Return focus predictably when closing.',
         component,
-        sharedComponentKey: sharedComponentKey(component, JSON.stringify(disclosure)),
+        sharedComponentKey: createSharedComponentKey(component, JSON.stringify(disclosure)),
         urls: [audit.url],
         viewports: [audit.viewport.name],
         selectors: [disclosure.selector],
@@ -582,7 +628,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
         testing: 'The open disclosure was focused and Escape was pressed; aria-expanded remained true.',
         remediation: 'For transient menus and popovers, support Escape to close the content and restore focus to the trigger without losing the user’s position.',
         component,
-        sharedComponentKey: sharedComponentKey(component, JSON.stringify(disclosure)),
+        sharedComponentKey: createSharedComponentKey(component, JSON.stringify(disclosure)),
         urls: [audit.url],
         viewports: [audit.viewport.name],
         selectors: [disclosure.selector],
@@ -598,7 +644,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
     const component = normalizeComponent(tab.selector);
     const common = {
       component,
-      sharedComponentKey: sharedComponentKey(component, JSON.stringify(tab)),
+      sharedComponentKey: createSharedComponentKey(component, JSON.stringify(tab)),
       urls: [audit.url],
       viewports: [audit.viewport.name],
       selectors: [tab.selector],
@@ -706,7 +752,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       testing: 'Rendered table markup was checked for header cells and a programmatic name.',
       remediation: 'Use tables only for data, provide descriptive header cells with correct scope or headers relationships, and add a caption or other programmatic name when needed.',
       component: normalizeComponent(table.selector),
-      sharedComponentKey: sharedComponentKey(normalizeComponent(table.selector), table.reason),
+      sharedComponentKey: createSharedComponentKey(normalizeComponent(table.selector), table.reason),
       urls: [audit.url],
       viewports: [audit.viewport.name],
       selectors: [table.selector],
@@ -746,5 +792,18 @@ function domFindings(audit: ViewportAudit): Finding[] {
 export function findingsFromPage(page: PageAudit): Finding[] {
   return page.viewports
     .filter((audit) => !audit.cancelled)
-    .flatMap((audit) => [...axeFindings(audit), ...domFindings(audit)]);
+    .flatMap((audit) => [...axeFindings(audit), ...domFindings(audit)])
+    .map((finding) => {
+      if (finding.classification === 'confirmed' || finding.classification === 'blocker') return finding;
+      return {
+        ...finding,
+        evidence: finding.evidence.map((item) => ({
+          kind: item.kind,
+          pageUrl: item.pageUrl,
+          ...(item.viewport ? { viewport: item.viewport } : {}),
+          ...(item.selector ? { selector: item.selector } : {}),
+          detail: item.detail
+        }))
+      };
+    });
 }

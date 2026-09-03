@@ -18,6 +18,7 @@ describe('embedded audit instructions', () => {
     });
     expect(instructions).toContain('./pages.xlsx');
     expect(instructions).toContain(`Auditor: ${DEFAULT_AUDITOR}`);
+    expect(instructions).toContain('Landing-page QA URL: [first resolved URL]');
     expect(instructions).toContain(`Output directory: ${DEFAULT_OUTPUT_DIR}`);
     expect(instructions).toContain('preview.example.test');
     expect(instructions).toContain('run headlessly by default');
@@ -30,16 +31,20 @@ describe('embedded audit instructions', () => {
     expect(instructions).toContain('Do not install dependencies in');
     expect(instructions).toContain('Do not mention Jira');
     expect(instructions).toContain('never assume the site is Unilever');
-    expect(instructions).toContain('Keep findings on separate rows per page by default');
-    expect(instructions).toContain('same reusable component implementation and the same root cause');
+    expect(instructions).toContain('Use one row for the same reusable component implementation and root cause');
+    expect(instructions).toContain('same reusable component implementation and root cause');
+    expect(instructions).toContain('set every populated Accessibility Report row to Fail');
+    expect(instructions).toContain('initialize Estimate to numeric 0');
   });
 
   it('keeps caller-supplied identity and output values', () => {
     const instructions = buildEmbeddedAuditInstructions({
       auditor: 'Another Auditor',
+      landingPageUrl: 'https://preview.example.test/',
       outputDir: 'audit-output'
     });
     expect(instructions).toContain('Auditor: Another Auditor');
+    expect(instructions).toContain('Landing-page QA URL: https://preview.example.test/');
     expect(instructions).toContain('Output directory: audit-output');
     expect(instructions).toContain('Browser mode: headless');
   });

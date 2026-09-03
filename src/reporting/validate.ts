@@ -1,3 +1,5 @@
+import { access } from 'node:fs/promises';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import ExcelJS from 'exceljs';
 import { IMAGE_INVENTORY_HEADERS, IMAGE_INVENTORY_SHEET } from './image-inventory.js';
 
@@ -22,6 +24,37 @@ function cellText(value: { text: unknown; value: unknown }): string {
   if (typeof candidate === 'string') return candidate.trim();
   if (typeof candidate === 'object' && candidate && 'result' in candidate) return String(candidate.result ?? '').trim();
   return String(candidate).trim();
+}
+
+function cellHyperlink(value: unknown): string {
+  return typeof value === 'object' && value !== null && 'hyperlink' in value
+    ? String(value.hyperlink ?? '').trim()
+    : '';
+}
+
+async function validateRelativeEvidenceLink(
+  workbookPath: string,
+  hyperlink: string,
+  location: string,
+  errors: string[]
+): Promise<void> {
+  let decoded = '';
+  try {
+    decoded = decodeURIComponent(hyperlink);
+  } catch {
+    errors.push(`${location} contains an invalid screenshot hyperlink.`);
+    return;
+  }
+  const segments = decoded.replaceAll('\\', '/').split('/');
+  if (!decoded || segments.includes('..') || isAbsolute(decoded) || /^file:/i.test(decoded) || /^[a-z]:[\\/]/i.test(decoded)) {
+    errors.push(`${location} must use a relative screenshot hyperlink.`);
+    return;
+  }
+  try {
+    await access(resolve(dirname(workbookPath), decoded));
+  } catch {
+    errors.push(`${location} points to a screenshot file that is not available beside the workbook.`);
+  }
 }
 
 export async function validateExcelReport(path: string): Promise<WorkbookValidation> {
@@ -50,6 +83,26 @@ export async function validateExcelReport(path: string): Promise<WorkbookValidat
       if (/^A11YEXP/i.test(cellText(row.getCell(1)))) errors.push(`Placeholder finding remains at row ${rowNumber}.`);
       if (!cellText(row.getCell(30))) errors.push(`Notes is empty at row ${rowNumber}.`);
       if (/jira/i.test(cellText(row.getCell(30)))) errors.push(`Notes contains a Jira reference at row ${rowNumber}.`);
+      if (cellText(row.getCell(24)) !== 'Fail') errors.push(`Status must default to Fail at row ${rowNumber}.`);
+      if (cellText(row.getCell(25)) === 'Development Support Traffic') {
+        errors.push(`Assignment uses the retired default queue at row ${rowNumber}.`);
+      }
+      const estimateValue = Number(row.getCell(32).value);
+      if (!Number.isFinite(estimateValue) || estimateValue < 0 || Math.abs(estimateValue * 4 - Math.round(estimateValue * 4)) > 1e-8) {
+        errors.push(`Estimate must be 0 or a non-negative 0.25 increment at row ${rowNumber}.`);
+      }
+      const estimateValidation = row.getCell(32).dataValidation;
+      const expectedEstimateFormula = `=OR(AF${rowNumber}=0,MOD(AF${rowNumber},0.25)=0)`;
+      if (estimateValidation.type !== 'custom' || estimateValidation.formulae?.[0] !== expectedEstimateFormula) {
+        errors.push(`Estimate validation is missing or incorrect at row ${rowNumber}.`);
+      }
+      if (row.getCell(32).numFmt !== '0.00;-0.00;0') {
+        errors.push(`Estimate number format is incorrect at row ${rowNumber}.`);
+      }
+      const reportScreenshotLink = cellHyperlink(row.getCell(19).value);
+      if (reportScreenshotLink) {
+        await validateRelativeEvidenceLink(path, reportScreenshotLink, `Accessibility Report!${row.getCell(19).address}`, errors);
+      }
       const requiredColumns = [1, 2, 6, 10, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
       for (const column of requiredColumns) {
         if (!cellText(row.getCell(column))) errors.push(`Required cell ${row.getCell(column).address} is empty.`);
@@ -74,11 +127,19 @@ export async function validateExcelReport(path: string): Promise<WorkbookValidat
       for (let column = 1; column <= IMAGE_INVENTORY_HEADERS.length; column += 1) {
         if (!cellText(row.getCell(column))) errors.push(`Required cell ${IMAGE_INVENTORY_SHEET}!${row.getCell(column).address} is empty.`);
       }
+      const screenshotLink = cellHyperlink(row.getCell(8).value);
+      if (!screenshotLink) {
+        errors.push(`${IMAGE_INVENTORY_SHEET}!${row.getCell(8).address} is not a screenshot hyperlink.`);
+      } else {
+        await validateRelativeEvidenceLink(path, screenshotLink, `${IMAGE_INVENTORY_SHEET}!${row.getCell(8).address}`, errors);
+      }
     }
     const embeddedImageCount = imageInventory.getImages().length;
-    if (imageInventoryRows > embeddedImageCount) errors.push(`${IMAGE_INVENTORY_SHEET} has ${imageInventoryRows} evidence row(s) but only ${embeddedImageCount} embedded screenshot(s).`);
+    if (embeddedImageCount > 0) errors.push(`${IMAGE_INVENTORY_SHEET} contains ${embeddedImageCount} embedded image(s); screenshot evidence must remain linked to keep the workbook lightweight.`);
   }
   const auditor = overview ? cellText(overview.getCell('B8')) : '';
   if (!auditor) errors.push('Auditor is empty in Accessibility Overview!B8.');
+  const qaUrl = overview ? cellText(overview.getCell('B5')) : '';
+  if (!/^https?:\/\/\S+$/i.test(qaUrl)) errors.push('Accessibility Overview!B5 must contain one HTTP(S) landing-page QA URL.');
   return { valid: errors.length === 0, findingRows, imageInventoryRows, errors, warnings, auditor };
 }

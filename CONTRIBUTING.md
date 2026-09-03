@@ -30,4 +30,4 @@ npm run test:integration
 npm pack --dry-run
 ```
 
-Changes to workbook output must verify required sheets, formulas, row population, Image Inventory embedding, and rendered readability.
+Changes to workbook output must verify required sheets, formulas, row population, relative Image Inventory links, absence of embedded audit images, and rendered readability.
