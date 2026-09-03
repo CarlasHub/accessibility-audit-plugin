@@ -1,6 +1,6 @@
 # Installation
 
-This guide installs the Accessibility Audit plugin without adding dependencies or configuration to the project being audited. Keep the plugin in its own permanent directory and open the unrelated project separately in Cursor, Claude Code, or Codex.
+This guide installs the Accessibility Audit plugin without adding dependencies or configuration to the project being audited. Keep the plugin in its own permanent directory and open the unrelated project separately in Cursor, Claude Code, Codex, GitHub Copilot CLI, or GitHub Copilot in VS Code.
 
 ## Choose the supported installation path
 
@@ -9,6 +9,8 @@ This guide installs the Accessibility Audit plugin without adding dependencies o
 | Cursor | Built checkout under Cursor's local plugin directory, normally by symlink | Any project opened in Cursor |
 | Claude Code | Built checkout passed with `--plugin-dir`, or a built local marketplace | Any directory from which Claude Code is started |
 | Codex | Built checkout registered as a local marketplace in Codex CLI | Any directory from which Codex CLI is started |
+| GitHub Copilot CLI | Generated `copilot-cli` payload installed directly or through the RAI Ops marketplace | Any directory from which Copilot CLI is started |
+| GitHub Copilot in VS Code | Generated `copilot-vscode` payload distributed through the RAI Ops marketplace | Any project opened in VS Code |
 
 The Codex IDE extension does not currently load plugins. Use Codex CLI or another Codex/ChatGPT surface that supports plugins.
 
@@ -21,7 +23,7 @@ You need:
 - Git access to the private repository;
 - Node.js 22 or later;
 - npm;
-- Cursor, Claude Code, or Codex CLI, depending on the client being tested;
+- Cursor, Claude Code, Codex CLI, or a supported GitHub Copilot client, depending on the client being tested;
 - Microsoft Excel or another OOXML-compatible application to open the generated report.
 
 Verify the basic tools:
@@ -42,9 +44,10 @@ Run these commands in a tools directory, not inside the application repository t
 git clone https://github.com/carla-goncalves_radancy/accessibility-audit-plugin.git accessibility-audit
 cd accessibility-audit
 npm ci
-npx playwright install chromium
 npm run build
 ```
+
+The audit automatically installs headless Playwright Chromium on first use when neither bundled Chromium nor a supported system Chrome/Edge installation is available. To prepare it before the first audit, run `npx playwright install chromium` in this plugin checkout. Use `--no-auto-install-browser` only when automatic downloads are prohibited and an approved browser is already configured.
 
 Keep this checkout after installation. The clients use it as the plugin source, and future updates are rebuilt here.
 
@@ -161,6 +164,44 @@ Use the Accessibility Audit plugin to audit https://preview.example.test/.
 
 Codex supports local paths and configured Git marketplaces, but the local built-checkout route above is the supported developer installation for this repository. See the [official OpenAI plugin documentation](https://developers.openai.com/codex/plugins) and [plugin packaging documentation](https://developers.openai.com/plugins/build/plugins).
 
+## 3D. Install in GitHub Copilot CLI
+
+Build and validate the generated marketplace payload from the isolated source checkout:
+
+```sh
+npm run build:marketplace
+npm run validate:marketplace
+npm run test:marketplace
+copilot plugin install ./marketplace/rai-ops-plugin-marketplace/accessibility-audit/copilot-cli
+copilot plugin list
+```
+
+Start Copilot CLI in an unrelated project. In an interactive session, run `/skills list` and confirm that `run-accessibility-audit` is present. Then request:
+
+```text
+Use the Accessibility Audit plugin to audit https://preview.example.test/.
+```
+
+After the RAI Ops marketplace version is published, users register that marketplace and install its entry instead of installing a local path:
+
+```sh
+copilot plugin marketplace add radancy-pe/rai-ops-plugin-marketplace
+copilot plugin install accessibility-audit@radancy
+```
+
+The first activation installs the bundled production runtime into `COPILOT_PLUGIN_DATA`; it does not add packages or files to the open project.
+
+## 3E. Install in GitHub Copilot in VS Code
+
+The generated `copilot-vscode` payload follows the marketplace’s VS Code harness convention. Publish it through the RAI Ops marketplace, then use the organisation-approved plugin installation flow in VS Code. After installation:
+
+1. Reload VS Code if the marketplace UI requests it.
+2. Confirm that `accessibility-audit-vscode` is enabled.
+3. Confirm that the `accessibility-audit` MCP server and `run-accessibility-audit` skill are available.
+4. Open any project and request an audit of explicit URLs or a page-list file.
+
+Local source installation is not presented as equivalent proof of the marketplace harness. Use `npm run test:marketplace` to verify the packaged MCP runtime and follow [Marketplace submission](marketplace-submission.md) for the eventual repository submission.
+
 ## 4. Run against a different project
 
 No plugin files need to be copied into the target project. Open or start the client in that project, then supply the page scope explicitly:
@@ -178,9 +219,11 @@ In the permanent plugin checkout:
 ```sh
 git pull --ff-only
 npm ci
-npx playwright install chromium
 npm run build
 npm run check
+npm run build:marketplace
+npm run validate:marketplace
+npm run test:marketplace
 ```
 
 Then refresh the relevant client:
@@ -193,6 +236,15 @@ Then refresh the relevant client:
 codex plugin remove accessibility-audit@accessibility-audit-marketplace
 codex plugin add accessibility-audit@accessibility-audit-marketplace
 ```
+
+- Copilot CLI local payload: rebuild it, then reinstall the local plugin because Copilot caches installed plugins:
+
+```sh
+copilot plugin uninstall accessibility-audit
+copilot plugin install ./marketplace/rai-ops-plugin-marketplace/accessibility-audit/copilot-cli
+```
+
+- Copilot marketplace: run `copilot plugin marketplace update radancy`, then `copilot plugin update accessibility-audit`.
 
 ## 6. Uninstall
 
@@ -214,6 +266,14 @@ codex plugin remove accessibility-audit@accessibility-audit-marketplace
 codex plugin marketplace remove accessibility-audit-marketplace
 ```
 
+### GitHub Copilot CLI
+
+```sh
+copilot plugin uninstall accessibility-audit
+```
+
+Marketplace administrators control Copilot in VS Code removal through the organisation-approved client workflow.
+
 Deleting the separate source checkout is optional after every client has been uninstalled.
 
 ## Troubleshooting installation
@@ -224,7 +284,7 @@ Run `npm ci` and `npm run build` in the plugin checkout. Do not run them in the 
 
 ### Chromium is missing
 
-Run this in the plugin checkout:
+Normally no manual step is required. The plugin tries bundled Chromium, Chrome, and Edge, then installs Playwright Chromium once in plugin-owned storage. If automatic installation is disabled or blocked, run this in the plugin checkout:
 
 ```sh
 npx playwright install chromium
@@ -232,13 +292,15 @@ npx playwright install chromium
 
 ### The plugin is listed but the MCP server failed
 
-Confirm that Node.js 22 or later is the version visible to the client, `dist/mcp.js` exists, and dependencies were installed in the plugin checkout. Inspect the first `accessibility-audit` MCP startup error rather than repeatedly reloading.
+For source-checkout installations, confirm that Node.js 22 or later is visible to the client, `dist/mcp.js` exists, and dependencies were installed in the plugin checkout. For generated marketplace payloads, run `npm run validate:marketplace` and `npm run test:marketplace`; the latter performs a real packaged installation and MCP handshake. Inspect the first `accessibility-audit` startup error rather than repeatedly reloading.
 
 ### The command is not visible
 
 - Cursor: reload the window, check **Customize**, and check local-plugin policy.
 - Claude Code: run `/plugin`, inspect **Installed** and **Errors**, then `/reload-plugins`.
 - Codex: run `codex plugin list`, open `/plugins`, and start a new session. Do not test in the unsupported Codex IDE extension.
+- Copilot CLI: run `copilot plugin list`, then `/skills list` in a new interactive session. Reinstall a changed local payload because Copilot caches it.
+- Copilot in VS Code: verify the organisation marketplace connection, enabled plugin, skill, and MCP server, then reload the window once.
 
 ### The plugin writes files into the target repository
 

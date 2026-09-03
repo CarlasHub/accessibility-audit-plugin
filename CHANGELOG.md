@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0 - 2026-09-03
+
+- Added generated, self-contained marketplace payloads for Claude Code, GitHub Copilot CLI, and GitHub Copilot in VS Code.
+- Added a checksum-verified, versioned runtime installer that writes only to plugin-owned data storage and never changes the audited project.
+- Added an isolated MCP launcher and marketplace package validation and smoke tests.
+- Added automatic headless Playwright Chromium installation when no supported local browser exists, with an explicit opt-out.
+- Added submission staging files and documentation for the Radancy RAI Ops plugin marketplace without modifying that marketplace repository.
+
 ## 0.8.2 - 2026-09-03
 
 - Added complete, isolated installation, activation, update, uninstall, and troubleshooting instructions for Cursor, Claude Code, and Codex.

@@ -1,8 +1,8 @@
 {
   "name": "accessibility-audit-plugin",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "private": true,
-  "description": "Cross-platform Codex, Claude Code, and Cursor plugin for structured WCAG 2.2 accessibility audits.",
+  "description": "Cross-platform Codex, Claude Code, Cursor, and GitHub Copilot plugin for structured WCAG 2.2 accessibility audits.",
   "author": "Carla Goncalves",
   "repository": {
     "type": "git",
@@ -19,7 +19,9 @@
     "playwright",
     "cursor-plugin",
     "claude-code-plugin",
-    "codex-plugin"
+    "codex-plugin",
+    "github-copilot-plugin",
+    "copilot-cli-plugin"
   ],
   "type": "module",
   "bin": {
@@ -49,6 +51,7 @@
   ],
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json",
+    "build:marketplace": "npm run build && node scripts/build-marketplace-payload.mjs",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -56,7 +59,10 @@
     "test:integration": "cross-env RUN_BROWSER_INTEGRATION=1 vitest run tests/integration.test.ts",
     "test:watch": "vitest",
     "audit": "tsx src/cli.ts audit",
-    "mcp": "tsx src/mcp.ts"
+    "mcp": "tsx src/mcp.ts",
+    "validate:marketplace": "node scripts/validate-marketplace-payload.mjs",
+    "test:marketplace": "node scripts/smoke-marketplace-payload.mjs",
+    "test:rai-marketplace": "node scripts/test-rai-ops-compatibility.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -70,6 +76,15 @@
     "exceljs": "4.4.0",
     "zod": "4.5.4"
   },
+  "bundleDependencies": [
+    "@modelcontextprotocol/sdk",
+    "@playwright/test",
+    "archiver",
+    "axe-core",
+    "commander",
+    "exceljs",
+    "zod"
+  ],
   "overrides": {
     "uuid": "11.1.1"
   },

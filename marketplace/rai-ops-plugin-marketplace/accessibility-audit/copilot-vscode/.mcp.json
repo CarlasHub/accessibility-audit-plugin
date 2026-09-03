@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "accessibility-audit": {
+      "command": "node",
+      "args": [
+        "-e",
+        "const e=process.env,r=e.CLAUDE_PLUGIN_ROOT||e.COPILOT_PLUGIN_ROOT||e.PLUGIN_ROOT||process.cwd();const n=process.platform==='win32'&&r[0]==='/'&&r[2]==='/'?r[1].toUpperCase()+':'+r.slice(2):r;e.PLUGIN_ROOT=n;import('node:url').then(u=>import(u.pathToFileURL(n+'/_runtime/bin/launch-mcp.mjs').href))"
+      ]
+    }
+  }
+}

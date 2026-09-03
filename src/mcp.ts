@@ -3,8 +3,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { REQUIRED_MANUAL_CHECKS } from './audit/manual-checks.js';
 import {
@@ -18,6 +16,7 @@ import { executeAudit } from './service.js';
 import { singleLineText } from './text.js';
 import type { AuditExecutionContext, AuditProgressEvent } from './types.js';
 import { PLUGIN_VERSION } from './version.js';
+import { isDirectInvocation } from './invocation.js';
 
 export interface AccessibilityAuditMcpDependencies {
   executeAudit?: typeof executeAudit;
@@ -32,7 +31,8 @@ export function createAccessibilityAuditMcpServer(
   const requestAuditConfirmation = async (
     targets: string[],
     auditor: string,
-    landingPageUrl?: string
+    landingPageUrl?: string,
+    autoInstallBrowser = true
   ): Promise<{ confirmed: boolean; auditor: string; landingPageUrl?: string } | null> => {
     if (!server.server.getClientCapabilities()?.elicitation?.form) return null;
     const safeTarget = (value: string): string => singleLineText(value, 300);
@@ -41,7 +41,7 @@ export function createAccessibilityAuditMcpServer(
       : `${targets.slice(0, 8).map(safeTarget).join('\n')}\n…and ${targets.length - 8} more input(s)`;
     const response = await server.server.elicitInput({
       mode: 'form',
-      message: `Confirm this headless accessibility audit. It includes desktop, mobile, 320px reflow, keyboard/component checks, same-origin link validation, and element screenshot evidence.\n\nPages/input:\n${targetSummary}`,
+      message: `Confirm this headless accessibility audit. It includes desktop, mobile, 320px reflow, keyboard/component checks, same-origin link validation, and element screenshot evidence.${autoInstallBrowser ? ' If no supported browser is available, Playwright Chromium will be installed once in plugin-owned storage.' : ''}\n\nPages/input:\n${targetSummary}`,
       requestedSchema: {
         type: 'object',
         properties: {
@@ -109,6 +109,7 @@ export function createAccessibilityAuditMcpServer(
     stagingOnly: z.boolean().default(false).describe('Reject hosts that do not look like staging, QA, preview, test, or local hosts.'),
     channel: z.string().optional().describe('Installed Playwright browser channel, for example chrome.'),
     headless: z.boolean().default(true).describe('Run Chromium without opening a visible browser window.'),
+    autoInstallBrowser: z.boolean().default(true).describe('Install Playwright Chromium automatically if neither bundled Chromium nor a supported system browser is available.'),
     concurrency: z.number().int().min(1).max(8).default(2),
     timeoutMs: z.number().int().positive().default(30_000),
     maxTabStops: z.number().int().min(1).max(500).default(120),
@@ -128,16 +129,16 @@ export function createAccessibilityAuditMcpServer(
         confirmed: z.boolean().default(false).describe('Set true only after the user confirms the page inputs and auditor. When false, compatible clients display a confirmation form.')
       }
     },
-    async ({ targets, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly, channel, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName, confirmed }, extra) => {
+    async ({ targets, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly, channel, headless, autoInstallBrowser, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName, confirmed }, extra) => {
       let effectiveAuditor = auditor;
       let effectiveLandingPageUrl = landingPageUrl;
       if (!confirmed) {
-        const confirmation = await requestAuditConfirmation(targets, auditor, landingPageUrl);
+        const confirmation = await requestAuditConfirmation(targets, auditor, landingPageUrl, autoInstallBrowser);
         if (confirmation === null) {
           const result = {
             status: 'confirmation-required',
             auditStarted: false,
-            proposedRun: { targets, auditor, landingPageUrl, browserMode: headless ? 'headless' : 'headed', captureScreenshots },
+            proposedRun: { targets, auditor, landingPageUrl, browserMode: headless ? 'headless' : 'headed', autoInstallBrowser, captureScreenshots },
             nextAction: `Confirm the listed pages, landing-page QA URL, and auditor (default: ${auditor}), then retry with confirmed true.`
           };
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], structuredContent: result };
@@ -158,6 +159,7 @@ export function createAccessibilityAuditMcpServer(
           allowedHosts,
           stagingOnly,
           headless,
+          autoInstallBrowser,
           concurrency,
           timeoutMs,
           maxTabStops,
@@ -240,10 +242,10 @@ export function createAccessibilityAuditMcpServer(
       description: 'Audit explicit page URLs at desktop, mobile, and 320px reflow sizes; run axe, DOM, keyboard, link, component, and screenshot checks; consolidate repeated component defects; and write JSON plus the standard Excel workbook.',
       inputSchema: { urls: z.array(z.string().url()).min(1), ...commonInput }
     },
-    async ({ urls, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly, channel, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName }, extra) => {
+    async ({ urls, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly, channel, headless, autoInstallBrowser, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName }, extra) => {
       const result = await execute({
         inputs: urls,
-        options: { auditor, ...(landingPageUrl ? { landingPageUrl } : {}), outputDir, allowedHosts, stagingOnly, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, ...(channel ? { channel } : {}) },
+        options: { auditor, ...(landingPageUrl ? { landingPageUrl } : {}), outputDir, allowedHosts, stagingOnly, headless, autoInstallBrowser, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, ...(channel ? { channel } : {}) },
         ...(templatePath ? { templatePath } : {}),
         reportName,
         execution: mcpExecution(extra)
@@ -258,10 +260,10 @@ export function createAccessibilityAuditMcpServer(
       description: 'Read URLs from an XLSX page list or text/CSV/JSON file, then run the full headless desktop/mobile accessibility audit and generate the standard Excel report.',
       inputSchema: { inputPath: z.string().min(1), ...commonInput }
     },
-    async ({ inputPath, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly, channel, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName }, extra) => {
+    async ({ inputPath, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly, channel, headless, autoInstallBrowser, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName }, extra) => {
       const result = await execute({
         inputs: [inputPath],
-        options: { auditor, ...(landingPageUrl ? { landingPageUrl } : {}), outputDir, allowedHosts, stagingOnly, headless, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, ...(channel ? { channel } : {}) },
+        options: { auditor, ...(landingPageUrl ? { landingPageUrl } : {}), outputDir, allowedHosts, stagingOnly, headless, autoInstallBrowser, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, ...(channel ? { channel } : {}) },
         ...(templatePath ? { templatePath } : {}),
         reportName,
         execution: mcpExecution(extra)
@@ -301,8 +303,7 @@ export function createAccessibilityAuditMcpServer(
   return server;
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
-if (import.meta.url === invokedPath) {
+if (isDirectInvocation(import.meta.url, process.argv[1])) {
   const server = createAccessibilityAuditMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);

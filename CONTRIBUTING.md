@@ -27,7 +27,13 @@ Before opening a pull request:
 ```sh
 npm run check
 npm run test:integration
+npm run build:marketplace
+npm run validate:marketplace
+npm run test:marketplace
+npm run test:rai-marketplace
 npm pack --dry-run
 ```
+
+Generated files under `marketplace/rai-ops-plugin-marketplace/accessibility-audit` must be produced by `npm run build:marketplace`, not edited manually. Keep the source version, client manifests, catalog fragments, install manifest, checksum, and packaged runtime aligned. The marketplace smoke test proves packaged installation and MCP protocol startup; it does not prove that Claude, Cursor, Codex, or Copilot client UI integrations behave correctly.
 
 Changes to workbook output must verify required sheets, formulas, row population, relative Image Inventory links, absence of embedded audit images, and rendered readability.

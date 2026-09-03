@@ -242,6 +242,7 @@ export interface AuditOptions {
   allowedHosts: string[];
   stagingOnly: boolean;
   headless: boolean;
+  autoInstallBrowser: boolean;
   channel?: string;
   executablePath?: string;
   timeoutMs: number;

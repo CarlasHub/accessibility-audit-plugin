@@ -1,8 +1,8 @@
 # Accessibility Audit Plugin
 
-An isolated Codex, Claude Code, and Cursor plugin that helps teams find and document web accessibility barriers. Give it one or more page URLs—or a file containing URLs—and it runs repeatable checks in a headless browser, then produces an Excel report, detailed JSON evidence, and a portable ZIP.
+An isolated Codex, Claude Code, Cursor, GitHub Copilot CLI, and GitHub Copilot in VS Code plugin that helps teams find and document web accessibility barriers. Give it one or more page URLs—or a file containing URLs—and it runs repeatable checks in a headless browser, then produces an Excel report, detailed JSON evidence, and a portable ZIP.
 
-You do not need to know WCAG terminology to run the plugin. Start with the workflow below, use the [installation guide](docs/installation.md) for Cursor, Claude Code, or Codex, then use the [plain-language user guide](docs/user-guide.md) and [WCAG basics](docs/wcag-basics.md) to understand the results.
+You do not need to know WCAG terminology to run the plugin. Start with the workflow below, use the [installation guide](docs/installation.md) for your client, then use the [plain-language user guide](docs/user-guide.md) and [WCAG basics](docs/wcag-basics.md) to understand the results.
 
 > **Important:** this plugin is an automated testing aid, not a WCAG certification. A report with no automated findings does not prove that a page is accessible. Screen-reader, physical-device, content-meaning, visual-judgment, and other guided checks remain manual. W3C likewise states that no evaluation tool alone can determine whether a site meets accessibility standards.
 
@@ -11,7 +11,7 @@ You do not need to know WCAG terminology to run the plugin. Start with the workf
 If the plugin is already installed:
 
 1. Decide which pages are in scope. The plugin tests only the URLs you supply; it does not discover or crawl a whole site.
-2. In Cursor or Claude Code, run `/accessibility-audit` with one URL, several URLs, or a page-list file. In Codex, ask it to use the Accessibility Audit plugin with the same input.
+2. In Cursor or Claude Code, run `/accessibility-audit` with one URL, several URLs, or a page-list file. In Codex or Copilot, ask it to use the Accessibility Audit plugin with the same input.
 3. Check the confirmation form. It shows the input, the auditor name, and the landing-page QA URL before testing starts.
 4. Let the headless audit finish, or stop it safely if needed. Progress appears in the editor or terminal.
 5. Extract the generated ZIP and open `Accessibility_Audit_Report.xlsx`. Keep the workbook and `screenshots` folder together so its evidence links continue to work.
@@ -34,7 +34,7 @@ Every page in a prepared list:
 /accessibility-audit pages.xlsx
 ```
 
-Equivalent Codex request:
+Equivalent request in Codex or Copilot:
 
 ```text
 Use the Accessibility Audit plugin to audit every URL in pages.xlsx.
@@ -85,6 +85,7 @@ See [Understanding the report](docs/reporting.md) for a worksheet and column gui
 ## Features
 
 - Headless Playwright Chromium execution with visible terminal or MCP progress.
+- Automatic one-time installation of headless Playwright Chromium when no supported browser is available; runtime and browser files stay in plugin-owned storage.
 - axe-core WCAG 2.2 A/AA rules plus selected best-practice signals, which remain review items when no WCAG success criterion is mapped.
 - DOM and semantic checks for page structure, image alternatives, controls, fields, landmarks, duplicate ids, tables, and media.
 - Sequential keyboard traversal, focus visibility review, focus obscuration checks, and disclosure interaction tests.
@@ -98,13 +99,13 @@ See [Understanding the report](docs/reporting.md) for a worksheet and column gui
 - Graceful cancellation that writes and validates partial JSON and XLSX output.
 - URL, XLSX, CSV, TXT, and JSON page-list inputs.
 - One row for the same reusable component implementation, rendered name, and root cause across affected pages; generic unnamed controls also require the same rendered location, and page-specific findings remain separate.
-- Embedded instructions, command, skill, rules, MCP server, workbook template, validation, and CI checks.
+- Embedded instructions, command, skill, rules, MCP server, workbook template, validation, CI checks, and generated marketplace payloads for Claude and GitHub Copilot.
 
 ## Requirements
 
 - Node.js 22 or later.
 - npm.
-- A Playwright-supported Chromium installation. The setup command below can install the bundled Chromium runtime.
+- A Playwright-supported Chromium installation. If none is present, the plugin installs headless Playwright Chromium once after audit confirmation unless automatic installation is disabled.
 - Microsoft Excel or another OOXML-compatible reader for the generated workbook.
 
 No screen-reader package or operating-system accessibility permission is required.
@@ -117,8 +118,13 @@ Clone the plugin into its own directory. Do not install its dependencies inside 
 git clone https://github.com/carla-goncalves_radancy/accessibility-audit-plugin.git accessibility-audit
 cd accessibility-audit
 npm ci
-npx playwright install chromium
 npm run build
+```
+
+Installing Chromium during development is optional but avoids the first-run download:
+
+```sh
+npx playwright install chromium
 ```
 
 The `dist/` directory is produced by `npm run build` and is intentionally not committed.
@@ -176,6 +182,26 @@ For a persistent local installation, add the built checkout as a Claude marketpl
 
 Remote private-marketplace publication is a separate release workflow: the user needs repository access and the published snapshot must include runnable build output. See [Installation](docs/installation.md#3b-install-in-claude-code) and the [Claude Code plugin marketplace documentation](https://code.claude.com/docs/en/plugin-marketplaces).
 
+## GitHub Copilot installation
+
+The repository generates separate, marketplace-ready payloads for GitHub Copilot CLI and GitHub Copilot in VS Code. These payloads include compiled code, bundled production dependencies, skills, MCP configuration, and an isolated runtime launcher:
+
+```sh
+npm ci
+npm run build:marketplace
+npm run validate:marketplace
+npm run test:marketplace
+```
+
+For local Copilot CLI verification, install the generated CLI payload directly:
+
+```sh
+copilot plugin install ./marketplace/rai-ops-plugin-marketplace/accessibility-audit/copilot-cli
+copilot plugin list
+```
+
+For team distribution, use the staged payload and catalog fragments documented in [Marketplace submission](docs/marketplace-submission.md). No marketplace repository is modified by the build command.
+
 ## Codex installation
 
 The Codex manifest is [.codex-plugin/plugin.json](.codex-plugin/plugin.json), and the MCP server is declared in [.mcp.json](.mcp.json). Register the separate built checkout as a local marketplace, install it, and start a new session:
@@ -190,7 +216,7 @@ In Codex CLI, enter `/plugins` to open the plugin browser. See [Installation](do
 
 The Codex IDE extension does not currently support plugins. Use Codex CLI or another supported Codex/ChatGPT plugin surface. See the [official OpenAI plugin documentation](https://developers.openai.com/codex/plugins).
 
-## Run an audit in Cursor or Claude
+## Run an audit in Cursor, Claude, or Copilot
 
 Use the bundled command:
 
@@ -251,7 +277,7 @@ Progress is written to stderr. The final structured result is written to stdout.
 
 ### Stop an audit safely
 
-- In Cursor, Claude, or Codex, press the client’s **Stop** control.
+- In Cursor, Claude, Codex, or Copilot, press the client’s **Stop** control.
 - In a terminal, press `Ctrl+C` once.
 
 The plugin closes active Chromium work, retains completed evidence, writes `audit-results.json` and `Accessibility_Audit_Report.xlsx`, validates the partial workbook, packages its files, and returns `status: "cancelled"`. Pressing `Ctrl+C` a second time exits immediately and can prevent report completion.
@@ -325,7 +351,7 @@ Pass `--config audit.config.json`. Command-line values override the file.
   "allowedHosts": ["preview.example.test"],
   "stagingOnly": true,
   "headless": true,
-  "channel": "chrome",
+  "autoInstallBrowser": true,
   "concurrency": 2,
   "timeoutMs": 30000,
   "maxTabStops": 120,
@@ -363,7 +389,7 @@ Use `list_guided_manual_checks`, the workbook Overview, and [docs/manual-verific
 ## Security and isolation
 
 - The target repository is read-only. The plugin does not edit source, governance files, agent rules, CI, hooks, manifests, or lockfiles.
-- Dependencies are installed in the plugin directory, not the audited project.
+- Source-checkout dependencies stay in the plugin directory. Marketplace runtime dependencies and downloaded browsers stay in client-owned plugin data, never in the audited project.
 - Output is written only to the configured audit directory.
 - Only explicitly supplied URLs are audited.
 - Visible consent banners are dismissed before component checks and screenshot capture. The Page Inventory and JSON state whether a banner was found, which action was used, and whether it was dismissed.
@@ -382,6 +408,9 @@ npm run typecheck
 npm test
 npm run build
 npm run test:integration
+npm run build:marketplace
+npm run validate:marketplace
+npm run test:marketplace
 npm pack --dry-run
 ```
 
@@ -399,17 +428,13 @@ The integration suite runs real Chromium, verifies confirmed/review classificati
 
 1. Run `npm ci` and `npm run build` in the plugin directory.
 2. Confirm `dist/mcp.js` exists.
-3. Reload the editor or start a new Claude/Codex session.
+3. Reload the editor or start a new Claude, Codex, or Copilot session.
 4. Confirm the plugin is enabled at the intended user/workspace scope.
 5. Review the client’s MCP logs for `accessibility-audit` startup errors.
 
 ### Chromium executable is missing
 
-```sh
-npx playwright install chromium
-```
-
-Alternatively configure a supported installed channel such as `chrome`.
+The plugin installs Playwright Chromium automatically when no bundled Chromium, Chrome, or Edge executable is available. If automatic downloads are blocked, run `npx playwright install chromium` in the plugin checkout or configure a supported browser. Pass `--no-auto-install-browser` only when that fallback must be disabled.
 
 ### A page was skipped
 
@@ -425,7 +450,8 @@ Keep `captureScreenshots` enabled, confirm the output directory is writable, and
 
 ## Support and contribution
 
-- Installation for Cursor, Claude Code, and Codex: [docs/installation.md](docs/installation.md)
+- Installation for Cursor, Claude Code, Codex, and GitHub Copilot: [docs/installation.md](docs/installation.md)
+- RAI Ops marketplace packaging and submission: [docs/marketplace-submission.md](docs/marketplace-submission.md)
 - Start-to-finish instructions: [docs/user-guide.md](docs/user-guide.md)
 - WCAG terminology for non-specialists: [docs/wcag-basics.md](docs/wcag-basics.md)
 - Usage and troubleshooting: [SUPPORT.md](SUPPORT.md)

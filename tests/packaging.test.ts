@@ -37,6 +37,14 @@ describe('plugin packaging', () => {
     expect(publicConfiguration).not.toMatch(/guidepup|screenReader/i);
   });
 
+  it('bundles every production dependency for offline marketplace activation', async () => {
+    const packageJson = await json('package.json') as {
+      dependencies?: Record<string, string>;
+      bundleDependencies?: string[];
+    };
+    expect(packageJson.bundleDependencies?.sort()).toEqual(Object.keys(packageJson.dependencies ?? {}).sort());
+  });
+
   it('keeps Cursor command and rule mirrors identical to the plugin roots', async () => {
     const [command, cursorCommand, rule, cursorRule] = await Promise.all([
       readFile('commands/accessibility-audit.md', 'utf8'),

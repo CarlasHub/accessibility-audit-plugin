@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import type { AuditConfigInput } from './config.js';
@@ -11,6 +10,7 @@ import { DEFAULT_AUDITOR } from './instructions.js';
 import type { AuditProgressEvent } from './types.js';
 import { singleLineText } from './text.js';
 import { PLUGIN_VERSION } from './version.js';
+import { isDirectInvocation } from './invocation.js';
 
 interface AuditCliOptions {
   config?: string;
@@ -22,6 +22,7 @@ interface AuditCliOptions {
   headed?: boolean;
   channel?: string;
   executablePath?: string;
+  autoInstallBrowser?: boolean;
   concurrency?: string;
   timeout?: string;
   maxLinks?: string;
@@ -67,6 +68,7 @@ program
   .option('--headed', 'Show the browser')
   .option('--channel <name>', 'Installed browser channel, for example chrome')
   .option('--executable-path <path>', 'Browser executable path')
+  .option('--no-auto-install-browser', 'Do not install Playwright Chromium automatically when no supported browser is available')
   .option('--concurrency <count>', 'Parallel page count')
   .option('--timeout <milliseconds>', 'Per-operation timeout')
   .option('--max-links <count>', 'Maximum rendered same-origin links checked per page')
@@ -76,6 +78,10 @@ program
   .option('-y, --yes', 'Confirm the supplied/default auditor and start the audit')
   .action(async (inputs: string[], cli: AuditCliOptions, command: Command) => {
     const fileConfig = await readConfig(cli.config);
+    const fromCommandLine = (name: string): boolean => command.getOptionValueSource(name) === 'cli';
+    const effectiveAutoInstallBrowser = fromCommandLine('autoInstallBrowser')
+      ? Boolean(cli.autoInstallBrowser)
+      : fileConfig.autoInstallBrowser ?? true;
     let auditor = cli.auditor ?? fileConfig.auditor ?? DEFAULT_AUDITOR;
     let landingPageUrl = cli.landingPage ?? fileConfig.landingPageUrl;
     if (!cli.yes && process.stdin.isTTY && process.stderr.isTTY) {
@@ -88,7 +94,7 @@ program
           `Landing-page QA URL${landingPageUrl ? ` [${terminalText(landingPageUrl)}]` : ' [first resolved URL]'}: `
         );
         if (landingPageAnswer.trim()) landingPageUrl = landingPageAnswer.trim();
-        const confirmation = await prompt.question('Start the headless desktop, mobile, reflow, link, keyboard, and screenshot checks? [Y/n] ');
+        const confirmation = await prompt.question(`Start the headless desktop, mobile, reflow, link, keyboard, and screenshot checks?${effectiveAutoInstallBrowser ? ' If no supported browser is available, Playwright Chromium will be installed once in plugin-owned storage.' : ''} [Y/n] `);
         if (/^(n|no)$/i.test(confirmation.trim())) {
           process.stderr.write('Audit not started.\n');
           return;
@@ -97,7 +103,6 @@ program
         prompt.close();
       }
     }
-    const fromCommandLine = (name: string): boolean => command.getOptionValueSource(name) === 'cli';
     const options: Partial<AuditConfigInput> = {
       ...fileConfig,
       auditor,
@@ -108,6 +113,7 @@ program
       ...(fromCommandLine('headed') ? { headless: !cli.headed } : {}),
       ...(cli.channel ? { channel: cli.channel } : {}),
       ...(cli.executablePath ? { executablePath: cli.executablePath } : {}),
+      ...(fromCommandLine('autoInstallBrowser') ? { autoInstallBrowser: Boolean(cli.autoInstallBrowser) } : {}),
       ...(cli.concurrency ? { concurrency: Number(cli.concurrency) } : {}),
       ...(cli.timeout ? { timeoutMs: Number(cli.timeout) } : {}),
       ...(cli.maxLinks ? { maxLinksPerPage: Number(cli.maxLinks) } : {}),
@@ -165,8 +171,7 @@ export function normalizeCliArguments(argv: string[]): string[] {
   return normalized;
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
-if (import.meta.url === invokedPath) {
+if (isDirectInvocation(import.meta.url, process.argv[1])) {
   try {
     await program.parseAsync(normalizeCliArguments(process.argv));
   } catch (error: unknown) {

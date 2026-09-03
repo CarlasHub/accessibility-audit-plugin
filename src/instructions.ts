@@ -26,11 +26,11 @@ Isolation and target rules:
 7. Set stagingOnly to true only for an explicitly staging-only request when every target is a staging, QA, preview, test, or local host. Otherwise set it to false and rely on allowedHosts.
 
 Execution rules:
-1. Run every supplied page at desktop, mobile, and 320 CSS-pixel reflow viewports. Keep screenshots enabled. These browser checks run headlessly by default; use a headed browser only when the user explicitly requests it.
+1. Run every supplied page at desktop, mobile, and 320 CSS-pixel reflow viewports. Keep screenshots enabled. These browser checks run headlessly by default; use a headed browser only when the user explicitly requests it. If no supported browser exists, allow the plugin to install Playwright Chromium once in plugin-owned storage after confirmation; do not install it in the target project.
 2. Run the implemented axe, DOM/semantic, keyboard/focus, responsive, disclosure/navigation, image/link-name, form/error-state, same-origin link-destination, tab relationship, and common component checks. A component that is absent from a page is not a pass for that component.
 3. Validate same-origin links conservatively. Confirm 404/410 only when both the authenticated request context and an in-page fetch agree. Keep server errors, placeholder destinations, and ambiguous states as review items. Do not request external, download, logout, delete, or unsubscribe destinations.
 4. Capture full-page and issue-level element screenshots only for confirmed failures and page blockers. Store PNGs beside the workbook, use element evidence when available, and add relative hyperlinks in Accessibility Report and Image Inventory. Never embed audit screenshots in the workbook.
-5. Display progress through MCP notifications in Cursor, Claude, or Codex and through stderr in terminal runs. The client Stop action or one Ctrl+C requests graceful cancellation: close active browser work, retain completed evidence, and write validated partial JSON and XLSX output. Label that output cancelled/partial. A second Ctrl+C is an immediate exit and may prevent final report writing.
+5. Display progress through MCP notifications in Cursor, Claude, Codex, or Copilot and through stderr in terminal runs. The client Stop action or one Ctrl+C requests graceful cancellation: close active browser work, retain completed evidence, and write validated partial JSON and XLSX output. Label that output cancelled/partial. A second Ctrl+C is an immediate exit and may prevent final report writing.
 6. Do not claim that automation or axe covers all WCAG 2.2 A/AA requirements. Retrieve list_guided_manual_checks and preserve screen-reader, physical-device, content, visual, and judgment-based checks as outstanding until a person performs them.
 7. Treat deterministic reproduced failures as confirmed issues. Keep heuristics or unresolved content and visual questions as review issues. Keep unavailable pages as blockers. Keep unexecuted assistive-technology and judgment-based procedures as guided/manual checks.
 8. Use one row for the same reusable component implementation and root cause across all affected pages. List every affected page individually in the merged row's Links cell. Keep a page-specific implementation or root cause on its own row. Do not merge distinct root causes merely because they share a selector, component label, or WCAG criterion.
@@ -63,5 +63,6 @@ Run configuration:
 - Allowed hosts: ${allowedHosts}
 - Staging-only enforcement: ${stagingOnly}
 - Browser mode: headless
+- Automatic browser installation: enabled when no supported Chromium browser is available
 - Finding screenshots: linked element-level evidence with full-page fallback for confirmed failures and blockers only`;
 }

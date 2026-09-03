@@ -11,7 +11,8 @@ const publicDocs = [
   'docs/wcag-basics.md',
   'docs/reporting.md',
   'docs/testing-matrix.md',
-  'docs/manual-verification.md'
+  'docs/manual-verification.md',
+  'docs/marketplace-submission.md'
 ];
 
 describe('user documentation', () => {
@@ -49,9 +50,13 @@ describe('user documentation', () => {
     expect(installation).toContain('## 3A. Install in Cursor');
     expect(installation).toContain('## 3B. Install in Claude Code');
     expect(installation).toContain('## 3C. Install in Codex');
+    expect(installation).toContain('## 3D. Install in GitHub Copilot CLI');
+    expect(installation).toContain('## 3E. Install in GitHub Copilot in VS Code');
     expect(installation).toContain('Developer: Reload Window');
     expect(installation).toContain('claude --plugin-dir');
     expect(installation).toContain('codex plugin marketplace add');
+    expect(installation).toContain('copilot plugin marketplace add');
+    expect(installation).toContain('npm run test:marketplace');
     expect(installation).toContain('## 5. Update an installation');
     expect(installation).toContain('## 6. Uninstall');
     expect(installation).toContain('The Codex IDE extension does not currently load plugins');

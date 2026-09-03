@@ -106,11 +106,13 @@ describe('MCP server', () => {
     let receivedAuditor = '';
     let receivedLandingPage = '';
     let receivedHeadless: boolean | undefined;
+    let receivedAutoInstallBrowser: boolean | undefined;
     const server = createAccessibilityAuditMcpServer({
       executeAudit: async (request) => {
         receivedAuditor = String(request.options?.auditor ?? '');
         receivedLandingPage = String(request.options?.landingPageUrl ?? '');
         receivedHeadless = request.options?.headless;
+        receivedAutoInstallBrowser = request.options?.autoInstallBrowser;
         return { ...completedAuditResult, validation: { ...completedAuditResult.validation, auditor: receivedAuditor } };
       }
     });
@@ -132,6 +134,7 @@ describe('MCP server', () => {
       expect(receivedAuditor).toBe('Test Auditor');
       expect(receivedLandingPage).toBe('https://preview.example.test/');
       expect(receivedHeadless).toBe(true);
+      expect(receivedAutoInstallBrowser).toBe(true);
     } finally {
       await client.close();
       await server.close();

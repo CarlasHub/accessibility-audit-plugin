@@ -1,0 +1,23 @@
+{
+  "name": "accessibility-audit",
+  "version": "0.9.0",
+  "description": "Evidence-backed WCAG 2.2 A/AA page audits with headless desktop, mobile, reflow, keyboard, link, component evidence, and validated Excel reporting.",
+  "author": {
+    "name": "Radancy"
+  },
+  "homepage": "https://github.com/carla-goncalves_radancy/accessibility-audit-plugin",
+  "repository": "https://github.com/carla-goncalves_radancy/accessibility-audit-plugin",
+  "license": "MIT",
+  "keywords": [
+    "accessibility",
+    "wcag",
+    "axe",
+    "playwright",
+    "testing"
+  ],
+  "category": "development",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks.json"
+}

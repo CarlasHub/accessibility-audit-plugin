@@ -17,21 +17,25 @@ Collect the following without including secrets or private page content:
 ## Common resolutions
 
 - Rebuild after updates with `npm ci && npm run build`.
-- Reload Cursor or restart the Claude/Codex session after rebuilding.
-- Install Chromium with `npx playwright install chromium`.
+- Reload Cursor or restart the Claude, Codex, or Copilot session after rebuilding.
+- Allow the one-time automatic Chromium installation, or install it explicitly with `npx playwright install chromium` when organisational policy blocks automatic downloads.
 - Check `allowedHosts`, `stagingOnly`, redirects, and authentication when pages are skipped.
 - Keep screenshot capture enabled and use a writable output directory when Image Inventory is empty.
 
 ## The plugin is installed but the command or MCP server is missing
 
 1. Confirm Node.js 22 or later with `node --version`.
-2. Run `npm ci`, `npx playwright install chromium`, and `npm run build` in the plugin directory.
+2. For a source checkout, run `npm ci` and `npm run build` in the plugin directory. For a marketplace payload, run `npm run build:marketplace`, `npm run validate:marketplace`, and `npm run test:marketplace` in its source checkout.
 3. Confirm `dist/mcp.js` exists.
-4. Reload Cursor or start a new Claude/Codex session.
+4. Reload Cursor or start a new Claude, Codex, or Copilot session.
 5. Confirm `accessibility-audit` is enabled in the client’s plugin settings.
 6. Inspect the client’s MCP log for the first startup error.
 
 For platform-specific diagnostics, follow the verification and troubleshooting steps in [Installation](docs/installation.md). For Codex, use a supported plugin surface. The Codex IDE extension does not currently load plugins; Codex CLI exposes installed marketplaces through `/plugins`.
+
+## A marketplace plugin fails on first activation
+
+The generated Claude and Copilot payloads verify a bundled runtime checksum and install production dependencies into client-owned plugin data. They do not use the open project’s package manifest or lockfile. Confirm Node.js 22 or later and npm are visible to the client, that plugin data storage is writable, and that endpoint protection has not quarantined the bundled `.tgz`. Run `npm run test:marketplace` in the private source repository to reproduce the same install and MCP handshake without auditing a site.
 
 ## The workbook will not open
 

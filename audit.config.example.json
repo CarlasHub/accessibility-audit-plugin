@@ -4,7 +4,7 @@
   "allowedHosts": ["preview.example.test"],
   "stagingOnly": true,
   "headless": true,
-  "channel": "chrome",
+  "autoInstallBrowser": true,
   "timeoutMs": 30000,
   "maxTabStops": 120,
   "maxLinksPerPage": 200,

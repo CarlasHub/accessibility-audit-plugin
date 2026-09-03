@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  browserLaunchCandidates,
   createBrowserLaunchOptions,
+  isMissingBrowserExecutableError,
   needsFullPageScreenshotFallback,
   screenshotCandidatesForFindings
 } from '../src/audit/runner.js';
@@ -17,6 +19,27 @@ describe('browser launch isolation', () => {
       handleSIGHUP: false,
       channel: 'chrome'
     }));
+  });
+
+  it('tries bundled Chromium and supported system channels when no browser is explicit', () => {
+    expect(browserLaunchCandidates({}, true)).toEqual([
+      expect.objectContaining({ headless: true }),
+      expect.objectContaining({ headless: true, channel: 'chrome' }),
+      expect.objectContaining({ headless: true, channel: 'msedge' })
+    ]);
+  });
+
+  it('does not silently replace an explicitly selected browser', () => {
+    expect(browserLaunchCandidates({ channel: 'chrome' }, false)).toEqual([
+      expect.objectContaining({ headless: false, channel: 'chrome' })
+    ]);
+  });
+
+  it('distinguishes missing browser installations from unrelated launch failures', () => {
+    expect(isMissingBrowserExecutableError(new Error("Executable doesn't exist at /browser/chromium"))).toBe(true);
+    expect(isMissingBrowserExecutableError(new Error('Please run the following command to download new browsers: npx playwright install'))).toBe(true);
+    expect(isMissingBrowserExecutableError(new Error("Chromium distribution 'chrome' is not found at /Applications/Google Chrome"))).toBe(true);
+    expect(isMissingBrowserExecutableError(new Error('Target page, context or browser has been closed'))).toBe(false);
   });
 });
 

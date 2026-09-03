@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
 import axe from 'axe-core';
@@ -25,6 +27,7 @@ import { assertRemediationOnlyNotes, consolidateFindings } from '../reporting/co
 import { singleLineText } from '../text.js';
 
 const CANCELLED_REASON = 'The audit was stopped by the user. Results include only work completed before cancellation.';
+const require = createRequire(import.meta.url);
 
 function emptyDom(): DomCheckResult {
   return {
@@ -73,6 +76,85 @@ export function createBrowserLaunchOptions(
     ...(options.channel ? { channel: options.channel } : {}),
     ...(options.executablePath ? { executablePath: options.executablePath } : {})
   };
+}
+
+export function browserLaunchCandidates(
+  options: Pick<AuditOptions, 'channel' | 'executablePath'>,
+  headless: boolean
+): Array<Parameters<typeof chromium.launch>[0]> {
+  const explicit = Boolean(options.channel || options.executablePath);
+  if (explicit) return [createBrowserLaunchOptions(options, headless)];
+  return [
+    createBrowserLaunchOptions({}, headless),
+    createBrowserLaunchOptions({ channel: 'chrome' }, headless),
+    createBrowserLaunchOptions({ channel: 'msedge' }, headless)
+  ];
+}
+
+export function isMissingBrowserExecutableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /executable (?:doesn['’]t|does not) exist|browser executable|could not find.+(?:chrome|edge|chromium)|(?:browser|channel|chromium distribution).+not found|(?:please\s+)?run.+playwright install/i.test(message);
+}
+
+export async function installPlaywrightChromium(signal?: AbortSignal): Promise<void> {
+  const cli = require.resolve('@playwright/test/cli');
+  await new Promise<void>((resolveInstall, rejectInstall) => {
+    const child = spawn(process.execPath, [cli, 'install', 'chromium'], {
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const forward = (chunk: Buffer | string): void => { process.stderr.write(chunk); };
+    child.stdout?.on('data', forward);
+    child.stderr?.on('data', forward);
+    const abort = (): void => { child.kill('SIGTERM'); };
+    signal?.addEventListener('abort', abort, { once: true });
+    child.once('error', rejectInstall);
+    child.once('exit', (code, exitSignal) => {
+      signal?.removeEventListener('abort', abort);
+      if (signal?.aborted) {
+        rejectInstall(new Error('Chromium installation was cancelled.'));
+      } else if (code === 0) {
+        resolveInstall();
+      } else {
+        rejectInstall(new Error(`Playwright Chromium installation failed${exitSignal ? ` with signal ${exitSignal}` : ` with exit code ${code ?? 'unknown'}`}.`));
+      }
+    });
+  });
+}
+
+async function launchAuditBrowser(
+  options: AuditOptions,
+  execution: AuditExecutionContext
+): Promise<Browser> {
+  const candidates = browserLaunchCandidates(options, options.headless);
+  let lastMissingError: unknown;
+  for (const candidate of candidates) {
+    try {
+      return await chromium.launch(candidate);
+    } catch (error) {
+      if (!isMissingBrowserExecutableError(error)) throw error;
+      lastMissingError = error;
+    }
+  }
+
+  if (options.channel || options.executablePath) {
+    throw lastMissingError instanceof Error
+      ? lastMissingError
+      : new Error('The explicitly configured browser executable is unavailable.');
+  }
+
+  if (!options.autoInstallBrowser) {
+    throw new Error(
+      `No supported Chromium browser is available. Run "npx playwright install chromium" in the plugin directory or enable automatic browser installation. ${lastMissingError instanceof Error ? lastMissingError.message : ''}`.trim()
+    );
+  }
+
+  await emitProgress(execution, {
+    phase: 'browser',
+    message: 'No supported browser was found. Installing headless Playwright Chromium once before the audit starts.'
+  });
+  await installPlaywrightChromium(execution.signal);
+  return chromium.launch(createBrowserLaunchOptions({}, options.headless));
 }
 
 async function runAxe(page: Page): Promise<AxeViolationResult[]> {
@@ -475,11 +557,10 @@ export async function runAudit(
 
   let pages: PageAudit[] = [];
   if (!execution.signal?.aborted) {
-    const launchOptions = createBrowserLaunchOptions(options, options.headless);
     let browser: Browser | undefined;
     const closeOnAbort = (): void => { void browser?.close().catch(() => undefined); };
     try {
-      browser = await chromium.launch(launchOptions);
+      browser = await launchAuditBrowser(options, execution);
       execution.signal?.addEventListener('abort', closeOnAbort, { once: true });
       pages = await runPool(
         urls,
