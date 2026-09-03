@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1 - 2026-09-03
+
+- Count native associated `label` elements when checking form-control accessible names, preventing labelled controls from being reported as unnamed.
+- Classify axe best-practice-only results as review findings unless the rule also maps to a WCAG success criterion.
+- De-duplicate unnamed links and controls when axe and the DOM heuristic report the same rendered element with different CSS selector forms.
+- Make the workbook overview state whether screenshot capture was enabled for the specific audit run.
+
 All notable changes are documented here. Versions follow Semantic Versioning.
 
 ## 0.6.0 - 2026-09-02

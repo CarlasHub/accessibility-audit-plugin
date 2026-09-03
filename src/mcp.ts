@@ -25,7 +25,7 @@ export interface AccessibilityAuditMcpDependencies {
 export function createAccessibilityAuditMcpServer(
   dependencies: AccessibilityAuditMcpDependencies = {}
 ): McpServer {
-  const server = new McpServer({ name: 'accessibility-audit', version: '0.6.0' });
+  const server = new McpServer({ name: 'accessibility-audit', version: '0.6.1' });
   const execute = dependencies.executeAudit ?? executeAudit;
 
   const requestAuditConfirmation = async (

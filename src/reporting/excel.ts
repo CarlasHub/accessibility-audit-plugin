@@ -335,7 +335,21 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
   overview.getCell('B6').value = 'Not tested; staging URLs only';
   overview.getCell('B7').value = 'WCAG 2.2 AA (Includes Level A)';
   overview.getCell('B8').value = summary.auditor;
-  overview.getCell('B9').value = 'Headless Playwright Chromium; axe-core WCAG 2.2 A/AA; keyboard traversal; DOM/ARIA checks; desktop/mobile/reflow; text spacing; disclosures; tabs; same-origin link validation; element-level screenshot evidence.';
+  const hasScreenshotEvidence = summary.findings.some((finding) =>
+    finding.evidence.some((item) => Boolean(item.screenshot))
+  );
+  overview.getCell('B9').value = [
+    'Headless Playwright Chromium',
+    'axe-core WCAG 2.2 A/AA',
+    'keyboard traversal',
+    'DOM/ARIA checks',
+    'desktop/mobile/reflow',
+    'text spacing',
+    'disclosures',
+    'tabs',
+    'same-origin link validation',
+    hasScreenshotEvidence ? 'element-level screenshot evidence' : 'screenshots disabled for this run'
+  ].join('; ') + '.';
   overview.getCell('B15').value = [
     ...summary.limitations,
     'Outstanding guided checks:',

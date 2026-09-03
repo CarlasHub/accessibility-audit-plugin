@@ -63,6 +63,22 @@ export async function runDomChecks(page: Page): Promise<DomCheckResult> {
       if (ariaLabel) return ariaLabel;
       if (element instanceof HTMLImageElement) return element.alt.trim();
       if (element instanceof HTMLInputElement && /^(button|submit|reset)$/i.test(element.type)) return element.value.trim();
+      if (
+        element instanceof HTMLButtonElement
+        || element instanceof HTMLInputElement
+        || element instanceof HTMLSelectElement
+        || element instanceof HTMLTextAreaElement
+        || element instanceof HTMLMeterElement
+        || element instanceof HTMLProgressElement
+        || element instanceof HTMLOutputElement
+      ) {
+        const labelText = [...(element.labels ?? [])]
+          .map((label) => descendantTextAlternative(label))
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+        if (labelText) return labelText;
+      }
       return descendantTextAlternative(element) || element.getAttribute('title')?.trim() || '';
     };
     const fieldHasLabel = (element: Element): boolean => {

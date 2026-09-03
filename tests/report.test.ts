@@ -75,5 +75,21 @@ describe('Excel report', () => {
     expect(workbook.getWorksheet('Accessibility Report')?.getCell('N2').value).toBe(
       'https://example.runmytests.com/en\nhttps://example.runmytests.com/jobs'
     );
+    expect(workbook.getWorksheet('Accessibility Overview')?.getCell('B9').value).toContain('element-level screenshot evidence');
+  });
+
+  it('states when screenshots were disabled and leaves the Image Inventory without evidence images', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'a11y-report-no-images-'));
+    const path = join(directory, 'report.xlsx');
+    const summary = summaryWithScreenshot('');
+    summary.findings[0]!.evidence[0]!.screenshot = '';
+    await writeExcelReport(summary, { outputPath: path });
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(path);
+    expect(workbook.getWorksheet('Accessibility Overview')?.getCell('B9').value).toContain('screenshots disabled for this run');
+    const inventory = workbook.getWorksheet('Image Inventory');
+    expect(inventory?.getCell('E2').value).toBe('Not captured');
+    expect(inventory?.getImages()).toHaveLength(0);
   });
 });

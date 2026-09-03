@@ -7,7 +7,7 @@ This plugin is an automated testing aid, not a WCAG certification. Screen-reader
 ## Features
 
 - Headless Playwright Chromium execution with visible terminal or MCP progress.
-- axe-core WCAG 2.2 A/AA and selected best-practice rules.
+- axe-core WCAG 2.2 A/AA rules plus selected best-practice signals, which remain review items when no WCAG success criterion is mapped.
 - DOM and semantic checks for page structure, image alternatives, controls, fields, landmarks, duplicate ids, tables, and media.
 - Sequential keyboard traversal, focus visibility review, focus obscuration checks, and disclosure interaction tests.
 - Tab-component state, roving tabindex, arrow navigation, activation, and tab/panel relationship checks.
@@ -198,7 +198,7 @@ The report contains no screen-reader worksheet or screen-reader execution result
 
 The report keeps these categories separate:
 
-- `confirmed` — deterministic reproduced evidence, such as an axe violation, missing label, broken ARIA relationship, missing fragment, or two-source 404/410 response.
+- `confirmed` — deterministic reproduced evidence, such as a WCAG-tagged axe violation, missing label, broken ARIA relationship, missing fragment, or two-source 404/410 response.
 - `review` — a signal requiring human judgment, such as target-size exceptions, text-spacing overflow, placeholder links, a 5xx response, linked-image wording, or ambiguous component behavior.
 - `blocker` — the requested page could not be tested.
 - `manual` — procedures automation cannot prove.

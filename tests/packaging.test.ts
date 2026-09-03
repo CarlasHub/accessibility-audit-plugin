@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
-const VERSION = '0.6.0';
+const VERSION = '0.6.1';
 
 async function json(path: string): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;

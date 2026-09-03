@@ -40,6 +40,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
     expect(result.findings.some((finding) => finding.ruleId === 'tabs-broken-relationships')).toBe(true);
     expect(result.pages[0]?.viewports.some((viewport) => viewport.elementScreenshots.length > 0)).toBe(true);
     expect(result.pages[0]?.viewports[0]?.dom.emptyLinks.some((link) => link.selector === '#meaningful-image-link')).toBe(false);
+    expect(result.pages[0]?.viewports[0]?.dom.emptyNamedControls.some((control) => control.selector === '#labelled-input')).toBe(false);
   });
 
   it('runs the professional service entry point and validates its workbook', async () => {

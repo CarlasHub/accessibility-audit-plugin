@@ -3,7 +3,7 @@
 | Area | Desktop | Mobile | 320 reflow | Classification boundary |
 |---|---:|---:|---:|---|
 | HTTP/final URL/runtime errors | Yes | Yes | Yes | Page blocker or runtime evidence |
-| axe WCAG 2.2 A/AA and selected best practices | Yes | Yes | Yes | Confirmed only for reported violations |
+| axe WCAG 2.2 A/AA and selected best practices | Yes | Yes | Yes | WCAG-tagged violations confirmed; best-practice-only signals reviewed |
 | Landmarks, headings, ids, image-alt presence, names, labels | Yes | Yes | Yes | Deterministic failures confirmed; meaning/count heuristics reviewed |
 | Sequential Tab traversal and focus signals | Yes | Yes | Yes | Obscuration confirmed; visual indicator heuristics reviewed |
 | Disclosure state, focus order, and Escape | Yes | Yes | Yes | State failures confirmed; focus sequence and optional Escape behavior reviewed |

@@ -50,7 +50,7 @@ function terminalText(value: string): string {
 }
 
 const program = new Command();
-program.name('accessibility-audit').description('Run structured WCAG 2.2 A/AA audits and generate the standard Excel report.').version('0.6.0');
+program.name('accessibility-audit').description('Run structured WCAG 2.2 A/AA audits and generate the standard Excel report.').version('0.6.1');
 
 program
   .command('audit')

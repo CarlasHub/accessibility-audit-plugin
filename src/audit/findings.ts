@@ -18,6 +18,10 @@ function sharedComponentKey(component: string, signature: string): string {
   return `${component}:${fingerprint(`${component}|${signature}`)}`;
 }
 
+function openingTagSignature(html: string): string {
+  return (html.trim().match(/^<[^>]+>/)?.[0] ?? html.trim()).replace(/\s+/g, ' ');
+}
+
 function severityFromAxe(impact: string | null): Severity {
   if (impact === 'critical') return 'Critical';
   if (impact === 'serious') return 'Serious';
@@ -45,19 +49,20 @@ function makeFinding(input: Omit<Finding, 'key'> & { identity: string }): Findin
 function axeFindings(audit: ViewportAudit): Finding[] {
   return audit.axe.flatMap((violation: AxeViolationResult) => {
     const wcag = violation.tags.map(criterionFromTag).filter((item): item is string => Boolean(item));
+    const isWcagViolation = wcag.length > 0;
     return violation.nodes.map((node) => {
       const selectors = node.target.length ? node.target : ['page'];
       const component = normalizeComponent(selectors.join(' '));
       return makeFinding({
         identity: `${violation.id}|${component}`,
         ruleId: `axe-${violation.id}`,
-        classification: 'confirmed',
+        classification: isWcagViolation ? 'confirmed' : 'review',
         severity: severityFromAxe(violation.impact),
         wcag: wcag.length ? wcag : ['Best Practice'],
         summary: violation.help,
         issue: `${violation.description} ${node.failureSummary ?? ''}`.trim(),
         impact: `A person using assistive technology may be unable to perceive or operate this ${component} component as intended.`,
-        testing: `axe-core ${violation.id} failed at ${audit.viewport.name}. Rule: ${violation.helpUrl}`,
+        testing: `axe-core ${violation.id} failed at ${audit.viewport.name}. ${isWcagViolation ? 'The rule maps to the listed WCAG criterion.' : 'This is an axe best-practice signal without a direct WCAG success-criterion mapping and requires review.'} Rule: ${violation.helpUrl}`,
         remediation: `${node.failureSummary?.replace(/^Fix (any|all) of the following:\s*/i, '') || `Correct the markup so it satisfies the ${violation.help} rule.`} Retest the component in every affected state.`,
         component,
         sharedComponentKey: sharedComponentKey(component, `${violation.id}|${node.html}|${node.failureSummary ?? ''}`),
@@ -217,8 +222,16 @@ function domFindings(audit: ViewportAudit): Finding[] {
       .flatMap((violation) => violation.nodes.flatMap((node) => node.target))
       .map(normalizeComponent)
   );
+  const axeEmptyLinkSignatures = new Set(
+    audit.axe
+      .filter((violation) => violation.id === 'link-name')
+      .flatMap((violation) => violation.nodes.map((node) => openingTagSignature(node.html)))
+  );
   for (const item of audit.dom.emptyLinks) {
-    if (axeEmptyLinkSelectors.has(normalizeComponent(item.selector))) continue;
+    if (
+      axeEmptyLinkSelectors.has(normalizeComponent(item.selector))
+      || axeEmptyLinkSignatures.has(openingTagSignature(item.html))
+    ) continue;
     findings.push(makeFinding({
       identity: `empty-link|${normalizeComponent(item.selector)}`,
       ruleId: 'link-empty-accessible-name',
@@ -242,7 +255,25 @@ function domFindings(audit: ViewportAudit): Finding[] {
     }));
   }
 
+  const axeEmptyControlRules = new Set([
+    'aria-command-name',
+    'aria-input-field-name',
+    'aria-meter-name',
+    'aria-progressbar-name',
+    'aria-toggle-field-name',
+    'aria-tooltip-name',
+    'aria-treeitem-name',
+    'button-name',
+    'input-button-name',
+    'select-name'
+  ]);
+  const axeEmptyControlSignatures = new Set(
+    audit.axe
+      .filter((violation) => axeEmptyControlRules.has(violation.id))
+      .flatMap((violation) => violation.nodes.map((node) => openingTagSignature(node.html)))
+  );
   for (const item of audit.dom.emptyNamedControls) {
+    if (axeEmptyControlSignatures.has(openingTagSignature(item.html))) continue;
     findings.push(makeFinding({
       identity: `empty-name|${normalizeComponent(item.selector)}`,
       ruleId: 'interactive-control-no-name',
