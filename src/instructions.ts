@@ -41,7 +41,8 @@ Report rules:
 3. Put only concrete fixes in Notes. Do not mention Jira, ticket workflow, audit narration, or uncertainty in remediation fields.
 4. Put the single landing-page QA URL in Accessibility Overview, use the supplied auditor name exactly, set every populated Accessibility Report row to Fail, default Assignment to Implementation Queue unless the finding genuinely requires Content, Design, or Mixed ownership, and initialize Estimate to numeric 0 with 0.25 increments allowed. Validate the workbook with validate_accessibility_report before delivery.
 5. Report whether the run completed or was cancelled, the exact workbook, JSON, and portable ZIP paths, pages completed/partial/not started, counts by confirmed/review/blocker/manual classification, Image Inventory count, and workbook validation result.
-6. Call the result an evidence-backed structured audit, not a certification or complete WCAG conformance verdict.`;
+6. Call the result an evidence-backed structured audit, not a certification or complete WCAG conformance verdict.
+7. Explain the result in plain language for a user who may not know WCAG. State that only supplied URLs were tested; define the result categories that are present; distinguish the workbook's default Fail workflow status from evidence confidence; identify outstanding guided checks; and tell the user to extract the ZIP and keep the workbook with its screenshots directory so relative evidence links work.`;
 
 export function buildEmbeddedAuditInstructions(options: EmbeddedAuditInstructionOptions = {}): string {
   const targets = options.targets?.trim() || '[ask for URL(s) or an XLSX/CSV/TXT/JSON page-list path]';

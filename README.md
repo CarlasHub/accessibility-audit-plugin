@@ -1,8 +1,86 @@
 # Accessibility Audit Plugin
 
-An isolated Codex, Claude Code, and Cursor plugin for evidence-backed WCAG 2.2 A/AA page testing. It runs headless Chromium checks at desktop, mobile, and 320 CSS-pixel reflow sizes, records deterministic and review findings separately, captures focused screenshot evidence for confirmed failures and blockers, and generates validated Excel, JSON, and portable ZIP output.
+An isolated Codex, Claude Code, and Cursor plugin that helps teams find and document web accessibility barriers. Give it one or more page URLs—or a file containing URLs—and it runs repeatable checks in a headless browser, then produces an Excel report, detailed JSON evidence, and a portable ZIP.
 
-This plugin is an automated testing aid, not a WCAG certification. Screen-reader, physical-device, content-meaning, visual-judgment, and other guided checks remain manual.
+You do not need to know WCAG terminology to run the plugin. Start with the workflow below, then use the [plain-language user guide](docs/user-guide.md) and [WCAG basics](docs/wcag-basics.md) to understand the results.
+
+> **Important:** this plugin is an automated testing aid, not a WCAG certification. A report with no automated findings does not prove that a page is accessible. Screen-reader, physical-device, content-meaning, visual-judgment, and other guided checks remain manual. W3C likewise states that no evaluation tool alone can determine whether a site meets accessibility standards.
+
+## Start here
+
+If the plugin is already installed:
+
+1. Decide which pages are in scope. The plugin tests only the URLs you supply; it does not discover or crawl a whole site.
+2. In Cursor or Claude Code, run `/accessibility-audit` with one URL, several URLs, or a page-list file. In Codex, ask it to use the Accessibility Audit plugin with the same input.
+3. Check the confirmation form. It shows the input, the auditor name, and the landing-page QA URL before testing starts.
+4. Let the headless audit finish, or stop it safely if needed. Progress appears in the editor or terminal.
+5. Extract the generated ZIP and open `Accessibility_Audit_Report.xlsx`. Keep the workbook and `screenshots` folder together so its evidence links continue to work.
+
+One page:
+
+```text
+/accessibility-audit https://preview.example.test/
+```
+
+Selected pages:
+
+```text
+/accessibility-audit https://preview.example.test/ https://preview.example.test/jobs https://preview.example.test/contact
+```
+
+Every page in a prepared list:
+
+```text
+/accessibility-audit pages.xlsx
+```
+
+Equivalent Codex request:
+
+```text
+Use the Accessibility Audit plugin to audit every URL in pages.xlsx.
+```
+
+For a complete-site audit, the page-list file must contain the complete canonical URL inventory. Supplying the home page does **not** make the plugin crawl the rest of the site.
+
+### What the confirmation fields mean
+
+| Field | Plain-language meaning | Default |
+|---|---|---|
+| Pages/input | The exact URLs or page-list file that will be tested. | Required |
+| Auditor | The name recorded in the workbook. Use a person’s name when a person owns the audit. | `Automated` |
+| Landing-page QA URL | The project’s main QA or staging URL shown in the Overview sheet. It is report metadata and does not add pages to the scope. | First resolved URL |
+| Output directory | The isolated folder that receives the report, JSON, screenshots, and ZIP. | `Accessibility Audit Results` in the user’s home directory |
+
+### What happens during the audit
+
+Every supplied page is checked at desktop (1440×1000), mobile (390×844), and 320-pixel reflow sizes. In plain terms, the plugin looks for problems such as:
+
+- images, links, buttons, and form fields that do not have usable names;
+- incorrect page structure or broken relationships between controls and content;
+- keyboard focus that is unreachable, out of order, invisible, or fully covered;
+- menus, disclosures, and tabs whose state or keyboard operation is broken;
+- content that overflows at narrow widths or after WCAG text-spacing overrides;
+- same-site links that are empty, placeholders, missing fragments, or consistently return 404/410;
+- selected target-size, table, media, and responsive-layout signals that require review.
+
+The browser runs headlessly by default, so it should not take over the desktop. Visible consent banners are dismissed before the main checks and evidence capture. Confirmed component failures receive a focused screenshot when the element can be located reliably.
+
+### How to interpret the result
+
+The report separates four evidence categories:
+
+| Category | Meaning | What to do |
+|---|---|---|
+| `confirmed` | The plugin reproduced deterministic evidence of a failure. | Fix it, then retest. A person should still confirm high-impact or context-sensitive cases. |
+| `review` | The plugin found a credible signal, but context or a WCAG exception requires human judgment. | Perform the procedure in the Testing column before deciding whether it fails. |
+| `blocker` | The page could not be tested, for example because it returned an unavailable response. | Restore access or correct the URL, then rerun it. Never count it as a pass. |
+| `manual` | Automation cannot determine the result. | Complete the stated guided check with an appropriate tester. |
+
+Every populated workbook row starts with `Status = Fail` because that is the implementation-workflow default requested by the report template. It does not convert a `review` signal into a confirmed WCAG failure. Use the Labels and ProductNote fields to identify the evidence category, and read Testing before triage.
+
+Severity (`Critical`, `Serious`, `Moderate`, or `Minor`) describes expected user impact. It is different from WCAG level, evidence confidence, remediation effort, and delivery priority.
+
+See [Understanding the report](docs/reporting.md) for a worksheet and column guide, and [Manual verification](docs/manual-verification.md) for checks that remain outstanding.
 
 ## Features
 
@@ -96,7 +174,9 @@ The user must already have Git credentials that can read the private repository.
 
 ## Codex installation
 
-The Codex manifest is [.codex-plugin/plugin.json](.codex-plugin/plugin.json), and the MCP server is declared in [.mcp.json](.mcp.json). Add the built plugin directory through Codex plugin management, then start a new session after rebuilding or updating the plugin.
+The Codex manifest is [.codex-plugin/plugin.json](.codex-plugin/plugin.json), and the MCP server is declared in [.mcp.json](.mcp.json). Install it from a marketplace configured by your team, then start a new session so Codex loads its skill and tools. In Codex CLI, enter `/plugins` to open the plugin browser.
+
+The Codex IDE extension does not currently support plugins. Use Codex CLI or another supported Codex/ChatGPT plugin surface. See the [official OpenAI plugin documentation](https://developers.openai.com/codex/plugins).
 
 ## Run an audit in Cursor or Claude
 
@@ -333,12 +413,15 @@ Keep `captureScreenshots` enabled, confirm the output directory is writable, and
 
 ## Support and contribution
 
+- Start-to-finish instructions: [docs/user-guide.md](docs/user-guide.md)
+- WCAG terminology for non-specialists: [docs/wcag-basics.md](docs/wcag-basics.md)
 - Usage and troubleshooting: [SUPPORT.md](SUPPORT.md)
 - Security reports: [SECURITY.md](SECURITY.md)
 - Contribution and verification requirements: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Release history: [CHANGELOG.md](CHANGELOG.md)
 - Detailed test matrix: [docs/testing-matrix.md](docs/testing-matrix.md)
 - Workbook behavior: [docs/reporting.md](docs/reporting.md)
+- Guided checks after automation: [docs/manual-verification.md](docs/manual-verification.md)
 
 ## License
 

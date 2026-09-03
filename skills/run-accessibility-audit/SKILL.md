@@ -16,6 +16,7 @@ Call `run_accessibility_audit` once with the supplied targets. Read [test-matrix
 5. Keep deterministic failures confirmed; keep heuristics, placeholder links, 5xx responses, content judgments, and WCAG exceptions as review/manual work. A 404/410 is confirmed only when the two implemented same-origin checks agree.
 6. Use one row for the same reusable component implementation and root cause across affected pages. Keep page-specific implementations or root causes separate, and list each affected URL separately in Links.
 7. Validate the workbook. Report run status, exact workbook/JSON/ZIP paths, completed/partial/not-started page counts, finding counts, Image Inventory count, and validation result.
+8. Give a plain-language handoff suitable for a user unfamiliar with WCAG: explain that only supplied URLs were tested, define each result category present, distinguish workflow Status from evidence confidence, identify outstanding manual work, and explain that the extracted workbook must remain beside its screenshot tree.
 
 ## Boundaries
 

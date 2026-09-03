@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.1 - 2026-09-03
+
+- Added a plain-language start-to-finish user guide for people without WCAG experience.
+- Added WCAG, evidence-confidence, severity, scope, output, and report-field explanations.
+- Expanded guided manual-verification procedures and beginner-safe triage guidance.
+- Updated embedded agent instructions to provide a plain-language audit handoff.
+- Aligned CLI, MCP server, package, marketplace, and client-manifest version metadata.
+
 ## 0.8.0 - 2026-09-03
 
 - Name the rendered component and page location in every finding and state affected Desktop/Mobile viewports directly in the Issue field.

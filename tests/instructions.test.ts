@@ -35,6 +35,10 @@ describe('embedded audit instructions', () => {
     expect(instructions).toContain('same reusable component implementation and root cause');
     expect(instructions).toContain('set every populated Accessibility Report row to Fail');
     expect(instructions).toContain('initialize Estimate to numeric 0');
+    expect(instructions).toContain('Explain the result in plain language');
+    expect(instructions).toContain('only supplied URLs were tested');
+    expect(instructions).toContain("default Fail workflow status from evidence confidence");
+    expect(instructions).toContain('extract the ZIP');
   });
 
   it('keeps caller-supplied identity and output values', () => {

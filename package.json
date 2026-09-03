@@ -1,6 +1,6 @@
 {
   "name": "accessibility-audit-plugin",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "description": "Cross-platform Codex, Claude Code, and Cursor plugin for structured WCAG 2.2 accessibility audits.",
   "author": "Carla Goncalves",

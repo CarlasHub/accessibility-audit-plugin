@@ -10,6 +10,7 @@ import { validateExcelReport } from './reporting/validate.js';
 import { DEFAULT_AUDITOR } from './instructions.js';
 import type { AuditProgressEvent } from './types.js';
 import { singleLineText } from './text.js';
+import { PLUGIN_VERSION } from './version.js';
 
 interface AuditCliOptions {
   config?: string;
@@ -51,7 +52,7 @@ function terminalText(value: string): string {
 }
 
 const program = new Command();
-program.name('accessibility-audit').description('Run structured WCAG 2.2 A/AA audits and generate the standard Excel report.').version('0.8.0');
+program.name('accessibility-audit').description('Run structured WCAG 2.2 A/AA audits and generate the standard Excel report.').version(PLUGIN_VERSION);
 
 program
   .command('audit')

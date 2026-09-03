@@ -2,6 +2,49 @@
 
 The reporter uses the bundled Accessibility Testing Boilerplate, removes placeholder rows, preserves the 32 Accessibility Report columns and WCAG lookup formulas, and populates operational fields for every finding.
 
+## Read the workbook in this order
+
+1. **Accessibility Overview:** confirm the landing-page QA URL, audit date, auditor, scope, methods, totals, limitations, and outstanding guided checks.
+2. **Page Inventroy:** confirm that every requested URL completed at every requested viewport. A redirect, unavailable status, consent failure, runtime error, or cancelled viewport needs investigation before the scope can be called complete.
+3. **Accessibility Report:** triage confirmed findings, then perform the Testing procedure for review findings.
+4. **Image Inventory:** open linked evidence and verify that the page, viewport, named component, location, and highlighted target match the finding.
+
+`Lookup WCAG 2.2` is hidden reference data for formulas. It is not an audit-results worksheet.
+
+## Understand evidence confidence
+
+The workbook uses `confirmed`, `review`, `blocker`, and `manual` labels:
+
+- `confirmed` means deterministic evidence was reproduced.
+- `review` means a credible signal still requires the decision described in Testing.
+- `blocker` means a requested page could not be tested.
+- `manual` means automation cannot determine the result.
+
+Every populated row starts with workflow Status `Fail`. This template default ensures the item enters remediation, but it does not change its evidence category. In particular, a `review` row is not a confirmed WCAG failure until a qualified reviewer completes the stated procedure.
+
+Impact severity is also separate. It estimates the likely effect on users; it is not the WCAG A/AA level, evidence confidence, implementation effort, or delivery priority.
+
+## Accessibility Report field guide
+
+| Field | Purpose |
+|---|---|
+| ID | Stable row identifier generated for the workbook. |
+| SC1–SC3 and adjacent lookup fields | Up to three mapped criteria with level, synopsis, and W3C Understanding reference. |
+| Links | Every affected page. Consolidated component findings list one URL per line. |
+| Summary | Short finding title beginning with the rendered component name. |
+| Environment | Browser and affected Desktop, Mobile, or Mobile reflow viewport. |
+| Issue | Labelled component name, page location, affected viewports, accessibility barrier, user impact, and technical locator. |
+| Testing | Reproduction evidence and any decision still required from a person. |
+| Screengrab | Relative link to the first available evidence image. |
+| ProductNote and Labels | Evidence category, rule identifier, and WCAG mapping. |
+| Impact | Initial user-impact severity. |
+| Status | Starts as `Fail` for implementation tracking. |
+| Assignment | Suggested implementation, content, design, or accessibility ownership queue. |
+| Effort | Initial broad remediation-size indication. |
+| Specialist and Implementation | Initial review/workflow values from the report template. |
+| Notes | Concrete remediation only. It must not contain ticket-system or audit-process commentary. |
+| Estimate | Starts at numeric `0` and accepts non-negative quarter increments. |
+
 The same reusable component implementation, rendered component name, and root cause produce one row across all affected pages. Generic unnamed controls must also share the same rendered location before they are consolidated, preventing identical bare markup from merging unrelated widgets. A page-specific implementation or root cause remains on its own row. The Links cell lists every affected page on its own line. JSON preserves URL, viewport, selector, screenshot, and raw evidence.
 
 Summary uses the rendered component name rather than a CSS selector alone. Issue uses labelled lines for Component, Location, Affected viewport(s), Accessibility issue, User impact, and Technical locator. The workbook validator rejects rows that omit any of those fields.
@@ -17,3 +60,9 @@ Image Inventory contains one row per unique confirmed-failure or blocker screens
 The generated workbook has no screen-reader worksheet. Assistive-technology testing remains in guided manual checks.
 
 Graceful cancellation still writes and validates JSON and XLSX output. Page Inventory identifies completed viewport evidence, consent-banner handling, and pages not started. Interrupted viewport work is excluded from findings.
+
+## Evidence links
+
+The workbook stores relative links, not embedded images. Extract and keep the workbook with its `screenshots` directory. If only the workbook is moved or emailed, the evidence links will stop working. The generated ZIP is the correct portable artifact to share.
+
+An evidence image supports reproduction; it does not replace the Testing text or JSON. A component screenshot should show the named component in context with the target outlined. Full-page screenshots are reserved for page-level failures and blockers.

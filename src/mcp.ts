@@ -17,6 +17,7 @@ import { validateExcelReport } from './reporting/validate.js';
 import { executeAudit } from './service.js';
 import { singleLineText } from './text.js';
 import type { AuditExecutionContext, AuditProgressEvent } from './types.js';
+import { PLUGIN_VERSION } from './version.js';
 
 export interface AccessibilityAuditMcpDependencies {
   executeAudit?: typeof executeAudit;
@@ -25,7 +26,7 @@ export interface AccessibilityAuditMcpDependencies {
 export function createAccessibilityAuditMcpServer(
   dependencies: AccessibilityAuditMcpDependencies = {}
 ): McpServer {
-  const server = new McpServer({ name: 'accessibility-audit', version: '0.7.0' });
+  const server = new McpServer({ name: 'accessibility-audit', version: PLUGIN_VERSION });
   const execute = dependencies.executeAudit ?? executeAudit;
 
   const requestAuditConfirmation = async (
