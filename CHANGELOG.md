@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.3 - 2026-09-03
+
+- Prepared the source repository for public review with Radancy ownership metadata, hardened CI permissions, and production-dependency auditing.
+- Added a sanitised, captioned workflow demonstration with a text transcript while keeping media out of executable runtime archives.
+- Expanded issue and contribution guidance across Cursor, Claude, Codex, and GitHub Copilot clients.
+- Aligned public-source and RAI Ops marketplace submission documentation.
+
 ## 0.9.2 - 2026-09-03
 
 - Stopped turning every rendered control below 24×24 CSS pixels into a target-size workbook row.

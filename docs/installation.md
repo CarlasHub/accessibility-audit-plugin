@@ -21,7 +21,7 @@ The repository also contains marketplace metadata for private distribution. A ma
 
 You need:
 
-- Git access to the private repository;
+- Git;
 - Node.js 22 or later;
 - npm;
 - Cursor, Claude Code, Claude Desktop, Codex CLI, or a supported GitHub Copilot client, depending on the client being tested;
@@ -35,7 +35,7 @@ node --version
 npm --version
 ```
 
-If the GitHub repository is private, authenticate Git before cloning. For example, use your organisation's approved Git credential helper or `gh auth login`, then verify that the account can read the repository.
+If your organisation uses a private mirror, authenticate Git before cloning through its approved credential flow.
 
 ## 2. Prepare one isolated plugin checkout
 

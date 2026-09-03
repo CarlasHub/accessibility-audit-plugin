@@ -6,13 +6,15 @@ const publicDocs = [
   'README.md',
   'SUPPORT.md',
   'CONTRIBUTING.md',
+  'CODE_OF_CONDUCT.md',
   'docs/installation.md',
   'docs/user-guide.md',
   'docs/wcag-basics.md',
   'docs/reporting.md',
   'docs/testing-matrix.md',
   'docs/manual-verification.md',
-  'docs/marketplace-submission.md'
+  'docs/marketplace-submission.md',
+  'docs/accessibility-audit-demo-transcript.md'
 ];
 
 describe('user documentation', () => {
@@ -45,7 +47,9 @@ describe('user documentation', () => {
       readFile('docs/installation.md', 'utf8')
     ]);
 
-    expect(readme).not.toContain('Carla Goncalves');
+    expect(readme).toContain('Maintained by Radancy');
+    expect(readme).toContain('/.github/media/accessibility-audit-demo.mp4');
+    expect(readme).toContain('/docs/accessibility-audit-demo-transcript.md');
     expect(readme).toContain('--auditor "Auditor Name"');
     expect(installation).toContain('## 3A. Install in Cursor');
     expect(installation).toContain('## 3B. Install in Claude Code');

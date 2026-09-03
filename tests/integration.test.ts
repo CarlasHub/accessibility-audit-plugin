@@ -17,7 +17,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
     const outputDir = await mkdtemp(join(tmpdir(), 'a11y-browser-'));
     const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
     const options = resolveOptions({
-      auditor: 'Carla Goncalves',
+      auditor: 'Test Auditor',
       outputDir,
       allowedHosts: [],
       stagingOnly: false,
@@ -82,7 +82,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       const result = await executeAudit({
         inputs: [url],
         options: {
-          auditor: 'Carla Goncalves',
+          auditor: 'Test Auditor',
           outputDir,
           allowedHosts: ['127.0.0.1'],
           concurrency: 1,
@@ -93,7 +93,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       });
       expect(result.auditedPageCount).toBe(1);
       expect(result.validation.valid).toBe(true);
-      expect(result.validation.auditor).toBe('Carla Goncalves');
+      expect(result.validation.auditor).toBe('Test Auditor');
       expect(result.imageInventoryCount).toBeGreaterThan(0);
       expect(result.confirmedCount).toBeGreaterThan(0);
       const evidence = JSON.parse(await readFile(result.jsonPath, 'utf8')) as { findings: Array<{ ruleId: string; evidence: Array<{ screenshot?: string }> }> };
@@ -130,7 +130,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
         const result = await executeAudit({
           inputs: [url],
           options: {
-            auditor: 'Carla Goncalves',
+            auditor: 'Test Auditor',
             outputDir,
             allowedHosts: ['127.0.0.1'],
             concurrency: 1,

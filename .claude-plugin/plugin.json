@@ -1,10 +1,14 @@
 {
   "name": "accessibility-audit",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Evidence-backed WCAG 2.2 A/AA page audits with conservative link and tab checks, element screenshots, and validated Excel reporting.",
   "author": {
-    "name": "Carla Goncalves"
+    "name": "Radancy",
+    "url": "https://github.com/radancy-pe"
   },
+  "homepage": "https://github.com/carla-goncalves_radancy/accessibility-audit-plugin",
+  "repository": "https://github.com/carla-goncalves_radancy/accessibility-audit-plugin",
+  "license": "MIT",
   "skills": "./skills/",
   "mcpServers": "./.claude-mcp.json"
 }

@@ -35,7 +35,7 @@ For platform-specific diagnostics, follow the verification and troubleshooting s
 
 ## A marketplace plugin fails on first activation
 
-The generated Claude and Copilot payloads verify a bundled runtime checksum and install production dependencies into client-owned plugin data. They do not use the open project’s package manifest or lockfile. Confirm Node.js 22 or later and npm are visible to the client, that plugin data storage is writable, and that endpoint protection has not quarantined the bundled `.tgz`. Run `npm run test:marketplace` in the private source repository to reproduce the same install and MCP handshake without auditing a site.
+The generated Claude and Copilot payloads verify a bundled runtime checksum and install production dependencies into client-owned plugin data. They do not use the open project’s package manifest or lockfile. Confirm Node.js 22 or later and npm are visible to the client, that plugin data storage is writable, and that endpoint protection has not quarantined the bundled `.tgz`. Run `npm run test:marketplace` in the source repository to reproduce the same install and MCP handshake without auditing a site.
 
 ## The workbook will not open
 

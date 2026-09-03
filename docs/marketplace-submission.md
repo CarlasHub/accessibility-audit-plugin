@@ -1,6 +1,6 @@
 # RAI Ops marketplace submission
 
-This document prepares a release for `radancy-pe/rai-ops-plugin-marketplace`. It does not authorize or perform changes in that repository. Build and verify the release in this private source repository first; copy it to a marketplace fork only after the release is accepted for submission.
+This document prepares a release for `radancy-pe/rai-ops-plugin-marketplace`. It does not authorize or perform changes in that repository. Build and verify the release in this source repository first; copy it to a marketplace fork only after the release is accepted for submission.
 
 ## Supported marketplace payloads
 
@@ -14,19 +14,18 @@ This document prepares a release for `radancy-pe/rai-ops-plugin-marketplace`. It
 
 Each payload contains the audit skill, command guidance, MCP configuration, a checksum-verified application archive, and an installer/launcher. Production dependencies are bundled in the archive. On first activation, they are extracted into the client’s plugin data directory. Nothing is installed into the project open in the editor.
 
-Cursor and Codex support remain in the private source repository. The current RAI Ops marketplace has no Cursor or Codex harness, so this submission does not invent catalog entries for them.
+Cursor and Codex support remain in the source repository. The current RAI Ops marketplace has no Cursor or Codex harness, so this submission does not invent catalog entries for them.
 
 ## Release prerequisites
 
 - Node.js 22 or later and npm.
-- A clean private source checkout at the release commit.
-- Read access to the private source repository.
+- A clean source checkout at the release commit.
 - Permission to fork and open a pull request against the RAI Ops marketplace when submission is approved.
 - No customer audit output, screenshots, private URLs, or credentials in the source tree.
 
 The generated payload carries a bundled workbook template but no captured audit screenshots or customer data.
 
-## Build the candidate in the private repository
+## Build the candidate in the source repository
 
 ```sh
 npm ci
@@ -59,7 +58,7 @@ Confirm that all three install manifests have the same application version, tarb
 
 ## Copy into a marketplace fork
 
-After the private candidate is approved, create or update a fork of `radancy-pe/rai-ops-plugin-marketplace`. From the marketplace fork root, copy the generated `accessibility-audit` directory as one unit:
+After the release candidate is approved, create or update a fork of `radancy-pe/rai-ops-plugin-marketplace`. From the marketplace fork root, copy the generated `accessibility-audit` directory as one unit:
 
 ```sh
 cp -R /path/to/accessibility-audit/marketplace/rai-ops-plugin-marketplace/accessibility-audit ./accessibility-audit
@@ -93,7 +92,7 @@ Review the fork diff and confirm that it contains only:
 ## Pull-request and tag sequence
 
 1. Open the initial marketplace pull request with the three payloads and catalog entries.
-2. Record the private source commit and all verification results in the pull-request description.
+2. Record the source commit and all verification results in the pull-request description.
 3. After the marketplace pull request merges, create a marketplace tag named `accessibility-audit-v<version>` at the reviewed merge commit.
 4. Open a small follow-up pull request changing only the Claude catalog entry’s `source.ref` from `main` to that immutable tag.
 5. Re-run the marketplace validator. The accessibility-audit moving-reference warning must be gone.
@@ -139,9 +138,9 @@ If a released payload fails:
 
 1. Disable or remove the affected catalog entries through the marketplace’s normal review process.
 2. Do not rewrite the release tag.
-3. Fix the private source repository, increment the version, regenerate all payloads, and repeat the full verification and submission sequence.
+3. Fix the source repository, increment the version, regenerate all payloads, and repeat the full verification and submission sequence.
 4. Tell affected users to update the marketplace and plugin. Copilot caches installed plugins, so a local development payload must be reinstalled to pick up changes.
 
 ## Known verification boundary
 
-The private repository can prove compilation, unit behavior, real browser integration, payload structure, offline packaged dependency installation, MCP startup, tool discovery, workbook generation, and target-project isolation. It cannot prove installation inside every managed enterprise client configuration. Claude Code, Copilot CLI, and Copilot in VS Code must still be exercised manually in the intended organisation environment before broad release.
+The source repository can prove compilation, unit behavior, real browser integration, payload structure, offline packaged dependency installation, MCP startup, tool discovery, workbook generation, and target-project isolation. It cannot prove installation inside every managed enterprise client configuration. Claude Code, Copilot CLI, and Copilot in VS Code must still be exercised manually in the intended organisation environment before broad release.

@@ -1,10 +1,13 @@
 {
   "name": "accessibility-audit",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Isolated evidence-backed WCAG 2.2 auditing with desktop, mobile, reflow, link and tab checks, element screenshots, and validated Excel reporting.",
   "author": {
-    "name": "Carla Goncalves"
+    "name": "Radancy",
+    "url": "https://github.com/radancy-pe"
   },
+  "homepage": "https://github.com/carla-goncalves_radancy/accessibility-audit-plugin",
+  "repository": "https://github.com/carla-goncalves_radancy/accessibility-audit-plugin",
   "license": "MIT",
   "keywords": ["accessibility", "wcag", "axe", "playwright", "testing"],
   "logo": "assets/logo.svg",

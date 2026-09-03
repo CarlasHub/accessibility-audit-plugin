@@ -6,8 +6,10 @@ Describe the behavior changed and the reason.
 
 - [ ] `npm run check`
 - [ ] `npm run test:integration` when browser behavior changed
+- [ ] `npm run audit:dependencies`
+- [ ] Marketplace payload rebuilt and validated when packaging changed
 - [ ] Generated workbook validated when reporting changed
-- [ ] Cursor, Claude Code, and Codex manifests remain aligned
+- [ ] Cursor, Claude, Codex, and Copilot manifests remain aligned
 - [ ] README and support documentation match actual behavior
 
 ## Accessibility and evidence

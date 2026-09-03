@@ -13,6 +13,7 @@
 
 ```sh
 npm ci
+npm run audit:dependencies
 npx playwright install chromium
 npm run check
 npm run test:integration

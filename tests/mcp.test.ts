@@ -64,7 +64,7 @@ describe('MCP server', () => {
       expect(prompts.prompts.map((prompt) => prompt.name)).toContain('run-accessibility-audit');
       const response = await client.getPrompt({
         name: 'run-accessibility-audit',
-        arguments: { targets: 'https://preview.example.test/', auditor: 'Carla Goncalves' }
+        arguments: { targets: 'https://preview.example.test/', auditor: 'Test Auditor' }
       });
       const content = response.messages[0]?.content;
       expect(content?.type).toBe('text');

@@ -1,9 +1,12 @@
 {
   "name": "accessibility-audit-plugin",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "private": true,
   "description": "Cross-platform Codex, Claude Code, Claude Desktop, Cursor, and GitHub Copilot plugin for structured WCAG 2.2 accessibility audits.",
-  "author": "Carla Goncalves",
+  "author": {
+    "name": "Radancy",
+    "url": "https://github.com/radancy-pe"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/carla-goncalves_radancy/accessibility-audit-plugin.git"
@@ -64,7 +67,8 @@
     "mcp": "tsx src/mcp.ts",
     "validate:marketplace": "node scripts/validate-marketplace-payload.mjs",
     "test:marketplace": "node scripts/smoke-marketplace-payload.mjs",
-    "test:rai-marketplace": "node scripts/test-rai-ops-compatibility.mjs"
+    "test:rai-marketplace": "node scripts/test-rai-ops-compatibility.mjs",
+    "audit:dependencies": "npm audit --omit=dev --audit-level=high"
   },
   "engines": {
     "node": ">=22"

@@ -1,10 +1,22 @@
 # Accessibility Audit Plugin
 
+[![Verify plugin](https://github.com/carla-goncalves_radancy/accessibility-audit-plugin/actions/workflows/verify.yml/badge.svg)](https://github.com/carla-goncalves_radancy/accessibility-audit-plugin/actions/workflows/verify.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933.svg)](package.json)
+
 An isolated Codex, Claude Code, Cursor, GitHub Copilot CLI, and GitHub Copilot in VS Code plugin that helps teams find and document web accessibility barriers. Give it one or more page URLs—or a file containing URLs—and it runs repeatable checks in a headless browser, then produces an Excel report, detailed JSON evidence, and a portable ZIP.
+
+Maintained by Radancy and released under the MIT License.
 
 You do not need to know WCAG terminology to run the plugin. Start with the workflow below, use the [installation guide](docs/installation.md) for your client, then use the [plain-language user guide](docs/user-guide.md) and [WCAG basics](docs/wcag-basics.md) to understand the results.
 
 > **Important:** this plugin is an automated testing aid, not a WCAG certification. A report with no automated findings does not prove that a page is accessible. Screen-reader, physical-device, content-meaning, visual-judgment, and other guided checks remain manual. W3C likewise states that no evaluation tool alone can determine whether a site meets accessibility standards.
+
+## Demonstration
+
+[![Accessibility Audit Plugin demonstration: run an audit from Cursor, Claude, Codex, or Copilot](https://raw.githubusercontent.com/carla-goncalves_radancy/accessibility-audit-plugin/main/.github/media/accessibility-audit-demo-poster.png)](https://github.com/carla-goncalves_radancy/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4)
+
+[Watch the 75-second sanitised demonstration](https://github.com/carla-goncalves_radancy/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4) or read the [video transcript](https://github.com/carla-goncalves_radancy/accessibility-audit-plugin/blob/main/docs/accessibility-audit-demo-transcript.md). The recording has no audio. Customer content, URLs, paths, and audit results are deliberately obscured; the captions demonstrate the workflow rather than asserting an accessibility result.
 
 ## Start here
 
@@ -180,7 +192,7 @@ For a persistent local installation, add the built checkout as a Claude marketpl
 /reload-plugins
 ```
 
-Remote private-marketplace publication is a separate release workflow: the user needs repository access and the published snapshot must include runnable build output. See [Installation](docs/installation.md#3b-install-in-claude-code) and the [Claude Code plugin marketplace documentation](https://code.claude.com/docs/en/plugin-marketplaces).
+Team-marketplace publication is a separate release workflow: users need access to the destination marketplace, and the published snapshot must include runnable build output. See [Installation](docs/installation.md#3b-install-in-claude-code) and the [Claude Code plugin marketplace documentation](https://code.claude.com/docs/en/plugin-marketplaces).
 
 ## Claude Desktop Chat installation
 

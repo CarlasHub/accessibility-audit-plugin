@@ -11,7 +11,7 @@ function summaryWithScreenshot(screenshot: string): AuditSummary {
   return {
     status: 'completed',
     generatedAt: '2026-09-02T10:00:00.000Z',
-    auditor: 'Carla Goncalves',
+    auditor: 'Test Auditor',
     source: 'test',
     landingPageUrl: 'https://example.runmytests.com/en',
     requestedUrls: ['https://example.runmytests.com/en'],
@@ -65,7 +65,7 @@ describe('Excel report', () => {
       valid: true,
       findingRows: 1,
       imageInventoryRows: 1,
-      auditor: 'Carla Goncalves'
+      auditor: 'Test Auditor'
     }));
     expect(validation.errors).toEqual([]);
 

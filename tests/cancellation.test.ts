@@ -16,7 +16,7 @@ describe('graceful audit cancellation', () => {
     const result = await executeAudit({
       inputs: ['https://preview.example.test/jobs'],
       options: {
-        auditor: 'Carla Goncalves',
+        auditor: 'Test Auditor',
         outputDir,
         allowedHosts: ['preview.example.test']
       },

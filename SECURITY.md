@@ -20,7 +20,7 @@ Before release, run:
 
 ```sh
 npm ci
-npm audit
+npm run audit:dependencies
 npm run check
 npm run test:integration
 npm pack --dry-run

@@ -17,6 +17,7 @@ describe('plugin packaging', () => {
       json('.claude-plugin/plugin.json')
     ]);
     expect(manifests.map((manifest) => manifest.version)).toEqual(Array(4).fill(VERSION));
+    expect(manifests.map((manifest) => (manifest.author as { name?: string } | undefined)?.name)).toEqual(Array(4).fill('Radancy'));
     const marketplace = await json('.claude-plugin/marketplace.json') as {
       plugins?: Array<{ version?: string }>;
     };

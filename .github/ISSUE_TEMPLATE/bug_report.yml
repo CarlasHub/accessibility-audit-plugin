@@ -10,7 +10,7 @@ body:
     id: version
     attributes:
       label: Plugin version
-      placeholder: 0.6.0
+      placeholder: 0.9.3
     validations:
       required: true
   - type: dropdown
@@ -20,7 +20,10 @@ body:
       options:
         - Cursor
         - Claude Code
+        - Claude Desktop
         - Codex
+        - GitHub Copilot CLI
+        - GitHub Copilot in VS Code
         - Terminal CLI
     validations:
       required: true

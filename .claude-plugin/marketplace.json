@@ -1,17 +1,17 @@
 {
   "name": "accessibility-audit-marketplace",
   "owner": {
-    "name": "Carla Goncalves"
+    "name": "Radancy"
   },
   "metadata": {
-    "description": "Private distribution catalog for the Accessibility Audit plugin."
+    "description": "Radancy distribution catalog for the Accessibility Audit plugin."
   },
   "plugins": [
     {
       "name": "accessibility-audit",
       "source": "./",
       "description": "Evidence-backed WCAG 2.2 A/AA page audits with validated Excel and JSON evidence.",
-      "version": "0.9.2",
+      "version": "0.9.3",
       "category": "development",
       "tags": ["accessibility", "wcag", "testing"]
     }
