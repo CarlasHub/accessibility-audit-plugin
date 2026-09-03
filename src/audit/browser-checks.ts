@@ -368,15 +368,41 @@ export async function runKeyboardChecks(page: Page, maxTabStops: number): Promis
       if (!element || element === document.body) return null;
       const cssPath = (target: Element): string => {
         if (target.id) return `#${CSS.escape(target.id)}`;
-        const classes = [...target.classList].filter((value) => !/\d{3,}/.test(value)).slice(0, 2);
-        return `${target.tagName.toLowerCase()}${classes.length ? `.${classes.join('.')}` : ''}`;
+        const parts: string[] = [];
+        let current: Element | null = target;
+        while (current && current !== document.documentElement && parts.length < 6) {
+          let part = current.tagName.toLowerCase();
+          const stableClasses = [...current.classList].filter((value) => !/\d{3,}/.test(value)).slice(0, 2);
+          if (stableClasses.length) part += `.${stableClasses.map((value) => CSS.escape(value)).join('.')}`;
+          if (current.parentElement) {
+            const siblings = [...current.parentElement.children].filter((sibling) => sibling.tagName === current?.tagName);
+            if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+          }
+          parts.unshift(part);
+          current = current.parentElement;
+        }
+        return parts.join(' > ');
       };
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
-      const x = Math.min(Math.max(rect.left + rect.width / 2, 0), innerWidth - 1);
-      const y = Math.min(Math.max(rect.top + rect.height / 2, 0), innerHeight - 1);
-      const top = document.elementsFromPoint(x, y)[0];
-      const obscured = Boolean(top && top !== element && !element.contains(top) && !top.contains(element));
+      const visibleLeft = Math.max(rect.left, 0);
+      const visibleTop = Math.max(rect.top, 0);
+      const visibleRight = Math.min(rect.right, innerWidth);
+      const visibleBottom = Math.min(rect.bottom, innerHeight);
+      const hasVisibleArea = visibleRight > visibleLeft && visibleBottom > visibleTop;
+      const insetX = Math.min(4, Math.max(0, (visibleRight - visibleLeft) / 4));
+      const insetY = Math.min(4, Math.max(0, (visibleBottom - visibleTop) / 4));
+      const points = hasVisibleArea ? [
+        [(visibleLeft + visibleRight) / 2, (visibleTop + visibleBottom) / 2],
+        [visibleLeft + insetX, visibleTop + insetY],
+        [visibleRight - insetX, visibleTop + insetY],
+        [visibleLeft + insetX, visibleBottom - insetY],
+        [visibleRight - insetX, visibleBottom - insetY]
+      ] : [];
+      const obscured = points.length > 0 && points.every(([x, y]) => {
+        const top = document.elementsFromPoint(x!, y!)[0];
+        return Boolean(top && top !== element && !element.contains(top) && !top.contains(element));
+      });
       const labelledBy = element.getAttribute('aria-labelledby');
       const labelledText = labelledBy
         ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent?.trim() ?? '').join(' ')
@@ -426,8 +452,20 @@ export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckRe
   const base = await page.evaluate(() => {
     const cssPath = (element: Element): string => {
       if (element.id) return `#${CSS.escape(element.id)}`;
-      const classes = [...element.classList].filter((value) => !/\d{3,}/.test(value)).slice(0, 2);
-      return `${element.tagName.toLowerCase()}${classes.length ? `.${classes.join('.')}` : ''}`;
+      const parts: string[] = [];
+      let current: Element | null = element;
+      while (current && current !== document.documentElement && parts.length < 6) {
+        let part = current.tagName.toLowerCase();
+        const stableClasses = [...current.classList].filter((value) => !/\d{3,}/.test(value)).slice(0, 2);
+        if (stableClasses.length) part += `.${stableClasses.map((value) => CSS.escape(value)).join('.')}`;
+        if (current.parentElement) {
+          const siblings = [...current.parentElement.children].filter((sibling) => sibling.tagName === current?.tagName);
+          if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+        }
+        parts.unshift(part);
+        current = current.parentElement;
+      }
+      return parts.join(' > ');
     };
     const documentWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
     const overflowElements = [...document.body.querySelectorAll('*')]
@@ -464,10 +502,29 @@ export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckRe
 }
 
 function locatorDescription(locator: Locator): Promise<{ name: string; selector: string }> {
-  return locator.evaluate((element) => ({
-    name: (element.getAttribute('aria-label') ?? element.textContent?.trim() ?? '').trim(),
-    selector: element.id ? `#${CSS.escape(element.id)}` : element.tagName.toLowerCase()
-  }));
+  return locator.evaluate((element) => {
+    const cssPath = (target: Element): string => {
+      if (target.id) return `#${CSS.escape(target.id)}`;
+      const parts: string[] = [];
+      let current: Element | null = target;
+      while (current && current !== document.documentElement && parts.length < 6) {
+        let part = current.tagName.toLowerCase();
+        const stableClasses = [...current.classList].filter((value) => !/\d{3,}/.test(value)).slice(0, 2);
+        if (stableClasses.length) part += `.${stableClasses.map((value) => CSS.escape(value)).join('.')}`;
+        if (current.parentElement) {
+          const siblings = [...current.parentElement.children].filter((sibling) => sibling.tagName === current?.tagName);
+          if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+        }
+        parts.unshift(part);
+        current = current.parentElement;
+      }
+      return parts.join(' > ');
+    };
+    return {
+      name: (element.getAttribute('aria-label') ?? element.textContent?.trim() ?? '').replace(/\s+/g, ' ').trim(),
+      selector: cssPath(element)
+    };
+  });
 }
 
 export async function runDisclosureChecks(page: Page): Promise<DisclosureCheckResult[]> {

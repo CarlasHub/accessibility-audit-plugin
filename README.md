@@ -13,11 +13,13 @@ This plugin is an automated testing aid, not a WCAG certification. Screen-reader
 - Tab-component state, roving tabindex, arrow navigation, activation, and tab/panel relationship checks.
 - Conservative same-origin link validation for empty names, placeholders, missing fragments, confirmed 404/410 destinations, and server-error review signals.
 - Desktop, 390px mobile, and 320px reflow viewports.
-- Full-page fallback and issue-level element screenshots for confirmed failures and page blockers only.
+- Consent-banner detection and dismissal before interaction testing and evidence capture; reject or necessary-only actions are preferred.
+- Contextual component screenshots for confirmed failures, with the affected element outlined inside its navigation, form, tablist, card, section, or other component boundary.
+- Full-page screenshots only for page-level failures and blockers that have no component locator; a failed component capture never falls back to misleading full-page evidence.
 - Lightweight relative screenshot links in `Accessibility Report` and `Image Inventory`; images are not embedded in the workbook.
 - Graceful cancellation that writes and validates partial JSON and XLSX output.
 - URL, XLSX, CSV, TXT, and JSON page-list inputs.
-- One row for the same reusable component implementation and root cause across affected pages; page-specific findings remain separate.
+- One row for the same reusable component implementation, rendered name, and root cause across affected pages; generic unnamed controls also require the same rendered location, and page-specific findings remain separate.
 - Embedded instructions, command, skill, rules, MCP server, workbook template, validation, and CI checks.
 
 ## Requirements
@@ -182,16 +184,16 @@ Generated files:
 
 - `Accessibility_Audit_Report.xlsx` — validated 32-column accessibility workbook.
 - `audit-results.json` — complete evidence, classifications, requested/completed/skipped pages, and guided checks.
-- `screenshots/*.png` — full-page fallback screenshots for pages with confirmed failures or blockers.
-- `screenshots/elements/*.png` — confirmed-failure element screenshots when the element is visible and stable.
+- `screenshots/*.png` — full-page screenshots only for confirmed page-level failures or blockers without a component locator.
+- `screenshots/elements/*.png` — confirmed-failure component screenshots when the element is visible and stable; the affected element is outlined within surrounding component context.
 - `<output-directory>.zip` — portable copy of the workbook, JSON, and linked screenshot tree, written beside the output directory.
 
 Workbook worksheets:
 
 - `Accessibility Overview` — the single landing-page QA URL, scope, auditor, methods, totals, limitations, and outstanding guided checks.
-- `Accessibility Report` — one row per reusable component/root cause across affected pages; page-specific findings remain separate. All generated rows start as `Fail`, use an operational Assignment, and initialize Estimate to `0`.
-- `Page Inventroy` — requested/final URL, HTTP status, page title, viewport, and runtime errors.
-- `Image Inventory` — finding, page, viewport, selector, evidence type, screenshot filename, and relative link to the PNG.
+- `Accessibility Report` — one row per reusable component/root cause across affected pages; page-specific findings remain separate. Summary names the rendered component. Issue states the component, page location, affected Desktop/Mobile viewport, accessibility problem, user impact, and technical locator. All generated rows start as `Fail`, use an operational Assignment, and initialize Estimate to `0`.
+- `Page Inventroy` — requested/final URL, HTTP status, page title, viewport, consent-handling result, and runtime errors.
+- `Image Inventory` — finding, page, viewport, human-readable component, location, selector, evidence type, screenshot filename, and relative link to the PNG.
 - `Lookup WCAG 2.2` — hidden lookup data used by report formulas.
 
 The report contains no screen-reader worksheet or screen-reader execution result.
@@ -214,7 +216,8 @@ Link validation deliberately avoids broad crawling and destructive requests:
 - Empty link names include text, ARIA labels, valid labelled-by text, descendant image alternatives, input values, and titles before being reported.
 - Equivalent custom and axe link-name evidence is de-duplicated.
 - axe `region` best-practice nodes are summarized as one page-structure review row per page instead of one failed row per DOM node.
-- Target-size measurements are summarized as one page-specific review row across viewports; individual target measurements remain in JSON evidence.
+- Target-size review signals are reported per rendered control and consolidated only when the same component implementation and root cause recur.
+- Focus-obscuration checks sample the visible centre and four inset corners. A control is reported as confirmed only when unrelated content covers every sampled point; off-screen geometry and one covered point do not create a failure.
 
 Tab checks do not report optional Home/End support as a failure. They separately test orientation-aware arrow navigation, Enter/Space or automatic activation, `aria-selected`, tabindex behavior, `aria-controls`, `tabpanel`, and `aria-labelledby` relationships. Broken references and keyboard-unreachable tabs are confirmed; non-standard but potentially operable authoring patterns remain review items.
 
@@ -271,6 +274,7 @@ Use `list_guided_manual_checks`, the workbook Overview, and [docs/manual-verific
 - Dependencies are installed in the plugin directory, not the audited project.
 - Output is written only to the configured audit directory.
 - Only explicitly supplied URLs are audited.
+- Visible consent banners are dismissed before component checks and screenshot capture. The Page Inventory and JSON state whether a banner was found, which action was used, and whether it was dismissed.
 - Host allowlists and optional staging-only enforcement are available.
 - Browser checks are headless by default.
 - No credentials are collected or transmitted by the plugin. Authenticated pages use the browser context available to the launched audit session.
@@ -325,7 +329,7 @@ Inspect the JSON evidence, response status, final URL, authentication state, and
 
 ### Images are missing from Image Inventory
 
-Keep `captureScreenshots` enabled, confirm the output directory is writable, and inspect the JSON evidence path. Screenshots are intentionally generated only for confirmed failures and page blockers. Keep the workbook beside its `screenshots` directory or use the generated ZIP so the relative links continue to work.
+Keep `captureScreenshots` enabled, confirm the output directory is writable, and inspect the JSON evidence path. Screenshots are intentionally generated only for confirmed failures and page blockers. A component whose selector cannot be resolved is left without a screenshot instead of receiving unrelated full-page evidence. Keep the workbook beside its `screenshots` directory or use the generated ZIP so the relative links continue to work.
 
 ## Support and contribution
 

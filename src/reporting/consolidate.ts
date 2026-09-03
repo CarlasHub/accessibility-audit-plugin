@@ -53,7 +53,16 @@ export function consolidateFindings(findings: Finding[]): Finding[] {
   const consolidated = new Map<string, Finding>();
   for (const finding of localFindings.values()) {
     const pageIdentity = uniqueSorted(finding.urls).join('|');
-    const scope = finding.sharedComponentKey ? `shared:${finding.sharedComponentKey}` : `page:${pageIdentity}`;
+    const renderedName = finding.componentName ?? finding.component;
+    const renderedIdentity = JSON.stringify({
+      name: renderedName,
+      // Generic unnamed controls can share identical markup across unrelated widgets.
+      // Their rendered location is therefore required before cross-page consolidation.
+      location: /^Unnamed\b/i.test(renderedName) ? finding.componentLocation ?? '' : ''
+    });
+    const scope = finding.sharedComponentKey
+      ? `shared:${finding.sharedComponentKey}|rendered:${renderedIdentity}`
+      : `page:${pageIdentity}`;
     const key = `${scope}|${finding.component}|${rootCause(finding)}`;
     const existing = consolidated.get(key);
     if (!existing) {

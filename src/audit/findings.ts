@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { AxeViolationResult, Finding, PageAudit, Severity, ViewportAudit } from '../types.js';
+import type { AxeViolationResult, ElementContext, Finding, PageAudit, Severity, ViewportAudit } from '../types.js';
 
 function fingerprint(value: string): string {
   return createHash('sha1').update(value).digest('hex').slice(0, 12);
@@ -12,6 +12,81 @@ function normalizeComponent(selector: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 180) || 'page';
+}
+
+function conciseList(values: string[], limit = 4): string {
+  const unique = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  if (unique.length <= limit) return unique.join('; ');
+  return `${unique.slice(0, limit).join('; ')}; and ${unique.length - limit} more`;
+}
+
+function enrichComponent(finding: Finding, audit: ViewportAudit): Finding {
+  const contexts = finding.selectors
+    .map((selector) => audit.elementContexts.find((context) => context.selector === selector))
+    .filter((context): context is ElementContext => Boolean(context));
+  if (contexts.length === 0) {
+    return {
+      ...finding,
+      componentName: finding.component === 'page' ? 'Requested page' : finding.component,
+      componentLocation: 'Page-level or structural check; see the affected page URL and technical locator.'
+    };
+  }
+  return {
+    ...finding,
+    componentName: conciseList(contexts.map((context) => context.componentName)),
+    componentLocation: conciseList(contexts.map((context) => context.location))
+  };
+}
+
+function axeAccessibilityIssue(violation: AxeViolationResult, failureSummary?: string): string {
+  const failure = (failureSummary ?? '').replace(/^Fix (any|all) of the following:\s*/i, '').replace(/\s+/g, ' ').trim();
+  const direct: Record<string, string> = {
+    'aria-command-name': 'The interactive control has no accessible name, so its purpose is not programmatically available.',
+    'button-name': 'The button has no accessible name, so assistive technology cannot identify what it does.',
+    'input-button-name': 'The input button has no accessible name, so assistive technology cannot identify what it does.',
+    'link-name': 'The link has no accessible name, so its destination or purpose is not programmatically available.',
+    'image-alt': 'The image does not provide the required text alternative.',
+    label: 'The form control does not have a programmatically associated accessible name.',
+    'color-contrast': 'The text does not meet the minimum contrast requirement against its rendered background.',
+    'aria-hidden-focus': 'Focusable controls are inside content marked aria-hidden="true". Screen readers omit that content even though keyboard focus can still enter it.',
+    'target-size': 'The rendered touch target does not meet the minimum target-size or spacing requirement.',
+    'aria-valid-attr-value': 'The ARIA attribute value is invalid and may not be exposed reliably to assistive technology.',
+    'aria-required-attr': 'The ARIA role is missing a required state or property.',
+    'duplicate-id-aria': 'An id used by an ARIA or label relationship is duplicated, so the programmatic relationship is ambiguous.'
+  };
+  const issue = direct[violation.id]
+    ?? `The component does not meet this accessibility requirement: ${violation.help.replace(/^Ensure\s+/i, '').replace(/\.$/, '')}.`;
+  return failure && !issue.includes(failure) ? `${issue} ${failure}` : issue;
+}
+
+function axeUserImpact(ruleId: string): string {
+  if (ruleId === 'color-contrast') return 'People with low vision or colour-vision deficiencies may be unable to read the text.';
+  if (ruleId === 'target-size') return 'Touch users and people with limited dexterity may miss the target or activate an adjacent control.';
+  if (ruleId === 'aria-hidden-focus') return 'Keyboard focus can move to content that screen readers do not announce, leaving keyboard and screen-reader users without understandable context.';
+  if (/command-name|button-name|link-name|input-button-name/.test(ruleId)) return 'Screen-reader users cannot identify the control or link, and voice-control users cannot reliably request it by name.';
+  if (/image-alt/.test(ruleId)) return 'Screen-reader users may miss the image purpose or hear an unhelpful filename.';
+  if (/label/.test(ruleId)) return 'Screen-reader users may not know what information the field requires, and voice-control users may be unable to target it by its visible label.';
+  if (/aria|role|duplicate-id/.test(ruleId)) return 'Assistive technology may receive missing, invalid, or ambiguous role, state, name, or relationship information.';
+  return 'People using assistive technology may be unable to perceive, understand, or operate the component as intended.';
+}
+
+function axeRemediation(violation: AxeViolationResult): string {
+  const direct: Record<string, string> = {
+    'aria-command-name': 'Give the control a concise accessible name that describes its action. Prefer visible text; otherwise use aria-labelledby to reference visible text or aria-label when no visible label is available.',
+    'button-name': 'Give the button concise visible text that describes its action. If the button is icon-only, provide one accessible name with aria-label or aria-labelledby.',
+    'input-button-name': 'Set a meaningful value on the input button or replace it with a native button containing descriptive visible text.',
+    'link-name': 'Give the link concise visible text that describes its destination. For an image-only link, provide a meaningful image alternative or label the link once without duplicating its name.',
+    'image-alt': 'Add concise alt text that communicates the image purpose. Use alt="" only when the image is decorative and contributes no information or function.',
+    label: 'Add a persistent visible label and associate it with the form control using native label markup and matching for/id values. Use aria-labelledby only when an existing visible label must be referenced.',
+    'color-contrast': 'Change the foreground colour, background colour, font size, or font weight so normal text reaches at least 4.5:1 contrast and large text reaches at least 3:1 in every affected state.',
+    'aria-hidden-focus': 'Remove focusable descendants from the aria-hidden region by hiding or disabling them when the region is unavailable, or remove aria-hidden when the content must remain operable and exposed.',
+    'target-size': 'Increase the clickable area to at least 24 by 24 CSS pixels or provide sufficient unobstructed spacing to meet the WCAG 2.5.8 exception.',
+    'aria-valid-attr-value': 'Replace the invalid ARIA value with a value permitted for that attribute and keep it synchronized with the rendered component state.',
+    'aria-required-attr': 'Add the required ARIA state or property for the role and update it whenever the component state changes.',
+    'duplicate-id-aria': 'Give every referenced element a unique id and update each aria-labelledby, aria-describedby, aria-controls, for, or other id reference to the intended unique target.'
+  };
+  return direct[violation.id]
+    ?? `Correct the component markup and behaviour so it satisfies this requirement: ${violation.help.replace(/^Ensure\s+/i, '').replace(/\.$/, '')}.`;
 }
 
 function stableComponentSignature(signature: string): string {
@@ -101,10 +176,10 @@ function axeFindings(audit: ViewportAudit): Finding[] {
         severity: severityFromAxe(violation.impact),
         wcag: wcag.length ? wcag : ['Best Practice'],
         summary: violation.help,
-        issue: `${violation.description} ${node.failureSummary ?? ''}`.trim(),
-        impact: `A person using assistive technology may be unable to perceive or operate this ${component} component as intended.`,
+        issue: axeAccessibilityIssue(violation, node.failureSummary),
+        impact: axeUserImpact(violation.id),
         testing: `axe-core ${violation.id} failed at ${audit.viewport.name}. ${isWcagViolation ? 'The rule maps to the listed WCAG criterion.' : 'This is an axe best-practice signal without a direct WCAG success-criterion mapping and requires review.'} Rule: ${violation.helpUrl}`,
-        remediation: `${node.failureSummary?.replace(/^Fix (any|all) of the following:\s*/i, '') || `Correct the markup so it satisfies the ${violation.help} rule.`} Retest the component in every affected state.`,
+        remediation: `${axeRemediation(violation)} Retest the component in every affected state.`,
         component,
         sharedComponentKey: createSharedComponentKey(component, `${violation.id}|${node.html}|${node.failureSummary ?? ''}`),
         urls: [audit.url],
@@ -123,6 +198,7 @@ function screenshotFor(audit: ViewportAudit, selector?: string): string {
   if (selector) {
     const elementScreenshot = audit.elementScreenshots.find((item) => item.selector === selector);
     if (elementScreenshot) return elementScreenshot.path;
+    if (!/^(?:page|html|body)$/i.test(selector.trim())) return '';
   }
   return audit.screenshot;
 }
@@ -471,24 +547,25 @@ function domFindings(audit: ViewportAudit): Finding[] {
   }
 
   const obscured = audit.keyboard.sequence.filter((item) => item.obscured);
-  if (obscured.length) {
-    const selectors = obscured.map((item) => item.selector);
+  for (const item of obscured) {
+    const component = normalizeComponent(item.selector);
     findings.push(makeFinding({
-      identity: `focus-obscured|${selectors.map(normalizeComponent).join('|')}`,
+      identity: `focus-obscured|${component}`,
       ruleId: 'keyboard-focus-obscured',
       classification: 'confirmed',
       severity: 'Serious',
       wcag: ['2.4.11'],
       summary: 'Keyboard focus is obscured',
-      issue: 'One or more sequentially focused controls were covered at their centre point by another rendered element.',
+      issue: `The focused control “${item.name || 'unnamed'}” was entirely covered at all sampled points within its visible bounds.`,
       impact: 'Keyboard users may not be able to see which control currently has focus.',
-      testing: 'The page was traversed with Tab and hit-testing was performed at each focused element.',
+      testing: `The page was traversed with Tab. At position ${item.index}, hit-testing at the centre and four inset corners found unrelated rendered content above the focused control at every sampled point.`,
       remediation: 'Ensure focused controls are not hidden by sticky headers, cookie banners, dialogs, or other overlays. Scroll the focused item into an unobscured area and manage overlay focus correctly.',
-      component: normalizeComponent(selectors[0] ?? 'page'),
+      component,
+      sharedComponentKey: createSharedComponentKey(component, `keyboard-focus-obscured|${item.role}|${item.name}`),
       urls: [audit.url],
       viewports: [audit.viewport.name],
-      selectors,
-      evidence: obscured.map((item) => evidence('keyboard', item.selector, `Tab position ${item.index}: ${item.name}`)),
+      selectors: [item.selector],
+      evidence: [evidence('keyboard', item.selector, `Tab position ${item.index}: ${item.name}; role: ${item.role}; all sampled points obscured.`)],
       assignment: 'Development',
       effort: 'Medium',
       translationRequired: 'No'
@@ -496,50 +573,58 @@ function domFindings(audit: ViewportAudit): Finding[] {
   }
 
   const noIndicator = audit.keyboard.sequence.filter((item) => !item.visibleIndicator);
-  if (noIndicator.length) {
-    const selectors = noIndicator.map((item) => item.selector);
+  for (const item of noIndicator) {
+    const component = normalizeComponent(item.selector);
     findings.push(makeFinding({
-      identity: `focus-indicator|${selectors.map(normalizeComponent).join('|')}`,
+      identity: `focus-indicator|${component}`,
       ruleId: 'focus-indicator-review',
       classification: 'review',
       severity: 'Serious',
       wcag: ['2.4.7', '2.4.11'],
       summary: 'Review keyboard focus visibility',
-      issue: 'The computed focused style did not expose an outline, box shadow, or border for one or more controls. Other visual changes may still provide a valid indicator and require manual comparison.',
+      issue: `The focused control “${item.name || 'unnamed'}” did not expose an outline, box shadow, or border in its computed focused style. Other visual changes may still provide a valid indicator and require manual comparison.`,
       impact: 'Keyboard users may lose track of their position on the page.',
-      testing: 'Computed styles were sampled during sequential Tab navigation.',
+      testing: `Computed styles were sampled at Tab position ${item.index} during sequential keyboard navigation.`,
       remediation: 'Provide a persistent, high-contrast focus indicator that is not clipped or obscured and is visible against every background and component state.',
-      component: normalizeComponent(selectors[0] ?? 'page'),
+      component,
+      sharedComponentKey: createSharedComponentKey(component, `focus-indicator|${item.role}|${item.name}`),
       urls: [audit.url],
       viewports: [audit.viewport.name],
-      selectors,
-      evidence: noIndicator.slice(0, 20).map((item) => evidence('keyboard', item.selector, `Tab position ${item.index}: ${item.name}`)),
+      selectors: [item.selector],
+      evidence: [evidence('keyboard', item.selector, `Tab position ${item.index}: ${item.name}; role: ${item.role}`)],
       assignment: 'Mixed',
       effort: 'Small',
       translationRequired: 'No'
     }));
   }
 
-  if (audit.dom.smallTargets.length) {
-    const selectors = audit.dom.smallTargets.map((item) => item.selector);
+  const axeTargetSelectors = new Set(
+    audit.axe
+      .filter((violation) => violation.id === 'target-size')
+      .flatMap((violation) => violation.nodes.flatMap((node) => node.target))
+      .map(normalizeComponent)
+  );
+  for (const item of audit.dom.smallTargets.filter((target) => !axeTargetSelectors.has(normalizeComponent(target.selector)))) {
+    const component = normalizeComponent(item.selector);
     findings.push(makeFinding({
-      identity: `target-size|${selectors.map(normalizeComponent).join('|')}`,
+      identity: `target-size|${component}`,
       ruleId: 'target-size-review',
       classification: 'review',
       severity: 'Moderate',
       wcag: ['2.5.8'],
       summary: 'Review controls smaller than 24 by 24 CSS pixels',
-      issue: 'One or more visible targets measured below 24 CSS pixels in at least one dimension. Spacing and other WCAG exceptions require manual validation.',
+      issue: `The “${item.name || 'unnamed'}” target measured ${item.width}×${item.height} CSS pixels. Spacing and other WCAG exceptions require manual validation.`,
       impact: 'People with limited dexterity may activate an adjacent control accidentally or be unable to select the target reliably.',
       testing: 'Rendered target bounds were measured. This is a review issue because WCAG 2.5.8 includes spacing and other exceptions.',
       remediation: 'Increase each target to at least 24 by 24 CSS pixels or provide enough unobstructed spacing to satisfy the WCAG spacing exception. Prefer larger touch areas for primary mobile controls.',
-      component: 'interactive targets',
+      component,
+      sharedComponentKey: createSharedComponentKey(component, `target-size|${item.name}`),
       urls: [audit.url],
       viewports: [audit.viewport.name],
-      selectors,
-      evidence: audit.dom.smallTargets.slice(0, 30).map((item) => evidence('dom', item.selector, `${item.width}×${item.height}px; name: ${item.name}`)),
+      selectors: [item.selector],
+      evidence: [evidence('dom', item.selector, `${item.width}×${item.height}px; name: ${item.name}`)],
       assignment: 'Mixed',
-      effort: 'Medium',
+      effort: 'Small',
       translationRequired: 'No'
     }));
   }
@@ -792,7 +877,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
 export function findingsFromPage(page: PageAudit): Finding[] {
   return page.viewports
     .filter((audit) => !audit.cancelled)
-    .flatMap((audit) => [...axeFindings(audit), ...domFindings(audit)])
+    .flatMap((audit) => [...axeFindings(audit), ...domFindings(audit)].map((finding) => enrichComponent(finding, audit)))
     .map((finding) => {
       if (finding.classification === 'confirmed' || finding.classification === 'blocker') return finding;
       return {

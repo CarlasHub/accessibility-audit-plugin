@@ -29,6 +29,15 @@ function viewport(overrides: Partial<ViewportAudit> = {}): ViewportAudit {
     disclosures: [],
     tabs: [],
     links: [],
+    consent: {
+      found: false,
+      dismissed: false,
+      action: 'none',
+      buttonName: '',
+      surfaceSelector: '',
+      frameUrl: ''
+    },
+    elementContexts: [],
     screenshot: '/tmp/page.png',
     elementScreenshots: [],
     errors: [],
@@ -104,6 +113,35 @@ describe('evidence-gated link and tab findings', () => {
     expect(findings.filter((finding) => finding.ruleId === 'axe-aria-command-name')).toHaveLength(1);
     expect(findings.some((finding) => finding.ruleId === 'link-empty-accessible-name')).toBe(false);
     expect(findings.some((finding) => finding.ruleId === 'interactive-control-no-name')).toBe(false);
+  });
+
+  it('adds the rendered component name and page location to a finding', () => {
+    const findings = findingsFromPage(page(viewport({
+      axe: [{
+        id: 'button-name',
+        impact: 'serious',
+        tags: ['wcag2a', 'wcag412'],
+        description: 'Ensure buttons have discernible text',
+        help: 'Buttons must have discernible text',
+        helpUrl: 'https://dequeuniversity.com/rules/axe/4.13/button-name',
+        nodes: [{ html: '<button id="search-toggle"></button>', target: ['#search-toggle'] }]
+      }],
+      elementContexts: [{
+        selector: '#search-toggle',
+        tagName: 'button',
+        role: 'button',
+        accessibleName: '',
+        visibleText: '',
+        componentName: 'Unnamed button',
+        location: 'Within the “Primary” navigation landmark',
+        captureSelector: 'nav'
+      }]
+    })));
+    expect(findings[0]).toEqual(expect.objectContaining({
+      componentName: 'Unnamed button',
+      componentLocation: 'Within the “Primary” navigation landmark',
+      issue: expect.stringContaining('button has no accessible name')
+    }));
   });
 
   it('reports an unavailable page only as a blocker and does not infer component failures from the empty fallback DOM', () => {

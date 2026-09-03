@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.0 - 2026-09-03
+
+- Name the rendered component and page location in every finding and state affected Desktop/Mobile viewports directly in the Issue field.
+- Structure Issue text around the accessibility problem, user impact, and technical locator instead of exposing raw scanner wording alone.
+- Dismiss visible consent banners before interaction checks and screenshots, preferring reject or necessary-only actions, and record the result in JSON and Page Inventory.
+- Capture confirmed component evidence at a surrounding component boundary with the affected element outlined.
+- Restrict full-page screenshots to page-level failures and blockers without a component locator.
+- Reduce focus-obscuration false positives by requiring all five sampled points in the visible focus bounds to be covered.
+- Report target-size, focus-indicator, and focus-obscuration signals per component before cross-page consolidation, and require unnamed controls to share a rendered location before they can merge across pages.
+- Extend workbook validation to reject incomplete Issue context and component findings linked to full-page screenshots.
+
 ## 0.7.0 - 2026-09-03
 
 - Consolidate the same reusable component and root cause into one finding row across pages while preserving page-specific findings.

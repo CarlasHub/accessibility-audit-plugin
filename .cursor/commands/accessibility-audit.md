@@ -7,7 +7,7 @@ Call the installed MCP tool `run_accessibility_audit` once with the URL(s) or pa
 
 Before execution, confirm the exact pages/input, the single landing-page QA URL, and the auditor in one interaction. Use the tool form when supported. The editable auditor default is `Automated`; the landing page defaults to the first resolved URL. If no target was supplied, ask for explicit HTTP(S) URLs or one XLSX, CSV, TXT, or JSON page-list file. Do not request a report template because the plugin bundles it.
 
-Use headless desktop, mobile, and 320px reflow checks with screenshots enabled for confirmed failures and blockers. Surface progress. If the user stops the tool, allow partial JSON/XLSX/ZIP generation and validation to finish, then report the run as cancelled.
+Use headless desktop, mobile, and 320px reflow checks. Dismiss visible consent banners before interaction checks and evidence capture. Keep contextual component screenshots enabled for confirmed failures and blockers; allow full-page screenshots only for page-level findings without a component locator. Surface progress. If the user stops the tool, allow partial JSON/XLSX/ZIP generation and validation to finish, then report the run as cancelled.
 
 Keep the target repository read-only. Do not install dependencies in or modify the target project, its governance, rules, CI, hooks, manifests, lockfiles, or source. Write only to the configured audit output directory.
 

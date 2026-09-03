@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
 import axe from 'axe-core';
 import type {
   AuditExecutionContext,
@@ -9,7 +9,9 @@ import type {
   AuditProgressEvent,
   AuditSummary,
   AxeViolationResult,
+  ConsentHandlingResult,
   DomCheckResult,
+  ElementContext,
   ElementScreenshot,
   Finding,
   PageAudit,
@@ -17,6 +19,7 @@ import type {
 } from '../types.js';
 import { REQUIRED_MANUAL_CHECKS } from './manual-checks.js';
 import { runDisclosureChecks, runDomChecks, runKeyboardChecks, runLinkChecks, runResponsiveChecks, runTabChecks } from './browser-checks.js';
+import { collectElementContexts, dismissConsentBanner } from './page-preparation.js';
 import { findingsFromPage } from './findings.js';
 import { assertRemediationOnlyNotes, consolidateFindings } from '../reporting/consolidate.js';
 import { singleLineText } from '../text.js';
@@ -108,8 +111,80 @@ export function needsFullPageScreenshotFallback(
   const capturedSelectors = new Set(elementScreenshots.map((item) => item.selector));
   return findings.some((finding) =>
     (finding.classification === 'confirmed' || finding.classification === 'blocker')
-    && (finding.selectors.length === 0 || !finding.selectors.some((selector) => capturedSelectors.has(selector)))
+    && (
+      finding.selectors.length === 0
+      || finding.selectors.every((selector) => /^(?:page|html|body)$/i.test(selector.trim()))
+    )
+    && !finding.selectors.some((selector) => capturedSelectors.has(selector))
   );
+}
+
+function elementContextFor(contexts: ElementContext[], selector: string): ElementContext | undefined {
+  return contexts.find((context) => context.selector === selector);
+}
+
+async function resolveEvidenceTarget(
+  page: Page,
+  selector: string,
+  context?: ElementContext
+): Promise<Locator | null> {
+  try {
+    const direct = page.locator(selector).first();
+    if ((await direct.count()) > 0 && await direct.isVisible().catch(() => false)) return direct;
+  } catch {
+    // Continue with the evidence-backed role/name fallback below.
+  }
+  if (context?.accessibleName) {
+    const supportedRoles = new Set([
+      'alert', 'alertdialog', 'button', 'checkbox', 'combobox', 'dialog', 'heading', 'image', 'link',
+      'listbox', 'menu', 'menuitem', 'navigation', 'option', 'radio', 'region', 'searchbox', 'slider',
+      'spinbutton', 'switch', 'tab', 'table', 'textbox', 'treeitem'
+    ]);
+    if (supportedRoles.has(context.role)) {
+      const byRole = page.getByRole(
+        context.role as Parameters<Page['getByRole']>[0],
+        { name: context.accessibleName, exact: true }
+      ).first();
+      if ((await byRole.count()) > 0 && await byRole.isVisible().catch(() => false)) return byRole;
+    }
+  }
+  return null;
+}
+
+async function contextualCaptureLocator(
+  page: Page,
+  target: Locator,
+  context?: ElementContext
+): Promise<Locator> {
+  const viewport = page.viewportSize();
+  const maxHeight = Math.max(240, (viewport?.height ?? 900) * 0.85);
+  const suitable = async (locator: Locator, minimumHeight = 56): Promise<boolean> => {
+    if (!(await locator.isVisible().catch(() => false))) return false;
+    const box = await locator.boundingBox().catch(() => null);
+    return Boolean(box && box.width >= 120 && box.height >= minimumHeight && box.height <= maxHeight);
+  };
+
+  if (context?.captureSelector) {
+    try {
+      const component = page.locator(context.captureSelector).first();
+      if ((await component.count()) > 0 && await suitable(component, 20)) return component;
+    } catch {
+      // Fall back to a rendered ancestor around the target.
+    }
+  }
+
+  let ancestor = target;
+  let best = target;
+  for (let depth = 0; depth < 5; depth += 1) {
+    const parent = ancestor.locator('xpath=..');
+    if ((await parent.count()) === 0) break;
+    ancestor = parent;
+    if (await suitable(ancestor)) {
+      best = ancestor;
+      break;
+    }
+  }
+  return best;
 }
 
 async function captureElementScreenshots(
@@ -117,25 +192,54 @@ async function captureElementScreenshots(
   url: string,
   viewportName: string,
   outputDir: string,
-  selectors: string[]
+  selectors: string[],
+  elementContexts: ElementContext[]
 ): Promise<ElementScreenshot[]> {
   const directory = resolve(outputDir, 'screenshots', 'elements');
   await mkdir(directory, { recursive: true });
   const screenshots: ElementScreenshot[] = [];
   for (const [index, selector] of selectors.entries()) {
+    let target: Locator | null = null;
+    let originalStyle: string | null = null;
     try {
-      const locator = page.locator(selector).first();
-      if ((await locator.count()) === 0 || !(await locator.isVisible().catch(() => false))) continue;
-      await locator.scrollIntoViewIfNeeded();
+      const context = elementContextFor(elementContexts, selector);
+      target = await resolveEvidenceTarget(page, selector, context);
+      if (!target) continue;
+      await target.scrollIntoViewIfNeeded();
+      const capture = await contextualCaptureLocator(page, target, context);
+      originalStyle = await target.getAttribute('style');
+      await target.evaluate((element) => {
+        const targetElement = element as HTMLElement;
+        targetElement.style.setProperty('outline', '4px solid #d0021b', 'important');
+        targetElement.style.setProperty('outline-offset', '3px', 'important');
+      });
       const selectorHash = createHash('sha1').update(selector).digest('hex').slice(0, 10);
       const path = resolve(directory, `${safeSlug(url)}-${viewportName}-${String(index + 1).padStart(3, '0')}-${selectorHash}.png`);
-      await locator.screenshot({ path, animations: 'disabled' });
+      await capture.screenshot({ path, animations: 'disabled', caret: 'hide' });
       screenshots.push({ selector, path });
     } catch {
-      // A detached, invalid, or non-rendered selector retains the full-page fallback evidence.
+      // A detached, invalid, or non-rendered component is left without misleading full-page evidence.
+    } finally {
+      if (target) {
+        await target.evaluate((element, style) => {
+          if (style === null) element.removeAttribute('style');
+          else element.setAttribute('style', style);
+        }, originalStyle).catch(() => undefined);
+      }
     }
   }
   return screenshots;
+}
+
+function emptyConsent(): ConsentHandlingResult {
+  return {
+    found: false,
+    dismissed: false,
+    action: 'none',
+    buttonName: '',
+    surfaceSelector: '',
+    frameUrl: ''
+  };
 }
 
 async function auditViewport(
@@ -149,6 +253,7 @@ async function auditViewport(
   let status: number | null = null;
   let finalUrl = url;
   let title = '';
+  let consent = emptyConsent();
   const screenshot = resolve(options.outputDir, 'screenshots', `${safeSlug(url)}-${viewport.name}.png`);
   let context: Awaited<ReturnType<Browser['newContext']>> | undefined;
   const closeOnAbort = (): void => { void context?.close().catch(() => undefined); };
@@ -175,6 +280,11 @@ async function auditViewport(
     await page.waitForLoadState('networkidle', { timeout: Math.min(options.timeoutMs, 5_000) }).catch(() => undefined);
     finalUrl = page.url();
     title = await page.title();
+    consent = await dismissConsentBanner(page);
+    if (consent.error) errors.push(`Consent handling error: ${consent.error}`);
+    if (consent.found && !consent.dismissed) {
+      errors.push('A visible consent banner could not be dismissed before accessibility interaction testing.');
+    }
     const axeResults = await runAxe(page).catch((error) => {
       errors.push(`axe-core error: ${error instanceof Error ? error.message : String(error)}`);
       return [];
@@ -199,24 +309,40 @@ async function auditViewport(
       disclosures,
       tabs,
       links,
+      consent,
+      elementContexts: [],
       screenshot: '',
       elementScreenshots: [],
       errors
     };
-    const screenshotFindings = findingsFromPage({ url, viewports: [preliminaryAudit] })
+    const allViewportFindings = findingsFromPage({ url, viewports: [preliminaryAudit] });
+    preliminaryAudit.elementContexts = await collectElementContexts(
+      page,
+      allViewportFindings.flatMap((finding) => finding.selectors)
+    );
+    const screenshotFindings = allViewportFindings
       .filter((finding) => finding.classification === 'confirmed' || finding.classification === 'blocker');
     if (options.captureScreenshots && screenshotFindings.length > 0) {
-      preliminaryAudit.elementScreenshots = await captureElementScreenshots(
-        page,
-        url,
-        viewport.name,
-        options.outputDir,
-        screenshotCandidatesForFindings(screenshotFindings)
-      );
-      if (needsFullPageScreenshotFallback(screenshotFindings, preliminaryAudit.elementScreenshots)) {
-        await mkdir(resolve(options.outputDir, 'screenshots'), { recursive: true });
-        await page.screenshot({ path: screenshot, fullPage: true });
-        preliminaryAudit.screenshot = screenshot;
+      await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => undefined);
+      await page.waitForLoadState('networkidle', { timeout: Math.min(options.timeoutMs, 5_000) }).catch(() => undefined);
+      const captureConsent = await dismissConsentBanner(page);
+      const evidenceSurfaceClear = !captureConsent.found || captureConsent.dismissed;
+      if (!evidenceSurfaceClear) {
+        errors.push('Screenshot capture was skipped because the visible consent banner could not be dismissed.');
+      } else {
+        preliminaryAudit.elementScreenshots = await captureElementScreenshots(
+          page,
+          url,
+          viewport.name,
+          options.outputDir,
+          screenshotCandidatesForFindings(screenshotFindings),
+          preliminaryAudit.elementContexts
+        );
+        if (needsFullPageScreenshotFallback(screenshotFindings, preliminaryAudit.elementScreenshots)) {
+          await mkdir(resolve(options.outputDir, 'screenshots'), { recursive: true });
+          await page.screenshot({ path: screenshot, fullPage: true, animations: 'disabled', caret: 'hide' });
+          preliminaryAudit.screenshot = screenshot;
+        }
       }
     }
     return preliminaryAudit;
@@ -236,6 +362,8 @@ async function auditViewport(
       disclosures: [],
       tabs: [],
       links: [],
+      consent,
+      elementContexts: [],
       screenshot: '',
       elementScreenshots: [],
       errors,

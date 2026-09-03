@@ -40,6 +40,27 @@ export interface EvidenceItem {
   screenshot?: string;
 }
 
+export interface ElementContext {
+  selector: string;
+  tagName: string;
+  role: string;
+  accessibleName: string;
+  visibleText: string;
+  componentName: string;
+  location: string;
+  captureSelector: string;
+}
+
+export interface ConsentHandlingResult {
+  found: boolean;
+  dismissed: boolean;
+  action: 'reject' | 'necessary' | 'accept' | 'none';
+  buttonName: string;
+  surfaceSelector: string;
+  frameUrl: string;
+  error?: string;
+}
+
 export interface Finding {
   key: string;
   ruleId: string;
@@ -52,6 +73,10 @@ export interface Finding {
   testing: string;
   remediation: string;
   component: string;
+  /** Human-readable rendered component name used in reports. */
+  componentName?: string;
+  /** Human-readable page region or section used to locate the component. */
+  componentLocation?: string;
   /**
    * Stable evidence-backed identity for a reusable component implementation.
    * Findings without this value are consolidated only within the same page.
@@ -173,6 +198,8 @@ export interface ViewportAudit {
   disclosures: DisclosureCheckResult[];
   tabs: TabCheckResult[];
   links: LinkCheckResult[];
+  consent: ConsentHandlingResult;
+  elementContexts: ElementContext[];
   screenshot: string;
   elementScreenshots: ElementScreenshot[];
   errors: string[];

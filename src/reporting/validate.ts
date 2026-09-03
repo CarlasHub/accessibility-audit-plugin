@@ -19,6 +19,14 @@ const expectedHeaders = [
   'JIRASeverity', 'Specialist', 'Implementation', 'Notes', 'JIRA', 'Estimate'
 ];
 
+const expectedPageInventoryHeaders = [
+  'Requested URL', 'Final URL', 'HTTP Status', 'Page Title', 'Viewport', 'Consent Handling', 'Audit Errors'
+];
+
+const requiredIssueLabels = [
+  'Component:', 'Location:', 'Affected viewport(s):', 'Accessibility issue:', 'User impact:', 'Technical locator:'
+];
+
 function cellText(value: { text: unknown; value: unknown }): string {
   const candidate = value.text ?? value.value ?? '';
   if (typeof candidate === 'string') return candidate.trim();
@@ -99,6 +107,10 @@ export async function validateExcelReport(path: string): Promise<WorkbookValidat
       if (row.getCell(32).numFmt !== '0.00;-0.00;0') {
         errors.push(`Estimate number format is incorrect at row ${rowNumber}.`);
       }
+      const issue = cellText(row.getCell(17));
+      for (const label of requiredIssueLabels) {
+        if (!issue.includes(label)) errors.push(`Issue is missing “${label}” context at row ${rowNumber}.`);
+      }
       const reportScreenshotLink = cellHyperlink(row.getCell(19).value);
       if (reportScreenshotLink) {
         await validateRelativeEvidenceLink(path, reportScreenshotLink, `Accessibility Report!${row.getCell(19).address}`, errors);
@@ -127,15 +139,33 @@ export async function validateExcelReport(path: string): Promise<WorkbookValidat
       for (let column = 1; column <= IMAGE_INVENTORY_HEADERS.length; column += 1) {
         if (!cellText(row.getCell(column))) errors.push(`Required cell ${IMAGE_INVENTORY_SHEET}!${row.getCell(column).address} is empty.`);
       }
-      const screenshotLink = cellHyperlink(row.getCell(8).value);
+      const screenshotLink = cellHyperlink(row.getCell(10).value);
       if (!screenshotLink) {
-        errors.push(`${IMAGE_INVENTORY_SHEET}!${row.getCell(8).address} is not a screenshot hyperlink.`);
+        errors.push(`${IMAGE_INVENTORY_SHEET}!${row.getCell(10).address} is not a screenshot hyperlink.`);
       } else {
-        await validateRelativeEvidenceLink(path, screenshotLink, `${IMAGE_INVENTORY_SHEET}!${row.getCell(8).address}`, errors);
+        await validateRelativeEvidenceLink(path, screenshotLink, `${IMAGE_INVENTORY_SHEET}!${row.getCell(10).address}`, errors);
+      }
+      if (cellText(row.getCell(7)) === 'Full-page screenshot' && !/^(?:page|html|body|page-level or structural check)$/i.test(cellText(row.getCell(6)))) {
+        errors.push(`${IMAGE_INVENTORY_SHEET}!${row.getCell(7).address} must not use full-page evidence for a component locator.`);
       }
     }
     const embeddedImageCount = imageInventory.getImages().length;
     if (embeddedImageCount > 0) errors.push(`${IMAGE_INVENTORY_SHEET} contains ${embeddedImageCount} embedded image(s); screenshot evidence must remain linked to keep the workbook lightweight.`);
+  }
+  const pageInventory = workbook.getWorksheet('Page Inventroy');
+  if (!pageInventory) {
+    errors.push('Missing Page Inventroy worksheet.');
+  } else {
+    const headers = expectedPageInventoryHeaders.map((_, index) => cellText(pageInventory.getRow(1).getCell(index + 1)));
+    if (headers.join('|') !== expectedPageInventoryHeaders.join('|')) {
+      errors.push('The Page Inventroy header does not include the required consent-handling evidence column.');
+    }
+    for (let rowNumber = 2; rowNumber <= pageInventory.rowCount; rowNumber += 1) {
+      const row = pageInventory.getRow(rowNumber);
+      if (cellText(row.getCell(1)) && !cellText(row.getCell(6))) {
+        errors.push(`Consent handling is empty in Page Inventroy!${row.getCell(6).address}.`);
+      }
+    }
   }
   const auditor = overview ? cellText(overview.getCell('B8')) : '';
   if (!auditor) errors.push('Auditor is empty in Accessibility Overview!B8.');

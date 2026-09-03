@@ -16,6 +16,8 @@ function finding(url: string, sharedComponentKey?: string): Finding {
     testing: 'DOM inspection.',
     remediation: 'Add purpose-appropriate alt text or alt="" when decorative.',
     component: 'header.logo',
+    componentName: '“Example” home link',
+    componentLocation: 'Within the Primary navigation landmark',
     ...(sharedComponentKey ? { sharedComponentKey } : {}),
     urls: [url],
     viewports: ['desktop'],
@@ -61,6 +63,16 @@ describe('finding consolidation', () => {
     second.issue = 'The image has an empty alternative despite communicating the organisation identity.';
     const result = consolidateFindings([first, second]);
     expect(result).toHaveLength(2);
+  });
+
+  it('does not merge a generic fingerprint used by components in different rendered locations', () => {
+    const first = finding('https://test.example/a', 'generic-role-button');
+    first.componentName = 'Unnamed button';
+    first.componentLocation = 'Within the “Application steps” section';
+    const second = finding('https://test.example/b', 'generic-role-button');
+    second.componentName = 'Unnamed button';
+    second.componentLocation = 'Within the “Map” section';
+    expect(consolidateFindings([first, second])).toHaveLength(2);
   });
 
   it('merges the same page component and root cause even when responsive markup produces different fingerprints', () => {

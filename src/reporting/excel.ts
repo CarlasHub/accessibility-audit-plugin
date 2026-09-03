@@ -89,7 +89,34 @@ function screenshots(finding: Finding, outputPath: string): CellValue {
 }
 
 function testingEnvironment(finding: Finding): string {
-  return `Headless Chromium; ${finding.viewports.join(', ')}`;
+  return `Headless Chromium; ${finding.viewports.map(viewportLabel).join(', ')}`;
+}
+
+function viewportLabel(viewport: string): string {
+  if (viewport === 'desktop') return 'Desktop (1440×1000)';
+  if (viewport === 'mobile') return 'Mobile (390×844)';
+  if (viewport === 'reflow-320') return 'Mobile reflow (320×800)';
+  return viewport.replace(/[-_]+/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function componentName(finding: Finding): string {
+  return finding.componentName?.trim() || finding.component;
+}
+
+function componentLocation(finding: Finding): string {
+  return finding.componentLocation?.trim() || 'See the affected page URL and technical locator.';
+}
+
+function issueDescription(finding: Finding): string {
+  const selectors = finding.selectors.length ? finding.selectors.join('\n') : 'Page-level or structural check';
+  return [
+    `Component: ${componentName(finding)}`,
+    `Location: ${componentLocation(finding)}`,
+    `Affected viewport(s): ${finding.viewports.map(viewportLabel).join(', ')}`,
+    `Accessibility issue: ${finding.issue}`,
+    `User impact: ${finding.impact}`,
+    `Technical locator: ${selectors}`
+  ].join('\n');
 }
 
 function reportRowValues(finding: Finding, id: string, criteria: LookupEntry[], outputPath: string): CellValue[] {
@@ -109,9 +136,9 @@ function reportRowValues(finding: Finding, id: string, criteria: LookupEntry[], 
     null,
     null,
     finding.urls.join('\n'),
-    `${finding.component}: ${finding.summary}`,
+    `${componentName(finding)} — ${finding.summary}`,
     testingEnvironment(finding),
-    finding.issue,
+    issueDescription(finding),
     finding.testing,
     screenshots(finding, outputPath),
     finding.translationRequired,
@@ -158,7 +185,7 @@ function populateInventorySheets(workbook: ExcelJS.Workbook, summary: AuditSumma
   const pageSheet = workbook.getWorksheet('Page Inventroy');
   if (pageSheet) {
     pageSheet.spliceRows(1, pageSheet.rowCount);
-    pageSheet.addRow(['Requested URL', 'Final URL', 'HTTP Status', 'Page Title', 'Viewport', 'Audit Errors']);
+    pageSheet.addRow(['Requested URL', 'Final URL', 'HTTP Status', 'Page Title', 'Viewport', 'Consent Handling', 'Audit Errors']);
     for (const page of summary.pages) {
       for (const viewport of page.viewports) {
         pageSheet.addRow([
@@ -167,6 +194,11 @@ function populateInventorySheets(workbook: ExcelJS.Workbook, summary: AuditSumma
           viewport.status ?? 'No response',
           viewport.title || 'Not available',
           `${viewport.viewport.name} (${viewport.viewport.width}×${viewport.viewport.height})`,
+          viewport.consent.found
+            ? viewport.consent.dismissed
+              ? `Dismissed with “${viewport.consent.buttonName}” (${viewport.consent.action}).`
+              : `Detected but not dismissed${viewport.consent.error ? `: ${viewport.consent.error}` : '.'}`
+            : 'No visible consent banner detected.',
           viewport.errors.length ? viewport.errors.join('\n') : 'None recorded'
         ]);
       }
@@ -179,14 +211,15 @@ function populateInventorySheets(workbook: ExcelJS.Workbook, summary: AuditSumma
         'Not tested',
         'Not available',
         'Not started',
+        'Not tested',
         skipped.reason
       ]);
     }
     pageSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
     pageSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
     pageSheet.views = [{ state: 'frozen', ySplit: 1 }];
-    pageSheet.autoFilter = { from: 'A1', to: `F${Math.max(1, pageSheet.rowCount)}` };
-    [45, 45, 14, 35, 24, 60].forEach((width, index) => { pageSheet.getColumn(index + 1).width = width; });
+    pageSheet.autoFilter = { from: 'A1', to: `G${Math.max(1, pageSheet.rowCount)}` };
+    [45, 45, 14, 35, 24, 36, 60].forEach((width, index) => { pageSheet.getColumn(index + 1).width = width; });
     pageSheet.eachRow((row) => { row.alignment = { vertical: 'top', wrapText: true }; });
   }
 
@@ -200,6 +233,8 @@ function populateInventorySheets(workbook: ExcelJS.Workbook, summary: AuditSumma
         item.pageUrl,
         item.viewport,
         item.ruleId,
+        item.component,
+        item.location,
         item.selector,
         item.evidenceType,
         item.result,
@@ -210,16 +245,16 @@ function populateInventorySheets(workbook: ExcelJS.Workbook, summary: AuditSumma
           tooltip: 'Open the screenshot file stored beside this workbook.'
         }
       ]);
-      row.getCell(8).font = { color: { argb: 'FF0563C1' }, underline: true };
+      row.getCell(10).font = { color: { argb: 'FF0563C1' }, underline: true };
     }
     if (imageSheet.rowCount === 1) {
-      imageSheet.addRow(['All audited pages', 'All', 'N/A', 'N/A', 'Not captured', 'No finding screenshot evidence was generated.', 'N/A', 'N/A']);
+      imageSheet.addRow(['All audited pages', 'All', 'N/A', 'N/A', 'N/A', 'N/A', 'Not captured', 'No finding screenshot evidence was generated.', 'N/A', 'N/A']);
     }
     imageSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
     imageSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
     imageSheet.views = [{ state: 'frozen', ySplit: 1 }];
-    imageSheet.autoFilter = { from: 'A1', to: `H${Math.max(1, imageSheet.rowCount)}` };
-    [42, 16, 28, 42, 22, 42, 32, 24].forEach((width, index) => { imageSheet.getColumn(index + 1).width = width; });
+    imageSheet.autoFilter = { from: 'A1', to: `J${Math.max(1, imageSheet.rowCount)}` };
+    [42, 16, 28, 40, 48, 42, 22, 42, 32, 24].forEach((width, index) => { imageSheet.getColumn(index + 1).width = width; });
     imageSheet.eachRow((row) => { row.alignment = { vertical: 'top', wrapText: true }; });
   }
 }

@@ -13,7 +13,9 @@
 | WCAG text-spacing override | Yes | Yes | Yes | Reviewed until clipping/overlap is visually confirmed |
 | Target size | Yes | Yes | Yes | Reviewed because spacing and other exceptions apply |
 | Table and autoplay signals | Yes | Yes | Yes | Reviewed |
-| Full-page fallback and issue-level screenshots | Yes | Yes | Yes | Captured only for confirmed failures and page blockers; screenshots do not decide conformance |
+| Consent dismissal before checks and evidence | Yes | Yes | Yes | Prefer reject/necessary; record the action and any failure in JSON and Page Inventory |
+| Contextual component screenshots | Yes | Yes | Yes | Confirmed component failures only; outline the target within a component boundary |
+| Full-page screenshots | Yes | Yes | Yes | Page-level failures and blockers without a component locator only; screenshots do not decide conformance |
 
 All browser work is headless by default. Link requests run once from the desktop DOM because responsive variants normally reuse destinations and repeated requests increase side effects and false positives.
 

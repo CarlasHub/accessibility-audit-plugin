@@ -39,6 +39,12 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
     expect(result.findings.some((finding) => finding.ruleId === 'target-size-review')).toBe(true);
     expect(result.findings.some((finding) => finding.ruleId === 'tabs-broken-relationships')).toBe(true);
     expect(result.pages[0]?.viewports.some((viewport) => viewport.elementScreenshots.length > 0)).toBe(true);
+    expect(result.pages[0]?.viewports.every((viewport) => viewport.consent.found && viewport.consent.dismissed)).toBe(true);
+    expect(result.pages[0]?.viewports.every((viewport) => viewport.consent.buttonName === 'Reject all')).toBe(true);
+    expect(result.findings.filter((finding) => finding.selectors.length > 0).every((finding) => finding.componentName && finding.componentLocation)).toBe(true);
+    expect(result.findings
+      .filter((finding) => finding.classification === 'confirmed' && finding.selectors.length > 0)
+      .every((finding) => finding.evidence.every((item) => !item.screenshot || item.screenshot.includes('/screenshots/elements/')))).toBe(true);
     expect(result.findings
       .filter((finding) => finding.classification === 'review')
       .every((finding) => finding.evidence.every((item) => !item.screenshot))).toBe(true);

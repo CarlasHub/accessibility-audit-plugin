@@ -11,7 +11,7 @@ Call `run_accessibility_audit` once with the supplied targets. Read [test-matrix
 
 1. Confirm the exact pages/input, single landing-page QA URL, and auditor in one concise interaction. Use the MCP form when available. Use `Automated` as the editable auditor default and the first resolved URL as the landing-page default. Do not ask for page details already present in a supplied list.
 2. Audit only explicit authorized URLs. Use narrow `allowedHosts` when requested. Set `stagingOnly` only for an explicitly staging-only scope whose hosts match staging, QA, preview, test, or local patterns.
-3. Run desktop, mobile, and 320px reflow headlessly with screenshots enabled for confirmed failures and page blockers. Surface MCP progress.
+3. Run desktop, mobile, and 320px reflow headlessly. Dismiss visible consent banners first, preferring reject or necessary-only actions, and record the result. Keep contextual component screenshots enabled for confirmed failures and page blockers. Surface MCP progress.
 4. If the user stops the run, let the tool close Chromium and write and validate partial JSON/XLSX/ZIP output. Report it as cancelled, not complete.
 5. Keep deterministic failures confirmed; keep heuristics, placeholder links, 5xx responses, content judgments, and WCAG exceptions as review/manual work. A 404/410 is confirmed only when the two implemented same-origin checks agree.
 6. Use one row for the same reusable component implementation and root cause across affected pages. Keep page-specific implementations or root causes separate, and list each affected URL separately in Links.
@@ -27,5 +27,5 @@ Call `run_accessibility_audit` once with the supplied targets. Read [test-matrix
 - Do not present an axe pass or absence of an automated signal as proof of accessibility.
 - Notes contain specific remediation only and no workflow or ticket commentary.
 - Preserve the 32-column report schema and remove placeholder findings.
-- Image Inventory contains relative links to unique confirmed-failure and blocker screenshots; audit images are not embedded and no screen-reader worksheet is created.
+- Image Inventory names the rendered component and location and contains relative links to unique confirmed-failure and blocker screenshots. Component evidence is cropped around the component and target; full-page evidence is reserved for page-level failures or blockers without a component locator. Audit images are not embedded and no screen-reader worksheet is created.
 - Accessibility Overview contains one landing-page QA URL. All report rows start as Fail, Assignment defaults to Implementation Queue unless specialist ownership is justified, and Estimate starts at numeric 0 with 0.25 increments allowed.

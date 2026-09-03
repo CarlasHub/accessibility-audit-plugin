@@ -5,6 +5,8 @@ export const IMAGE_INVENTORY_HEADERS = [
   'Page URL',
   'Viewport',
   'Rule',
+  'Component',
+  'Location',
   'Selector',
   'Evidence Type',
   'Result',
@@ -16,6 +18,8 @@ export interface ImageEvidenceRow {
   pageUrl: string;
   viewport: string;
   ruleId: string;
+  component: string;
+  location: string;
   selector: string;
   evidenceType: string;
   result: string;
@@ -29,6 +33,8 @@ function rowFromEvidence(finding: Finding, evidence: EvidenceItem): ImageEvidenc
     pageUrl: evidence.pageUrl,
     viewport: evidence.viewport ?? (finding.viewports.join(', ') || 'All'),
     ruleId: finding.ruleId,
+    component: finding.componentName ?? finding.component,
+    location: finding.componentLocation ?? 'See the page URL and selector.',
     selector: evidence.selector ?? finding.selectors[0] ?? 'Page',
     evidenceType: normalizedPath.includes('/screenshots/elements/') ? 'Element screenshot' : 'Full-page screenshot',
     result: `${finding.classification}: ${finding.summary}`,

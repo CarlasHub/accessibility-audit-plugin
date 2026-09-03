@@ -46,7 +46,7 @@ describe('screenshot evidence selection', () => {
     const review = { ...base, key: 'review', classification: 'review' as const, selectors: ['#review'] };
     expect(screenshotCandidatesForFindings([base, blocker, review])).toEqual(['#confirmed', '#blocker']);
     expect(needsFullPageScreenshotFallback([base], [{ selector: '#confirmed', path: '/tmp/confirmed.png' }])).toBe(false);
-    expect(needsFullPageScreenshotFallback([base], [])).toBe(true);
+    expect(needsFullPageScreenshotFallback([base], [])).toBe(false);
     expect(needsFullPageScreenshotFallback([{ ...blocker, selectors: [] }], [])).toBe(true);
     expect(needsFullPageScreenshotFallback([review], [])).toBe(false);
   });

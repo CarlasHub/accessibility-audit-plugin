@@ -10,9 +10,22 @@
       #menu[hidden] { display: none; }
       a:focus, button:focus, input:focus { outline: 3px solid #005fcc; outline-offset: 2px; }
       .small { width: 18px; height: 18px; padding: 0; }
+      #cookie-consent {
+        position: fixed;
+        inset: auto 1rem 1rem 1rem;
+        z-index: 1000;
+        padding: 1rem;
+        color: white;
+        background: rgba(0, 0, 0, 0.92);
+      }
     </style>
   </head>
   <body>
+    <div id="cookie-consent" role="dialog" aria-label="Cookie consent">
+      <p>We use cookies to improve the site. Choose whether to accept optional cookies.</p>
+      <button id="reject-cookies">Reject all</button>
+      <button id="accept-cookies">Accept all</button>
+    </div>
     <header>
       <nav aria-label="Primary">
         <a href="/"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="></a>
@@ -37,6 +50,9 @@
     <script>
       const toggle = document.querySelector('#menu-toggle');
       const menu = document.querySelector('#menu');
+      const consent = document.querySelector('#cookie-consent');
+      document.querySelector('#reject-cookies').addEventListener('click', () => { consent.hidden = true; });
+      document.querySelector('#accept-cookies').addEventListener('click', () => { consent.hidden = true; });
       toggle.addEventListener('click', () => {
         const open = toggle.getAttribute('aria-expanded') !== 'true';
         toggle.setAttribute('aria-expanded', String(open));

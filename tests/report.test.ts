@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import ExcelJS from 'exceljs';
@@ -30,6 +30,8 @@ function summaryWithScreenshot(screenshot: string): AuditSummary {
       testing: 'Rendered DOM and accessible name inspection.',
       remediation: 'Give the home link an accessible name that identifies the organisation home page and use appropriate image alt text.',
       component: 'site logo link',
+      componentName: '“Unilever” home link',
+      componentLocation: 'Within the “Primary” navigation landmark',
       urls: ['https://example.runmytests.com/en', 'https://example.runmytests.com/jobs'],
       viewports: ['desktop', 'mobile'],
       selectors: ['header a.logo'],
@@ -53,7 +55,8 @@ function summaryWithScreenshot(screenshot: string): AuditSummary {
 describe('Excel report', () => {
   it('removes placeholders and screen-reader sheets, links lightweight evidence, and applies report defaults', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'a11y-report-'));
-    const screenshot = join(directory, 'element.png');
+    const screenshot = join(directory, 'screenshots', 'elements', 'element.png');
+    await mkdir(join(directory, 'screenshots', 'elements'), { recursive: true });
     await writeFile(screenshot, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
     const path = join(directory, 'report.xlsx');
     await writeExcelReport(summaryWithScreenshot(screenshot), { outputPath: path });
@@ -71,17 +74,26 @@ describe('Excel report', () => {
     expect(workbook.getWorksheet('Screen Reader Failures')).toBeUndefined();
     const inventory = workbook.getWorksheet('Image Inventory');
     expect(inventory?.getCell('C2').value).toBe('image-missing-alt');
-    expect(inventory?.getCell('E2').value).toBe('Full-page screenshot');
+    expect(inventory?.getCell('D2').value).toBe('“Unilever” home link');
+    expect(inventory?.getCell('E2').value).toBe('Within the “Primary” navigation landmark');
+    expect(inventory?.getCell('G2').value).toBe('Element screenshot');
     expect(inventory?.getImages()).toHaveLength(0);
-    expect(inventory?.getCell('H2').value).toEqual(expect.objectContaining({
+    expect(inventory?.getCell('J2').value).toEqual(expect.objectContaining({
       text: 'Open screenshot',
-      hyperlink: 'element.png'
+      hyperlink: 'screenshots/elements/element.png'
     }));
     const report = workbook.getWorksheet('Accessibility Report');
     expect(report?.getCell('N2').value).toBe(
       'https://example.runmytests.com/en\nhttps://example.runmytests.com/jobs'
     );
-    expect(report?.getCell('S2').value).toEqual(expect.objectContaining({ hyperlink: 'element.png' }));
+    expect(report?.getCell('O2').value).toContain('“Unilever” home link');
+    expect(report?.getCell('P2').value).toBe('Headless Chromium; Desktop (1440×1000), Mobile (390×844)');
+    expect(report?.getCell('Q2').value).toContain('Component: “Unilever” home link');
+    expect(report?.getCell('Q2').value).toContain('Location: Within the “Primary” navigation landmark');
+    expect(report?.getCell('Q2').value).toContain('Affected viewport(s): Desktop (1440×1000), Mobile (390×844)');
+    expect(report?.getCell('Q2').value).toContain('User impact: The home destination is not identifiable.');
+    expect(report?.getCell('Q2').value).toContain('Technical locator: header a.logo');
+    expect(report?.getCell('S2').value).toEqual(expect.objectContaining({ hyperlink: 'screenshots/elements/element.png' }));
     expect(report?.getCell('X2').value).toBe('Fail');
     expect(report?.getCell('Y2').value).toBe('Accessibility Support');
     expect(report?.getCell('AF2').value).toBe(0);
@@ -108,12 +120,33 @@ describe('Excel report', () => {
     await workbook.xlsx.readFile(path);
     expect(workbook.getWorksheet('Accessibility Overview')?.getCell('B9').value).toContain('no screenshot evidence captured');
     const inventory = workbook.getWorksheet('Image Inventory');
-    expect(inventory?.getCell('E2').value).toBe('Not captured');
+    expect(inventory?.getCell('G2').value).toBe('Not captured');
     expect(inventory?.getImages()).toHaveLength(0);
     const report = workbook.getWorksheet('Accessibility Report');
     expect(report?.getCell('X2').value).toBe('Fail');
     expect(report?.getCell('Y2').value).toBe('Implementation Queue');
     expect(report?.getCell('AF2').value).toBe(0);
+  });
+
+  it('rejects incomplete Issue context and full-page evidence assigned to a component locator', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'a11y-report-context-validation-'));
+    const screenshotDirectory = join(directory, 'screenshots', 'elements');
+    await mkdir(screenshotDirectory, { recursive: true });
+    const screenshot = join(screenshotDirectory, 'element.png');
+    await writeFile(screenshot, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
+    const path = join(directory, 'report.xlsx');
+    await writeExcelReport(summaryWithScreenshot(screenshot), { outputPath: path });
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(path);
+    workbook.getWorksheet('Accessibility Report')!.getCell('Q2').value = 'The link is inaccessible.';
+    workbook.getWorksheet('Image Inventory')!.getCell('G2').value = 'Full-page screenshot';
+    await workbook.xlsx.writeFile(path);
+
+    const validation = await validateExcelReport(path);
+    expect(validation.valid).toBe(false);
+    expect(validation.errors).toContain('Issue is missing “Component:” context at row 2.');
+    expect(validation.errors).toContain('Image Inventory!G2 must not use full-page evidence for a component locator.');
   });
 
   it('rejects non-Fail status and invalid estimate increments', async () => {
