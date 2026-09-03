@@ -160,7 +160,7 @@ Read these fields together:
 | Field | How to use it |
 |---|---|
 | Links | Every page where the same component implementation and root cause were found. |
-| Summary | A short component-specific title. |
+| Summary | A short title stating the affected desktop/mobile scope and rendered component. |
 | Environment | Browser and affected desktop/mobile/reflow viewport. |
 | Issue | Component name, page location, affected viewport, barrier, user impact, and technical locator. |
 | Testing | How the evidence was produced and what a person must verify. |
@@ -173,6 +173,8 @@ Read these fields together:
 | Estimate | Starts at `0`; update in quarter increments after engineering assessment. |
 
 One reusable component/root-cause combination can be consolidated into one row across multiple pages. Each affected URL still appears separately in Links. Page-specific implementations or different root causes remain separate rows.
+
+Target-size reviews are deliberately conservative. A control is not added to the workbook solely because one measured dimension is below 24 CSS pixels. The plugin first excludes inline text links and checks rendered spacing against neighbouring targets. A row is created only for a spacing collision or an axe target-size signal, and it remains a review until a person assesses the remaining WCAG exceptions. Exact measurements and neighbouring-target evidence remain in JSON.
 
 ## Step 7: decide what happens next
 

@@ -61,7 +61,7 @@ Every supplied page is checked at desktop (1440×1000), mobile (390×844), and 3
 - menus, disclosures, and tabs whose state or keyboard operation is broken;
 - content that overflows at narrow widths or after WCAG text-spacing overrides;
 - same-site links that are empty, placeholders, missing fragments, or consistently return 404/410;
-- selected target-size, table, media, and responsive-layout signals that require review.
+- target-size spacing conflicts, plus selected table, media, and responsive-layout signals that require review.
 
 The browser runs headlessly by default, so it should not take over the desktop. Visible consent banners are dismissed before the main checks and evidence capture. Confirmed component failures receive a focused screenshot when the element can be located reliably.
 
@@ -323,7 +323,7 @@ Generated files:
 Workbook worksheets:
 
 - `Accessibility Overview` — the single landing-page QA URL, scope, auditor, methods, totals, limitations, and outstanding guided checks.
-- `Accessibility Report` — one row per reusable component/root cause across affected pages; page-specific findings remain separate. Summary names the rendered component. Issue states the component, page location, affected Desktop/Mobile viewport, accessibility problem, user impact, and technical locator. All generated rows start as `Fail`, use an operational Assignment, and initialize Estimate to `0`.
+- `Accessibility Report` — one row per reusable component/root cause across affected pages; page-specific findings remain separate. Summary begins with the affected Desktop/Mobile scope and names the rendered component. Issue states the component, page location, affected viewport, accessibility problem, user impact, and technical locator. Testing uses reproducible steps with explicit Actual and Expected results for every generated finding. All generated rows start as `Fail`, use an operational Assignment, and initialize Estimate to `0`.
 - `Page Inventroy` — requested/final URL, HTTP status, page title, viewport, consent-handling result, and runtime errors.
 - `Image Inventory` — finding, page, viewport, human-readable component, location, selector, evidence type, screenshot filename, and relative link to the PNG.
 - `Lookup WCAG 2.2` — hidden lookup data used by report formulas.
@@ -348,7 +348,8 @@ Link validation deliberately avoids broad crawling and destructive requests:
 - Empty link names include text, ARIA labels, valid labelled-by text, descendant image alternatives, input values, and titles before being reported.
 - Equivalent custom and axe link-name evidence is de-duplicated.
 - axe `region` best-practice nodes are summarized as one page-structure review row per page instead of one failed row per DOM node.
-- Target-size review signals are reported per rendered control and consolidated only when the same component implementation and root cause recur.
+- A target is not reported merely because one rendered dimension is below 24 CSS pixels. Inline text links are excluded, isolated undersized targets that satisfy the spacing geometry do not create workbook rows, and raw measurements remain available in JSON.
+- Target-size rows require a rendered spacing collision or an axe target-size violation/incomplete signal, remain `review` items while the Equivalent, Inline, User Agent Control, and Essential exceptions are unresolved, and group related controls in the same rendered component into one finding.
 - Focus-obscuration checks sample the visible centre and four inset corners. A control is reported as confirmed only when unrelated content covers every sampled point; off-screen geometry and one covered point do not create a failure.
 
 Tab checks do not report optional Home/End support as a failure. They separately test orientation-aware arrow navigation, Enter/Space or automatic activation, `aria-selected`, tabindex behavior, `aria-controls`, `tabpanel`, and `aria-labelledby` relationships. Broken references and keyboard-unreachable tabs are confirmed; non-standard but potentially operable authoring patterns remain review items.

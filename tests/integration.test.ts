@@ -36,7 +36,16 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
     expect(result.findings.some((finding) => finding.ruleId.includes('image-alt') || finding.ruleId.includes('image-redundant-alt'))).toBe(true);
     expect(result.findings.some((finding) => finding.ruleId === 'form-field-no-label' || finding.ruleId === 'axe-label')).toBe(true);
     expect(result.findings.some((finding) => finding.ruleId === 'disclosure-focus-order')).toBe(true);
-    expect(result.findings.some((finding) => finding.ruleId === 'target-size-review')).toBe(true);
+    expect(result.findings.some((finding) => (
+      finding.ruleId === 'linked-image-purpose-review'
+      && finding.selectors.includes('#cookie-settings')
+    ))).toBe(false);
+    const targetSizeFindings = result.findings.filter((finding) => finding.ruleId === 'target-size-review');
+    expect(targetSizeFindings).toHaveLength(1);
+    expect(targetSizeFindings[0]).toEqual(expect.objectContaining({
+      classification: 'review',
+      componentLocation: expect.stringContaining('Fixture page')
+    }));
     expect(result.findings.some((finding) => finding.ruleId === 'tabs-broken-relationships')).toBe(true);
     expect(result.pages[0]?.viewports.some((viewport) => viewport.elementScreenshots.length > 0)).toBe(true);
     expect(result.pages[0]?.viewports.every((viewport) => viewport.consent.found && viewport.consent.dismissed)).toBe(true);

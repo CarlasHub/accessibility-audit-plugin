@@ -81,6 +81,161 @@ describe('evidence-gated link and tab findings', () => {
     expect(findings[0]?.evidence.every((item) => !item.screenshot)).toBe(true);
   });
 
+  it('does not turn an isolated undersized target into a workbook finding', () => {
+    const findings = findingsFromPage(page(viewport({
+      dom: {
+        ...viewport().dom,
+        smallTargets: [{
+          selector: '#isolated-save',
+          name: 'Save',
+          width: 20,
+          height: 20,
+          groupSelector: 'main',
+          inlineException: false,
+          spacingRisk: false,
+          nearbyTargets: []
+        }]
+      }
+    })));
+    expect(findings.some((finding) => finding.ruleId === 'target-size-review')).toBe(false);
+  });
+
+  it('does not report a target that meets the inline exception', () => {
+    const findings = findingsFromPage(page(viewport({
+      dom: {
+        ...viewport().dom,
+        smallTargets: [{
+          selector: 'p > a',
+          name: 'privacy policy',
+          width: 82,
+          height: 18,
+          groupSelector: 'main',
+          inlineException: true,
+          spacingRisk: true,
+          nearbyTargets: [{
+            selector: 'p > a:nth-of-type(2)',
+            name: 'terms',
+            width: 42,
+            height: 18,
+            centerDistance: 20
+          }]
+        }]
+      }
+    })));
+    expect(findings.some((finding) => finding.ruleId === 'target-size-review')).toBe(false);
+  });
+
+  it('groups nearby undersized controls into one component review with explicit limits', () => {
+    const findings = findingsFromPage(page(viewport({
+      dom: {
+        ...viewport().dom,
+        smallTargets: [
+          {
+            selector: '#slide-one',
+            name: 'Go to slide 1',
+            width: 12,
+            height: 12,
+            groupSelector: '.carousel-dots',
+            inlineException: false,
+            spacingRisk: true,
+            nearbyTargets: [{
+              selector: '#slide-two',
+              name: 'Go to slide 2',
+              width: 12,
+              height: 12,
+              centerDistance: 16
+            }]
+          },
+          {
+            selector: '#slide-two',
+            name: 'Go to slide 2',
+            width: 12,
+            height: 12,
+            groupSelector: '.carousel-dots',
+            inlineException: false,
+            spacingRisk: true,
+            nearbyTargets: [{
+              selector: '#slide-one',
+              name: 'Go to slide 1',
+              width: 12,
+              height: 12,
+              centerDistance: 16
+            }]
+          }
+        ]
+      },
+      elementContexts: [
+        {
+          selector: '#slide-one',
+          tagName: 'button',
+          role: 'button',
+          accessibleName: 'Go to slide 1',
+          visibleText: '',
+          componentName: '“Go to slide 1” button',
+          location: 'Within the “Featured stories” carousel region',
+          captureSelector: '.carousel-dots'
+        },
+        {
+          selector: '#slide-two',
+          tagName: 'button',
+          role: 'button',
+          accessibleName: 'Go to slide 2',
+          visibleText: '',
+          componentName: '“Go to slide 2” button',
+          location: 'Within the “Featured stories” carousel region',
+          captureSelector: '.carousel-dots'
+        }
+      ]
+    })));
+    const targetFindings = findings.filter((finding) => finding.ruleId === 'target-size-review');
+    expect(targetFindings).toHaveLength(1);
+    expect(targetFindings[0]).toEqual(expect.objectContaining({
+      classification: 'review',
+      severity: 'Minor',
+      componentName: '“Go to slide 1” button; “Go to slide 2” button',
+      componentLocation: 'Within the “Featured stories” carousel region',
+      summary: 'Pointer targets may not provide the required size or spacing',
+      issue: expect.stringContaining('review issue rather than a confirmed WCAG failure'),
+      testing: expect.stringContaining('Actual: “Go to slide 1” 12×12 CSS pixels')
+    }));
+    expect(targetFindings[0]?.selectors).toEqual(['#slide-one', '#slide-two']);
+  });
+
+  it('keeps an axe incomplete target-size result in review even when the measured box exceeds 24 pixels', () => {
+    const findings = findingsFromPage(page(viewport({
+      axe: [{
+        id: 'target-size',
+        resultType: 'incomplete',
+        impact: 'serious',
+        tags: ['wcag22aa', 'wcag258'],
+        description: 'Ensure touch targets have sufficient size and space',
+        help: 'Touch targets must have sufficient size and space',
+        helpUrl: 'https://dequeuniversity.com/rules/axe/4.13/target-size',
+        nodes: [{ html: '<button id="small">Save</button>', target: ['#small'] }]
+      }],
+      dom: {
+        ...viewport().dom,
+        smallTargets: [{
+          selector: '#small',
+          name: 'Save',
+          width: 26,
+          height: 37,
+          groupSelector: '.job-card-actions',
+          inlineException: false,
+          spacingRisk: false,
+          axeTargetSizeSignal: true,
+          nearbyTargets: []
+        }]
+      }
+    })));
+    expect(findings.some((finding) => finding.ruleId === 'axe-target-size')).toBe(false);
+    expect(findings.find((finding) => finding.ruleId === 'target-size-review')).toEqual(expect.objectContaining({
+      classification: 'review',
+      wcag: ['2.5.8'],
+      issue: expect.stringContaining('may not provide a 24×24 CSS pixel target or sufficient separation')
+    }));
+  });
+
   it('does not duplicate axe unnamed-link and unnamed-control findings from DOM heuristics', () => {
     const findings = findingsFromPage(page(viewport({
       axe: [
@@ -115,6 +270,26 @@ describe('evidence-gated link and tab findings', () => {
     expect(findings.some((finding) => finding.ruleId === 'interactive-control-no-name')).toBe(false);
   });
 
+  it('does not apply link-purpose criteria to an unnamed non-link control', () => {
+    const findings = findingsFromPage(page(viewport({
+      dom: {
+        ...viewport().dom,
+        emptyNamedControls: [{
+          selector: '#email',
+          tag: 'input',
+          html: '<input id="email" type="email">'
+        }]
+      }
+    })));
+    const finding = findings.find((item) => item.ruleId === 'interactive-control-no-name');
+    expect(finding).toEqual(expect.objectContaining({
+      classification: 'confirmed',
+      wcag: ['4.1.2'],
+      summary: 'Interactive control has no accessible name'
+    }));
+    expect(finding?.wcag).not.toContain('2.4.4');
+  });
+
   it('adds the rendered component name and page location to a finding', () => {
     const findings = findingsFromPage(page(viewport({
       axe: [{
@@ -140,7 +315,9 @@ describe('evidence-gated link and tab findings', () => {
     expect(findings[0]).toEqual(expect.objectContaining({
       componentName: 'Unnamed button',
       componentLocation: 'Within the “Primary” navigation landmark',
-      issue: expect.stringContaining('button has no accessible name')
+      summary: 'Button has no accessible name',
+      issue: expect.stringContaining('button has no accessible name'),
+      testing: expect.stringContaining('Actual:')
     }));
   });
 

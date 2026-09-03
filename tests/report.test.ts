@@ -86,13 +86,16 @@ describe('Excel report', () => {
     expect(report?.getCell('N2').value).toBe(
       'https://example.runmytests.com/en\nhttps://example.runmytests.com/jobs'
     );
-    expect(report?.getCell('O2').value).toContain('“Unilever” home link');
+    expect(report?.getCell('O2').value).toBe('Desktop and mobile: “Unilever” home link — Linked logo has no meaningful alternative');
     expect(report?.getCell('P2').value).toBe('Headless Chromium; Desktop (1440×1000), Mobile (390×844)');
     expect(report?.getCell('Q2').value).toContain('Component: “Unilever” home link');
     expect(report?.getCell('Q2').value).toContain('Location: Within the “Primary” navigation landmark');
     expect(report?.getCell('Q2').value).toContain('Affected viewport(s): Desktop (1440×1000), Mobile (390×844)');
     expect(report?.getCell('Q2').value).toContain('User impact: The home destination is not identifiable.');
     expect(report?.getCell('Q2').value).toContain('Technical locator: header a.logo');
+    expect(report?.getCell('R2').value).toContain('1. Open each affected page at Desktop (1440×1000), Mobile (390×844).');
+    expect(report?.getCell('R2').value).toContain('Actual: The linked image is missing alt.');
+    expect(report?.getCell('R2').value).toContain('Expected: The image or image link exposes one concise text alternative');
     expect(report?.getCell('S2').value).toEqual(expect.objectContaining({ hyperlink: 'screenshots/elements/element.png' }));
     expect(report?.getCell('X2').value).toBe('Fail');
     expect(report?.getCell('Y2').value).toBe('Accessibility Support');
@@ -128,7 +131,7 @@ describe('Excel report', () => {
     expect(report?.getCell('AF2').value).toBe(0);
   });
 
-  it('rejects incomplete Issue context and full-page evidence assigned to a component locator', async () => {
+  it('rejects incomplete finding wording and full-page evidence assigned to a component locator', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'a11y-report-context-validation-'));
     const screenshotDirectory = join(directory, 'screenshots', 'elements');
     await mkdir(screenshotDirectory, { recursive: true });
@@ -140,12 +143,15 @@ describe('Excel report', () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(path);
     workbook.getWorksheet('Accessibility Report')!.getCell('Q2').value = 'The link is inaccessible.';
+    workbook.getWorksheet('Accessibility Report')!.getCell('R2').value = 'Automated scan only.';
     workbook.getWorksheet('Image Inventory')!.getCell('G2').value = 'Full-page screenshot';
     await workbook.xlsx.writeFile(path);
 
     const validation = await validateExcelReport(path);
     expect(validation.valid).toBe(false);
     expect(validation.errors).toContain('Issue is missing “Component:” context at row 2.');
+    expect(validation.errors).toContain('Testing is missing “Actual:” evidence at row 2.');
+    expect(validation.errors).toContain('Testing is missing “Expected:” evidence at row 2.');
     expect(validation.errors).toContain('Image Inventory!G2 must not use full-page evidence for a component locator.');
   });
 

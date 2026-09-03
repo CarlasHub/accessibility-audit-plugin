@@ -59,6 +59,39 @@ function axeAccessibilityIssue(violation: AxeViolationResult, failureSummary?: s
   return failure && !issue.includes(failure) ? `${issue} ${failure}` : issue;
 }
 
+function axeSummary(violation: AxeViolationResult): string {
+  const direct: Record<string, string> = {
+    'aria-command-name': 'Interactive control has no accessible name',
+    'button-name': 'Button has no accessible name',
+    'input-button-name': 'Input button has no accessible name',
+    'link-name': 'Link has no accessible name',
+    'image-alt': 'Image has no text alternative',
+    label: 'Form field has no programmatically associated label',
+    'color-contrast': 'Text contrast is below the required minimum',
+    'aria-hidden-focus': 'Focusable content is hidden from assistive technology',
+    'aria-valid-attr-value': 'ARIA attribute contains an invalid value',
+    'aria-required-attr': 'ARIA role is missing a required state or property',
+    'duplicate-id-aria': 'Duplicate id makes an accessibility relationship ambiguous'
+  };
+  return direct[violation.id] ?? violation.help.replace(/\.$/, '');
+}
+
+function axeTesting(violation: AxeViolationResult, audit: ViewportAudit, selector: string, failureSummary?: string): string {
+  const actual = (failureSummary ?? axeAccessibilityIssue(violation))
+    .replace(/^Fix (any|all) of the following:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const expected = violation.description.replace(/^Ensure\s+/i, '').replace(/\.$/, '');
+  return [
+    `1. Open the affected page at the ${audit.viewport.name} viewport.`,
+    `2. Locate the component using ${selector}.`,
+    `3. Inspect its rendered state and accessibility-tree properties, then run axe-core rule ${violation.id}.`,
+    `Actual: ${actual}`,
+    `Expected: ${expected}.`,
+    `Rule reference: ${violation.helpUrl}`
+  ].join('\n');
+}
+
 function axeUserImpact(ruleId: string): string {
   if (ruleId === 'color-contrast') return 'People with low vision or colour-vision deficiencies may be unable to read the text.';
   if (ruleId === 'target-size') return 'Touch users and people with limited dexterity may miss the target or activate an adjacent control.';
@@ -134,6 +167,10 @@ function makeFinding(input: Omit<Finding, 'key'> & { identity: string }): Findin
 
 function axeFindings(audit: ViewportAudit): Finding[] {
   return audit.axe.flatMap((violation: AxeViolationResult) => {
+    // Target size has multiple WCAG exceptions and axe classifies the rule as both
+    // failure and needs-review. It is rendered below with measured spacing context
+    // instead of being promoted to a generic confirmed axe finding.
+    if (violation.id === 'target-size') return [];
     const wcag = violation.tags.map(criterionFromTag).filter((item): item is string => Boolean(item));
     const isWcagViolation = wcag.length > 0;
     if (violation.id === 'region' && violation.nodes.length > 0) {
@@ -144,7 +181,7 @@ function axeFindings(audit: ViewportAudit): Finding[] {
         classification: 'review',
         severity: severityFromAxe(violation.impact),
         wcag: ['Best Practice'],
-        summary: violation.help,
+        summary: axeSummary(violation),
         issue: 'Rendered page content exists outside semantic landmark regions. The appropriate landmark boundaries require structural review.',
         impact: 'Screen-reader users may have difficulty identifying and bypassing major page regions.',
         testing: `axe-core region signalled content outside landmarks at ${audit.viewport.name}. This is a best-practice signal and requires review of the page structure. Rule: ${violation.helpUrl}`,
@@ -175,10 +212,10 @@ function axeFindings(audit: ViewportAudit): Finding[] {
         classification: isWcagViolation ? 'confirmed' : 'review',
         severity: severityFromAxe(violation.impact),
         wcag: wcag.length ? wcag : ['Best Practice'],
-        summary: violation.help,
+        summary: axeSummary(violation),
         issue: axeAccessibilityIssue(violation, node.failureSummary),
         impact: axeUserImpact(violation.id),
-        testing: `axe-core ${violation.id} failed at ${audit.viewport.name}. ${isWcagViolation ? 'The rule maps to the listed WCAG criterion.' : 'This is an axe best-practice signal without a direct WCAG success-criterion mapping and requires review.'} Rule: ${violation.helpUrl}`,
+        testing: axeTesting(violation, audit, selectors.join(', '), node.failureSummary),
         remediation: `${axeRemediation(violation)} Retest the component in every affected state.`,
         component,
         sharedComponentKey: createSharedComponentKey(component, `${violation.id}|${node.html}|${node.failureSummary ?? ''}`),
@@ -401,7 +438,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       ruleId: 'interactive-control-no-name',
       classification: 'confirmed',
       severity: 'Critical',
-      wcag: ['2.4.4', '4.1.2'],
+      wcag: ['4.1.2'],
       summary: 'Interactive control has no accessible name',
       issue: `The visible ${item.tag} is keyboard focusable but has no detectable accessible name.`,
       impact: 'Screen-reader and voice-control users cannot identify or request the control reliably.',
@@ -604,26 +641,56 @@ function domFindings(audit: ViewportAudit): Finding[] {
       .flatMap((violation) => violation.nodes.flatMap((node) => node.target))
       .map(normalizeComponent)
   );
-  for (const item of audit.dom.smallTargets.filter((target) => !axeTargetSelectors.has(normalizeComponent(target.selector)))) {
-    const component = normalizeComponent(item.selector);
+  const targetSizeCandidates = audit.dom.smallTargets.filter((target) => (
+    !target.inlineException
+    && (target.spacingRisk || target.axeTargetSizeSignal || axeTargetSelectors.has(normalizeComponent(target.selector)))
+  ));
+  const targetSizeGroups = new Map<string, typeof targetSizeCandidates>();
+  for (const target of targetSizeCandidates) {
+    const group = normalizeComponent(target.groupSelector || target.selector);
+    targetSizeGroups.set(group, [...(targetSizeGroups.get(group) ?? []), target]);
+  }
+  for (const [component, items] of targetSizeGroups) {
+    const selectors = [...new Set(items.map((item) => item.selector))];
+    const measurements = conciseList(items.map((item) => `“${item.name || 'unnamed target'}” ${item.width}×${item.height} CSS pixels`), 6);
+    const nearbyTargets = conciseList(items.flatMap((item) => item.nearbyTargets.map((nearby) => (
+      `“${nearby.name || 'unnamed target'}” at ${nearby.centerDistance} CSS pixels centre-to-centre`
+    ))), 6);
+    const axeMatched = items.some((item) => item.axeTargetSizeSignal || axeTargetSelectors.has(normalizeComponent(item.selector)));
+    const spacingMeasured = items.some((item) => item.spacingRisk);
+    const evidenceBasis = [
+      spacingMeasured ? 'rendered geometry shows that the required 24 CSS pixel clearance intersects another pointer target' : '',
+      axeMatched ? 'axe-core returned its target-size signal' : ''
+    ].filter(Boolean).join(' and ');
     findings.push(makeFinding({
       identity: `target-size|${component}`,
       ruleId: 'target-size-review',
       classification: 'review',
-      severity: 'Moderate',
+      severity: 'Minor',
       wcag: ['2.5.8'],
-      summary: 'Review controls smaller than 24 by 24 CSS pixels',
-      issue: `The “${item.name || 'unnamed'}” target measured ${item.width}×${item.height} CSS pixels. Spacing and other WCAG exceptions require manual validation.`,
+      summary: 'Pointer targets may not provide the required size or spacing',
+      issue: `Automated evidence indicates that one or more pointer targets in this component may not provide a 24×24 CSS pixel target or sufficient separation because ${evidenceBasis}. The Equivalent, Inline, User Agent Control and Essential exceptions cannot all be established automatically, so this is a review issue rather than a confirmed WCAG failure.`,
       impact: 'People with limited dexterity may activate an adjacent control accidentally or be unable to select the target reliably.',
-      testing: 'Rendered target bounds were measured. This is a review issue because WCAG 2.5.8 includes spacing and other exceptions.',
-      remediation: 'Increase each target to at least 24 by 24 CSS pixels or provide enough unobstructed spacing to satisfy the WCAG spacing exception. Prefer larger touch areas for primary mobile controls.',
+      testing: [
+        `1. Open the affected page at the ${audit.viewport.name} viewport and locate the listed component.`,
+        '2. Measure the complete clickable area of each listed control, including authored padding.',
+        '3. For every undersized target, centre a 24 CSS pixel diameter circle on its bounding box and check whether it intersects another target or another undersized target’s circle.',
+        '4. Confirm whether the Equivalent, Inline, User Agent Control or Essential exception applies.',
+        `Actual: ${measurements}.${nearbyTargets ? ` Nearby target evidence: ${nearbyTargets}.` : ''}`,
+        'Expected: Each pointer target contains a 24×24 CSS pixel area, has sufficient clearance, or has a documented applicable exception.'
+      ].join('\n'),
+      remediation: 'Increase the clickable area of each affected control to contain at least 24×24 CSS pixels. Where the visible control must remain smaller, add sufficient unobstructed spacing so the centred 24 CSS pixel clearance circles do not intersect neighbouring targets. Preserve the visible design by applying padding or an equivalent enlarged hit area, then retest every affected viewport.',
       component,
-      sharedComponentKey: createSharedComponentKey(component, `target-size|${item.name}`),
+      sharedComponentKey: createSharedComponentKey(component, `target-size-spacing|${selectors.map(normalizeComponent).sort().join('|')}`),
       urls: [audit.url],
       viewports: [audit.viewport.name],
-      selectors: [item.selector],
-      evidence: [evidence('dom', item.selector, `${item.width}×${item.height}px; name: ${item.name}`)],
-      assignment: 'Mixed',
+      selectors,
+      evidence: items.map((item) => evidence(
+        'dom',
+        item.selector,
+        `${item.width}×${item.height} CSS pixels; name: ${item.name || 'unnamed target'}; inline exception: ${item.inlineException}; spacing risk: ${item.spacingRisk}; nearby targets: ${item.nearbyTargets.map((nearby) => `${nearby.name || nearby.selector} (${nearby.centerDistance}px centre distance)`).join(', ') || 'none'}; axe target-size signal: ${Boolean(item.axeTargetSizeSignal || axeTargetSelectors.has(normalizeComponent(item.selector)))}`
+      )),
+      assignment: 'Development',
       effort: 'Small',
       translationRequired: 'No'
     }));

@@ -27,6 +27,8 @@ const requiredIssueLabels = [
   'Component:', 'Location:', 'Affected viewport(s):', 'Accessibility issue:', 'User impact:', 'Technical locator:'
 ];
 
+const requiredTestingMarkers = ['1.', 'Actual:', 'Expected:'];
+
 function cellText(value: { text: unknown; value: unknown }): string {
   const candidate = value.text ?? value.value ?? '';
   if (typeof candidate === 'string') return candidate.trim();
@@ -110,6 +112,14 @@ export async function validateExcelReport(path: string): Promise<WorkbookValidat
       const issue = cellText(row.getCell(17));
       for (const label of requiredIssueLabels) {
         if (!issue.includes(label)) errors.push(`Issue is missing “${label}” context at row ${rowNumber}.`);
+      }
+      const summary = cellText(row.getCell(15));
+      if (!/^(?:Desktop|Mobile|Desktop and mobile|Tested viewport):\s+\S/.test(summary)) {
+        errors.push(`Summary is missing the affected viewport scope at row ${rowNumber}.`);
+      }
+      const testing = cellText(row.getCell(18));
+      for (const marker of requiredTestingMarkers) {
+        if (!testing.includes(marker)) errors.push(`Testing is missing “${marker}” evidence at row ${rowNumber}.`);
       }
       const reportScreenshotLink = cellHyperlink(row.getCell(19).value);
       if (reportScreenshotLink) {

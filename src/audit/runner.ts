@@ -162,7 +162,10 @@ async function runAxe(page: Page): Promise<AxeViolationResult[]> {
   const output = await page.evaluate(async () => {
     const engine = (window as unknown as {
       axe: {
-        run: (context: Document, options: unknown) => Promise<{ violations: AxeViolationResult[] }>;
+        run: (context: Document, options: unknown) => Promise<{
+          violations: AxeViolationResult[];
+          incomplete: AxeViolationResult[];
+        }>;
       };
     }).axe;
     return engine.run(document, {
@@ -170,10 +173,15 @@ async function runAxe(page: Page): Promise<AxeViolationResult[]> {
         type: 'tag',
         values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice']
       },
-      resultTypes: ['violations']
+      resultTypes: ['violations', 'incomplete']
     });
   });
-  return output.violations;
+  return [
+    ...output.violations.map((result) => ({ ...result, resultType: 'violation' as const })),
+    ...output.incomplete
+      .filter((result) => result.id === 'target-size')
+      .map((result) => ({ ...result, resultType: 'incomplete' as const }))
+  ];
 }
 
 export function screenshotCandidatesForFindings(findings: Finding[]): string[] {
@@ -371,7 +379,10 @@ async function auditViewport(
       errors.push(`axe-core error: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     });
-    const dom = await runDomChecks(page);
+    const axeTargetSizeSelectors = axeResults
+      .filter((result) => result.id === 'target-size')
+      .flatMap((result) => result.nodes.flatMap((node) => node.target));
+    const dom = await runDomChecks(page, axeTargetSizeSelectors);
     const keyboard = await runKeyboardChecks(page, options.maxTabStops);
     const disclosures = await runDisclosureChecks(page);
     const tabs = await runTabChecks(page);

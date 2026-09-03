@@ -99,6 +99,7 @@ export interface AxeNodeResult {
 
 export interface AxeViolationResult {
   id: string;
+  resultType?: 'violation' | 'incomplete';
   impact: string | null;
   tags: string[];
   description: string;
@@ -117,7 +118,23 @@ export interface DomCheckResult {
   emptyNamedControls: Array<{ selector: string; tag: string; html: string }>;
   unlabeledFields: Array<{ selector: string; html: string }>;
   duplicateIds: Array<{ id: string; count: number }>;
-  smallTargets: Array<{ selector: string; name: string; width: number; height: number }>;
+  smallTargets: Array<{
+    selector: string;
+    name: string;
+    width: number;
+    height: number;
+    groupSelector: string;
+    inlineException: boolean;
+    spacingRisk: boolean;
+    axeTargetSizeSignal?: boolean;
+    nearbyTargets: Array<{
+      selector: string;
+      name: string;
+      width: number;
+      height: number;
+      centerDistance: number;
+    }>;
+  }>;
   tablesForReview: Array<{ selector: string; reason: string }>;
   autoplayMedia: Array<{ selector: string; tag: string }>;
 }

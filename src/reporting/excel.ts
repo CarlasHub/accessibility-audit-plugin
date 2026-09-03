@@ -99,6 +99,15 @@ function viewportLabel(viewport: string): string {
   return viewport.replace(/[-_]+/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+function findingViewportScope(finding: Finding): string {
+  const hasDesktop = finding.viewports.includes('desktop');
+  const hasMobile = finding.viewports.some((viewport) => viewport === 'mobile' || viewport === 'reflow-320');
+  if (hasDesktop && hasMobile) return 'Desktop and mobile';
+  if (hasMobile) return 'Mobile';
+  if (hasDesktop) return 'Desktop';
+  return 'Tested viewport';
+}
+
 function componentName(finding: Finding): string {
   return finding.componentName?.trim() || finding.component;
 }
@@ -119,6 +128,45 @@ function issueDescription(finding: Finding): string {
   ].join('\n');
 }
 
+function expectedOutcome(finding: Finding, criteria: LookupEntry[]): string {
+  const rule = finding.ruleId;
+  if (rule === 'page-unavailable') return 'The requested staging page loads successfully and every planned viewport can be tested.';
+  if (rule === 'target-size-review') return 'Each pointer target contains a 24×24 CSS pixel area, has sufficient clearance, or has a documented applicable exception.';
+  if (/link-(?:broken-destination|destination-review)|missing-fragment/.test(rule)) {
+    return 'The link navigates to a valid destination, or the interaction uses a native button when it performs an action.';
+  }
+  if (/link-name|empty-accessible-name|control-no-name|command-name|button-name|input-button-name/.test(rule)) {
+    return 'The interactive element exposes a concise accessible name that communicates its purpose or destination.';
+  }
+  if (/label/.test(rule)) return 'The form control has a persistent visible label and a matching programmatic accessible name.';
+  if (/image|linked-image/.test(rule)) return 'The image or image link exposes one concise text alternative that communicates its purpose without unnecessary repetition.';
+  if (/focus-order/.test(rule)) return 'Keyboard focus follows a logical sequence that matches the revealed content and preserves the user’s position.';
+  if (/focus/.test(rule)) return 'Keyboard focus remains visible, unobscured, and predictable throughout the interaction.';
+  if (/disclosure/.test(rule)) return 'The disclosure uses an appropriate control, exposes accurate state and relationships, and behaves predictably from the keyboard.';
+  if (/tabs/.test(rule)) return 'The tab component exposes valid tab-to-panel relationships and supports its documented keyboard interaction.';
+  if (/reflow|overflow/.test(rule)) return 'Ordinary page content remains available without two-dimensional scrolling at the tested viewport.';
+  if (/text-spacing/.test(rule)) return 'All content and functionality remain visible and operable after the WCAG text-spacing overrides are applied.';
+  if (/landmark|region/.test(rule)) return 'Page regions use appropriate semantic landmarks with clear and distinguishable names where required.';
+  const criterion = criteria.find((entry) => entry.label !== 'None' && entry.synopsis !== 'NA');
+  return criterion
+    ? `The component meets ${criterion.label}: ${criterion.synopsis}.`
+    : 'The component does not expose the accessibility barrier described in this finding.';
+}
+
+function testingDescription(finding: Finding, criteria: LookupEntry[]): string {
+  if (/^\s*1\./m.test(finding.testing) && /\bActual:/i.test(finding.testing) && /\bExpected:/i.test(finding.testing)) {
+    return finding.testing;
+  }
+  const method = finding.testing.replace(/\s+/g, ' ').trim().replace(/\.$/, '');
+  return [
+    `1. Open each affected page at ${finding.viewports.map(viewportLabel).join(', ')}.`,
+    `2. Locate ${componentName(finding)} at ${componentLocation(finding)}.`,
+    `3. ${method}.`,
+    `Actual: ${finding.issue}`,
+    `Expected: ${expectedOutcome(finding, criteria)}`
+  ].join('\n');
+}
+
 function reportRowValues(finding: Finding, id: string, criteria: LookupEntry[], outputPath: string): CellValue[] {
   const labels = [finding.classification, finding.ruleId, ...finding.wcag.map((criterion) => `WCAG ${criterion}`)].join(', ');
   return [
@@ -136,10 +184,10 @@ function reportRowValues(finding: Finding, id: string, criteria: LookupEntry[], 
     null,
     null,
     finding.urls.join('\n'),
-    `${componentName(finding)} — ${finding.summary}`,
+    `${findingViewportScope(finding)}: ${componentName(finding)} — ${finding.summary}`,
     testingEnvironment(finding),
     issueDescription(finding),
-    finding.testing,
+    testingDescription(finding, criteria),
     screenshots(finding, outputPath),
     finding.translationRequired,
     finding.classification === 'confirmed' || finding.classification === 'blocker'

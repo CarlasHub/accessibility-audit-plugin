@@ -7,8 +7,13 @@
     <style>
       body { font-family: sans-serif; margin: 0; }
       header, main { padding: 1rem; }
+      nav { display: flex; align-items: center; gap: 8px; }
+      nav a, nav button, input, [role="tablist"] button { min-height: 24px; }
+      nav a { min-width: 24px; }
+      input { display: block; margin-block: 8px; }
       #menu[hidden] { display: none; }
       a:focus, button:focus, input:focus { outline: 3px solid #005fcc; outline-offset: 2px; }
+      .target-cluster { display: flex; gap: 0; }
       .small { width: 18px; height: 18px; padding: 0; }
       #cookie-consent {
         position: fixed;
@@ -38,10 +43,14 @@
     </header>
     <main>
       <h1>Fixture page</h1>
-      <button class="small" aria-label="Save"></button>
+      <div class="target-cluster" role="group" aria-label="Card actions">
+        <button class="small" aria-label="Save"></button>
+        <button class="small" aria-label="Share"></button>
+      </div>
       <input type="text">
       <label for="labelled-input">Labelled input</label>
       <input id="labelled-input" type="text">
+      <p><a id="cookie-settings" href="#">Cookie Settings <img alt="Opens in a new window" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="></a></p>
       <div id="information-tabs" role="tablist" aria-label="Information">
         <button id="tab-first" role="tab" aria-selected="true" aria-controls="missing-panel">First</button>
         <button id="tab-second" role="tab" aria-selected="false" tabindex="-1">Second</button>

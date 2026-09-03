@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.2 - 2026-09-03
+
+- Stopped turning every rendered control below 24×24 CSS pixels into a target-size workbook row.
+- Added rendered 24 CSS pixel clearance checks, inline-target exclusion, component grouping, and review-only handling for axe target-size violation/incomplete signals.
+- Prevented ordinary text links containing decorative images and hash-only actions from being misclassified as image-only home links.
+- Corrected unnamed non-link controls so they no longer inherit the link-purpose success criterion.
+- Added viewport-first report titles and reproducible Actual/Expected procedures for every generated finding.
+- Added regression coverage for isolated small targets, the inline exception, grouped spacing conflicts, and axe target-size classification.
+
 ## 0.9.1 - 2026-09-03
 
 - Added a reproducible, checksum-verified Claude Desktop custom-plugin ZIP for local Chat conversations.

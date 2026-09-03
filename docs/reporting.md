@@ -31,7 +31,7 @@ Impact severity is also separate. It estimates the likely effect on users; it is
 | ID | Stable row identifier generated for the workbook. |
 | SC1–SC3 and adjacent lookup fields | Up to three mapped criteria with level, synopsis, and W3C Understanding reference. |
 | Links | Every affected page. Consolidated component findings list one URL per line. |
-| Summary | Short finding title beginning with the rendered component name. |
+| Summary | Short finding title beginning with the affected Desktop/Mobile scope and rendered component name. |
 | Environment | Browser and affected Desktop, Mobile, or Mobile reflow viewport. |
 | Issue | Labelled component name, page location, affected viewports, accessibility barrier, user impact, and technical locator. |
 | Testing | Reproduction evidence and any decision still required from a person. |
@@ -47,7 +47,9 @@ Impact severity is also separate. It estimates the likely effect on users; it is
 
 The same reusable component implementation, rendered component name, and root cause produce one row across all affected pages. Generic unnamed controls must also share the same rendered location before they are consolidated, preventing identical bare markup from merging unrelated widgets. A page-specific implementation or root cause remains on its own row. The Links cell lists every affected page on its own line. JSON preserves URL, viewport, selector, screenshot, and raw evidence.
 
-Summary uses the rendered component name rather than a CSS selector alone. Issue uses labelled lines for Component, Location, Affected viewport(s), Accessibility issue, User impact, and Technical locator. The workbook validator rejects rows that omit any of those fields.
+Summary states the affected Desktop/Mobile scope and uses the rendered component name rather than a CSS selector alone. Issue uses labelled lines for Component, Location, Affected viewport(s), Accessibility issue, User impact, and Technical locator. Every generated finding provides reproducible steps with explicit Actual and Expected results. The workbook validator rejects rows that omit the viewport-first Summary, required Issue context, or structured Testing evidence.
+
+Target-size evidence is gated before it becomes a row. A raw dimension below 24 CSS pixels is retained in JSON but does not by itself create a finding. Inline text links and isolated undersized targets that satisfy the spacing geometry are omitted. A workbook review requires a detected clearance collision or an axe target-size violation/incomplete signal, related targets are grouped by rendered component, and no confirmed WCAG 2.5.8 failure is claimed until the applicable exceptions have been assessed.
 
 Notes contains remediation only. The validator rejects empty Notes or ticket-system references in Notes.
 

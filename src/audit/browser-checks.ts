@@ -18,8 +18,8 @@ const focusableSelector = [
   '[contenteditable="true"]'
 ].join(',');
 
-export async function runDomChecks(page: Page): Promise<DomCheckResult> {
-  return page.evaluate((focusables) => {
+export async function runDomChecks(page: Page, axeTargetSizeSelectors: string[] = []): Promise<DomCheckResult> {
+  return page.evaluate(({ focusables, targetSizeSelectors }) => {
     const visible = (element: Element): boolean => {
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
@@ -48,6 +48,12 @@ export async function runDomChecks(page: Page): Promise<DomCheckResult> {
       if (node instanceof HTMLImageElement) return node.alt.trim();
       if (node instanceof HTMLInputElement && node.type === 'image') return node.alt.trim();
       return [...node.childNodes].map(descendantTextAlternative).filter(Boolean).join(' ').trim();
+    };
+    const descendantTextWithoutImages = (node: Node): string => {
+      if (node instanceof Text) return node.textContent?.trim() ?? '';
+      if (!(node instanceof Element) || node.getAttribute('aria-hidden') === 'true') return '';
+      if (node instanceof HTMLImageElement || (node instanceof HTMLInputElement && node.type === 'image')) return '';
+      return [...node.childNodes].map(descendantTextWithoutImages).filter(Boolean).join(' ').trim();
     };
     const name = (element: Element): string => {
       const labelledBy = element.getAttribute('aria-labelledby');
@@ -96,12 +102,23 @@ export async function runDomChecks(page: Page): Promise<DomCheckResult> {
       .flatMap((link) => {
         const image = link.querySelector('img');
         if (!image) return [];
+        // This heuristic is only for image-only links. A text link that also
+        // contains a decorative or status icon already derives its purpose
+        // from non-image content and must not be treated as a linked logo.
+        if (descendantTextWithoutImages(link)) return [];
         const accessibleName = name(link);
         const alt = image.getAttribute('alt') ?? '';
+        const rawHref = link.getAttribute('href')?.trim() ?? '';
         let destination: URL | null = null;
         try { destination = new URL((link as HTMLAnchorElement).href, document.baseURI); } catch { destination = null; }
         const generic = /^(logo|company logo|site logo|image|home|homepage)$/i.test(accessibleName);
-        const homeDestination = Boolean(destination && /^\/(?:[a-z]{2}(?:-[A-Z]{2})?)?\/?$/.test(destination.pathname));
+        const homeDestination = Boolean(
+          rawHref
+          && !/^(?:#|javascript:)/i.test(rawHref)
+          && destination
+          && !destination.hash
+          && /^\/(?:[a-z]{2}(?:-[A-Z]{2})?)?\/?$/.test(destination.pathname)
+        );
         if (!generic && !(homeDestination && !/home/i.test(accessibleName))) return [];
         return [{
           selector: cssPath(link),
@@ -145,17 +162,81 @@ export async function runDomChecks(page: Page): Promise<DomCheckResult> {
         ? elements.filter((element) => !name(element)).map((element) => ({ selector: cssPath(element), role }))
         : []
     );
-    const smallTargets = [...document.querySelectorAll(focusables)]
+    const rounded = (value: number): number => Math.round(value * 10) / 10;
+    const hasAxeTargetSizeSignal = (element: Element): boolean => targetSizeSelectors.some((selector) => {
+      try {
+        return element.matches(selector);
+      } catch {
+        return false;
+      }
+    });
+    const pointerTargets = [...document.querySelectorAll(focusables)]
       .filter(visible)
-      .map((element) => ({ element, rect: element.getBoundingClientRect() }))
-      .filter(({ rect }) => rect.width < 24 || rect.height < 24)
-      .slice(0, 100)
-      .map(({ element, rect }) => ({
-        selector: cssPath(element),
-        name: name(element),
-        width: Math.round(rect.width * 10) / 10,
-        height: Math.round(rect.height * 10) / 10
-      }));
+      .map((element) => ({ element, rect: element.getBoundingClientRect() }));
+    const inlineExceptionFor = (element: Element): boolean => {
+      if (!(element instanceof HTMLAnchorElement)) return false;
+      const container = element.closest('p, dd, dt, figcaption, caption, blockquote');
+      if (!container || !/^inline(?:-block)?$/.test(getComputedStyle(element).display)) return false;
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      let textNode = walker.nextNode();
+      while (textNode) {
+        if (!element.contains(textNode) && textNode.textContent?.trim()) return true;
+        textNode = walker.nextNode();
+      }
+      return false;
+    };
+    const groupSelectorFor = (element: Element): string => {
+      const group = element.closest([
+        '[role="tablist"]', '[role="toolbar"]', '[role="group"]',
+        '[class*="pagination" i]', '[class*="pager" i]', '[class*="dots" i]',
+        '[class*="carousel" i]', '[class*="slider" i]', '[class*="controls" i]',
+        '[class*="actions" i]', 'nav', 'form', 'section', 'article', 'main'
+      ].join(','));
+      return cssPath(group ?? element.parentElement ?? element);
+    };
+    const centerDistance = (first: DOMRect, second: DOMRect): number => Math.hypot(
+      first.left + first.width / 2 - (second.left + second.width / 2),
+      first.top + first.height / 2 - (second.top + second.height / 2)
+    );
+    const clearanceCircleIntersects = (target: DOMRect, other: DOMRect): boolean => {
+      const targetX = target.left + target.width / 2;
+      const targetY = target.top + target.height / 2;
+      const otherIsUndersized = other.width < 24 || other.height < 24;
+      if (otherIsUndersized) return centerDistance(target, other) < 24;
+      const closestX = Math.max(other.left, Math.min(targetX, other.right));
+      const closestY = Math.max(other.top, Math.min(targetY, other.bottom));
+      return Math.hypot(targetX - closestX, targetY - closestY) < 12;
+    };
+    const smallTargets = pointerTargets
+      .filter(({ element, rect }) => rect.width < 24 || rect.height < 24 || hasAxeTargetSizeSignal(element))
+      .map(({ element, rect }) => {
+        const nearbyTargets = pointerTargets
+          .filter(({ element: otherElement, rect: otherRect }) => (
+            otherElement !== element
+            && !element.contains(otherElement)
+            && !otherElement.contains(element)
+            && clearanceCircleIntersects(rect, otherRect)
+          ))
+          .slice(0, 12)
+          .map(({ element: otherElement, rect: otherRect }) => ({
+            selector: cssPath(otherElement),
+            name: name(otherElement),
+            width: rounded(otherRect.width),
+            height: rounded(otherRect.height),
+            centerDistance: rounded(centerDistance(rect, otherRect))
+          }));
+        return {
+          selector: cssPath(element),
+          name: name(element),
+          width: rounded(rect.width),
+          height: rounded(rect.height),
+          groupSelector: groupSelectorFor(element),
+          inlineException: inlineExceptionFor(element),
+          spacingRisk: nearbyTargets.length > 0,
+          axeTargetSizeSignal: hasAxeTargetSizeSignal(element),
+          nearbyTargets
+        };
+      });
     const tablesForReview = [...document.querySelectorAll('table')]
       .filter(visible)
       .flatMap((table) => {
@@ -184,7 +265,7 @@ export async function runDomChecks(page: Page): Promise<DomCheckResult> {
       tablesForReview,
       autoplayMedia
     };
-  }, focusableSelector);
+  }, { focusables: focusableSelector, targetSizeSelectors: axeTargetSizeSelectors });
 }
 
 export async function runLinkChecks(page: Page, maxLinks: number): Promise<LinkCheckResult[]> {
