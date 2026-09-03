@@ -2,7 +2,7 @@
 
 An isolated Codex, Claude Code, and Cursor plugin that helps teams find and document web accessibility barriers. Give it one or more page URLs—or a file containing URLs—and it runs repeatable checks in a headless browser, then produces an Excel report, detailed JSON evidence, and a portable ZIP.
 
-You do not need to know WCAG terminology to run the plugin. Start with the workflow below, then use the [plain-language user guide](docs/user-guide.md) and [WCAG basics](docs/wcag-basics.md) to understand the results.
+You do not need to know WCAG terminology to run the plugin. Start with the workflow below, use the [installation guide](docs/installation.md) for Cursor, Claude Code, or Codex, then use the [plain-language user guide](docs/user-guide.md) and [WCAG basics](docs/wcag-basics.md) to understand the results.
 
 > **Important:** this plugin is an automated testing aid, not a WCAG certification. A report with no automated findings does not prove that a page is accessible. Screen-reader, physical-device, content-meaning, visual-judgment, and other guided checks remain manual. W3C likewise states that no evaluation tool alone can determine whether a site meets accessibility standards.
 
@@ -123,9 +123,11 @@ npm run build
 
 The `dist/` directory is produced by `npm run build` and is intentionally not committed.
 
+For complete platform-specific setup, activation, verification, updating, uninstalling, and troubleshooting steps, use [Installation](docs/installation.md). The sections below are the short local-development paths.
+
 ## Cursor installation
 
-For local testing, Cursor discovers plugins under its local plugin directory. Symlink the built repository and reload Cursor:
+For local testing on macOS or Linux, Cursor discovers plugins under its local plugin directory. Symlink the built repository and reload Cursor:
 
 ```sh
 PLUGIN_DIR="$(pwd -P)"
@@ -151,30 +153,40 @@ After an installation is updated, run `npm ci`, `npm run build`, and reload Curs
 
 Cursor can also load the root `mcp.json` when the repository is configured as a plugin. The manifest is [.cursor-plugin/plugin.json](.cursor-plugin/plugin.json).
 
-Cursor Marketplace submission requires a public Git repository. A private repository can instead be used for local development or an organisation’s private team marketplace. See the [Cursor plugin reference](https://cursor.com/docs/reference/plugins).
+Cursor Marketplace submission requires a public Git repository. A private repository can instead be used for local development or an organisation’s private team marketplace. See [Installation](docs/installation.md#3a-install-in-cursor) and the [Cursor plugin reference](https://cursor.com/docs/reference/plugins).
 
 ## Claude Code installation
 
-Test directly from a built checkout:
+Start Claude Code in the unrelated project while loading the separate built checkout:
 
 ```sh
-claude --plugin-dir "$(pwd -P)"
+cd /path/to/project-being-audited
+claude --plugin-dir /path/to/accessibility-audit
 ```
 
 The Claude plugin manifest is [.claude-plugin/plugin.json](.claude-plugin/plugin.json), and its MCP definition is [.claude-mcp.json](.claude-mcp.json).
 
-For private team distribution, add the private GitHub repository as a Claude marketplace and install the plugin:
+For a persistent local installation, add the built checkout as a Claude marketplace and install the plugin:
 
 ```text
-/plugin marketplace add carla-goncalves_radancy/accessibility-audit-plugin
+/plugin marketplace add /path/to/accessibility-audit
 /plugin install accessibility-audit@accessibility-audit-marketplace
+/reload-plugins
 ```
 
-The user must already have Git credentials that can read the private repository. See the [Claude Code plugin marketplace documentation](https://code.claude.com/docs/en/plugin-marketplaces).
+Remote private-marketplace publication is a separate release workflow: the user needs repository access and the published snapshot must include runnable build output. See [Installation](docs/installation.md#3b-install-in-claude-code) and the [Claude Code plugin marketplace documentation](https://code.claude.com/docs/en/plugin-marketplaces).
 
 ## Codex installation
 
-The Codex manifest is [.codex-plugin/plugin.json](.codex-plugin/plugin.json), and the MCP server is declared in [.mcp.json](.mcp.json). Install it from a marketplace configured by your team, then start a new session so Codex loads its skill and tools. In Codex CLI, enter `/plugins` to open the plugin browser.
+The Codex manifest is [.codex-plugin/plugin.json](.codex-plugin/plugin.json), and the MCP server is declared in [.mcp.json](.mcp.json). Register the separate built checkout as a local marketplace, install it, and start a new session:
+
+```sh
+codex plugin marketplace add /path/to/accessibility-audit
+codex plugin add accessibility-audit@accessibility-audit-marketplace
+codex plugin list
+```
+
+In Codex CLI, enter `/plugins` to open the plugin browser. See [Installation](docs/installation.md#3c-install-in-codex) for activation, updating, and troubleshooting.
 
 The Codex IDE extension does not currently support plugins. Use Codex CLI or another supported Codex/ChatGPT plugin surface. See the [official OpenAI plugin documentation](https://developers.openai.com/codex/plugins).
 
@@ -216,7 +228,7 @@ Explicit audit command with selected options:
 node dist/cli.js audit \
   https://preview.example.test/ \
   https://preview.example.test/jobs \
-  --auditor "Carla Goncalves" \
+  --auditor "Auditor Name" \
   --landing-page https://preview.example.test/ \
   --output "accessibility-audit-results" \
   --allow-host preview.example.test \
@@ -228,7 +240,7 @@ Page-list input:
 
 ```sh
 node dist/cli.js audit pages.xlsx \
-  --auditor "Carla Goncalves" \
+  --auditor "Auditor Name" \
   --output "accessibility-audit-results" \
   --staging-only
 ```
@@ -413,6 +425,7 @@ Keep `captureScreenshots` enabled, confirm the output directory is writable, and
 
 ## Support and contribution
 
+- Installation for Cursor, Claude Code, and Codex: [docs/installation.md](docs/installation.md)
 - Start-to-finish instructions: [docs/user-guide.md](docs/user-guide.md)
 - WCAG terminology for non-specialists: [docs/wcag-basics.md](docs/wcag-basics.md)
 - Usage and troubleshooting: [SUPPORT.md](SUPPORT.md)

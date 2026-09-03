@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.2 - 2026-09-03
+
+- Added complete, isolated installation, activation, update, uninstall, and troubleshooting instructions for Cursor, Claude Code, and Codex.
+- Replaced the personal auditor name in README command examples with the neutral `Auditor Name` placeholder.
+- Clarified that remote marketplace publication requires a runnable packaged release and that an unbuilt source snapshot is not sufficient.
+
 ## 0.8.1 - 2026-09-03
 
 - Added a plain-language start-to-finish user guide for people without WCAG experience.

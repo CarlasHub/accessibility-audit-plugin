@@ -1,6 +1,6 @@
 # Support
 
-Start with the [plain-language user guide](docs/user-guide.md). It explains scope, running an audit, stopping safely, opening the portable output, reading findings, and completing manual checks.
+Start with [Installation](docs/installation.md), then use the [plain-language user guide](docs/user-guide.md). They cover client setup, scope, running an audit, stopping safely, opening the portable output, reading findings, and completing manual checks.
 
 ## Before requesting help
 
@@ -31,7 +31,7 @@ Collect the following without including secrets or private page content:
 5. Confirm `accessibility-audit` is enabled in the client’s plugin settings.
 6. Inspect the client’s MCP log for the first startup error.
 
-For Codex, use a supported plugin surface. The Codex IDE extension does not currently load plugins; Codex CLI exposes installed marketplaces through `/plugins`.
+For platform-specific diagnostics, follow the verification and troubleshooting steps in [Installation](docs/installation.md). For Codex, use a supported plugin surface. The Codex IDE extension does not currently load plugins; Codex CLI exposes installed marketplaces through `/plugins`.
 
 ## The workbook will not open
 

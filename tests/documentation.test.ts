@@ -6,6 +6,7 @@ const publicDocs = [
   'README.md',
   'SUPPORT.md',
   'CONTRIBUTING.md',
+  'docs/installation.md',
   'docs/user-guide.md',
   'docs/wcag-basics.md',
   'docs/reporting.md',
@@ -35,6 +36,25 @@ describe('user documentation', () => {
     expect(reporting).toContain('workflow Status `Fail`');
     expect(manual).toContain('Do not report an unperformed check as passed');
     expect(manual).toContain('## Test supported screen-reader and browser combinations');
+  });
+
+  it('documents complete client installation without using a personal auditor example', async () => {
+    const [readme, installation] = await Promise.all([
+      readFile('README.md', 'utf8'),
+      readFile('docs/installation.md', 'utf8')
+    ]);
+
+    expect(readme).not.toContain('Carla Goncalves');
+    expect(readme).toContain('--auditor "Auditor Name"');
+    expect(installation).toContain('## 3A. Install in Cursor');
+    expect(installation).toContain('## 3B. Install in Claude Code');
+    expect(installation).toContain('## 3C. Install in Codex');
+    expect(installation).toContain('Developer: Reload Window');
+    expect(installation).toContain('claude --plugin-dir');
+    expect(installation).toContain('codex plugin marketplace add');
+    expect(installation).toContain('## 5. Update an installation');
+    expect(installation).toContain('## 6. Uninstall');
+    expect(installation).toContain('The Codex IDE extension does not currently load plugins');
   });
 
   it('keeps local Markdown links resolvable and public guidance free of retired automation', async () => {
