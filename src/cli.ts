@@ -72,7 +72,7 @@ program
   .option('--concurrency <count>', 'Parallel page count')
   .option('--timeout <milliseconds>', 'Per-operation timeout')
   .option('--max-links <count>', 'Maximum rendered same-origin links checked per page')
-  .option('--template <path>', 'Alternate report template')
+  .option('--template <path>', 'Path to an exact copy of Accessibility Testing Boilerplate v.4 (4); other templates are rejected')
   .option('--report-name <name>', 'Excel filename')
   .option('--no-screenshots', 'Disable screenshot capture')
   .option('-y, --yes', 'Confirm the supplied/default auditor and start the audit')

@@ -336,11 +336,13 @@ Workbook worksheets:
 
 - `Accessibility Overview` — the single landing-page QA URL, scope, auditor, methods, totals, limitations, and outstanding guided checks.
 - `Accessibility Report` — one row per reusable component/root cause across affected pages; page-specific findings remain separate. Summary begins with the affected Desktop/Mobile scope and names the rendered component. Issue states the component, page location, affected viewport, accessibility problem, user impact, and technical locator. Testing uses reproducible steps with explicit Actual and Expected results for every generated finding. All generated rows start as `Fail`, use an operational Assignment, and initialize Estimate to `0`.
-- `Page Inventroy` — requested/final URL, HTTP status, page title, viewport, consent-handling result, and runtime errors.
-- `Image Inventory` — finding, page, viewport, human-readable component, location, selector, evidence type, screenshot filename, and relative link to the PNG.
+- `Page Inventroy` — a headerless, one-column list of the unique URLs whose browser testing started. Detailed viewport completion, redirects, status, consent handling, and errors remain in `audit-results.json`.
+- `Image Inventory` — a headerless, one-column list of unique relative screenshot paths. Each cell links to the referenced PNG beside the workbook; finding and component context remains in `Accessibility Report` and `audit-results.json`.
 - `Lookup WCAG 2.2` — hidden lookup data used by report formulas.
 
 The report contains no screen-reader worksheet or screen-reader execution result.
+
+The bundled workbook is an exact copy of `Accessibility Testing Boilerplate v.4 (4)`. Its five worksheet names and order, 32 Accessibility Report fields, hidden lookup sheet, worksheet tab colours, existing report styling, formulas, and validations are preserved. The two inventory worksheets deliberately receive no invented headers, tables, filters, formatting, or metadata columns.
 
 ## Finding confidence and false-positive controls
 
@@ -419,7 +421,7 @@ Use `list_guided_manual_checks`, the workbook Overview, and [docs/manual-verific
 - Source-checkout dependencies stay in the plugin directory. Marketplace runtime dependencies and downloaded browsers stay in client-owned plugin data, never in the audited project.
 - Output is written only to the configured audit directory.
 - Only explicitly supplied URLs are audited.
-- Visible consent banners are dismissed before component checks and screenshot capture. The Page Inventory and JSON state whether a banner was found, which action was used, and whether it was dismissed.
+- Visible consent banners are dismissed before component checks and screenshot capture. JSON states whether a banner was found, which action was used, and whether it was dismissed.
 - Host allowlists and optional staging-only enforcement are available.
 - Browser checks are headless by default.
 - No credentials are collected or transmitted by the plugin. Authenticated pages use the browser context available to the launched audit session.
@@ -465,7 +467,7 @@ The plugin installs Playwright Chromium automatically when no bundled Chromium, 
 
 ### A page was skipped
 
-Check `allowedHosts`, `stagingOnly`, redirects, authentication, and the `skippedUrls` or Page Inventory reason. A skipped or interrupted page is never presented as passed.
+Check `allowedHosts`, `stagingOnly`, redirects, authentication, and `skippedUrls` in `audit-results.json`. `Page Inventroy` lists only URLs whose browser testing started. A skipped or interrupted page is never presented as passed.
 
 ### A broken link looks incorrect
 

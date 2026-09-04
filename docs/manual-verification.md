@@ -5,11 +5,11 @@ Automation does not complete a WCAG 2.2 A/AA evaluation. Use this guide after ev
 ## First validate the generated evidence
 
 1. Confirm the workbook auditor, landing-page QA URL, and requested URL scope.
-2. Confirm completed, partial, not-started, and skipped page counts in `Page Inventroy` and JSON.
+2. Confirm `Page Inventroy` lists only the URLs whose browser testing started; confirm completed, partial, not-started, and skipped counts in JSON.
 3. Confirm each page completed at desktop, mobile, and 320px reflow or has a clear blocker.
 4. Confirm every Accessibility Report row is populated and has no placeholder ID or text.
 5. Keep confirmed failures, review items, blockers, and manual checks separate.
-6. Review Image Inventory evidence against the page, viewport, rule, selector, component name, location, and JSON evidence.
+6. Open each Image Inventory relative link and match it to the page, viewport, rule, selector, component name, location, and result recorded in Accessibility Report and JSON.
 7. Confirm consolidated rows list every affected page and genuinely share one component implementation and root cause.
 8. Confirm Notes contains only actionable remediation.
 9. Manually verify placeholder and 5xx link signals before treating them as defects.

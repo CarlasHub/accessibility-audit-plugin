@@ -115,7 +115,7 @@ export function createAccessibilityAuditMcpServer(
     maxTabStops: z.number().int().min(1).max(500).default(120),
     maxLinksPerPage: z.number().int().min(1).max(1000).default(200),
     captureScreenshots: z.boolean().default(true).describe('Capture linked full-page and element screenshots only for confirmed failures and page blockers.'),
-    templatePath: z.string().optional().describe('Optional replacement for the bundled Excel template.'),
+    templatePath: z.string().optional().describe('Optional path to a byte-identical copy of Accessibility Testing Boilerplate v.4 (4); every other workbook is rejected.'),
     reportName: z.string().default(DEFAULT_REPORT_NAME)
   };
 
@@ -275,7 +275,7 @@ export function createAccessibilityAuditMcpServer(
   server.registerTool(
     'validate_accessibility_report',
     {
-      description: 'Verify the required workbook sheets, 32-column report defaults, remediation, relative screenshot links, landing-page QA URL, auditor, and absence of placeholders or obsolete screen-reader sheets.',
+      description: 'Verify the exact five-sheet template shape and tab colours, 32-column report defaults, remediation, column-A page and image lists, relative screenshot links, landing-page QA URL, auditor, and absence of placeholders or obsolete screen-reader sheets.',
       inputSchema: { workbookPath: z.string().min(1) }
     },
     async ({ workbookPath }) => {

@@ -15,7 +15,7 @@ This table states what the engine actually runs. “Yes” means that the implem
 | WCAG text-spacing override | Whether increased line, paragraph, letter, and word spacing causes measurable overflow | Yes | Yes | Yes | Reviewed until clipping/overlap is visually confirmed |
 | Target size and spacing | Measures undersized targets, excludes inline text links, checks the 24 CSS pixel clearance geometry against neighbouring targets, and incorporates axe target-size violation/incomplete signals | Yes | Yes | Yes | No row for size alone; spacing conflicts and axe signals are grouped by component and reviewed because other WCAG exceptions still require judgment |
 | Table and autoplay signals | Whether tables or automatically playing media need human review | Yes | Yes | Yes | Reviewed |
-| Consent dismissal before checks and evidence | Whether a visible consent layer can be removed so it does not obscure the tested page | Yes | Yes | Yes | Prefer reject/necessary; record the action and any failure in JSON and Page Inventory |
+| Consent dismissal before checks and evidence | Whether a visible consent layer can be removed so it does not obscure the tested page | Yes | Yes | Yes | Prefer reject/necessary; record the action and any failure in JSON |
 | Contextual component screenshots | Focused evidence around the affected control and its surrounding component | Yes | Yes | Yes | Confirmed component failures only; outline the target within a component boundary |
 | Full-page screenshots | Page-wide evidence where no reliable component target exists | Yes | Yes | Yes | Page-level failures and blockers without a component locator only; screenshots do not decide conformance |
 

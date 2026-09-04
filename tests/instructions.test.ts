@@ -26,6 +26,9 @@ describe('embedded audit instructions', () => {
     expect(instructions).toContain('element screenshot');
     expect(instructions).toContain('both the authenticated request context and an in-page fetch agree');
     expect(instructions).toContain('Image Inventory');
+    expect(instructions).toContain('Accessibility Testing Boilerplate v.4 (4)');
+    expect(instructions).toContain('headerless column-A list of unique URLs');
+    expect(instructions).toContain('headerless column-A list of unique screenshot references');
     expect(instructions).not.toMatch(/guidepup/i);
     expect(instructions).not.toContain('Screen Reader Failures with');
     expect(instructions).toContain('Do not install dependencies in');

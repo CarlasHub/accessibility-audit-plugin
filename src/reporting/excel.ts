@@ -1,8 +1,10 @@
-import { basename, dirname, relative, resolve, sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import ExcelJS, { type CellValue, type DataValidation, type Style, type Worksheet } from 'exceljs';
+import ExcelJS, { type CellValue, type ConditionalFormattingOptions, type DataValidation, type Style, type Worksheet } from 'exceljs';
 import type { AuditSummary, Finding } from '../types.js';
-import { getImageEvidenceRows, IMAGE_INVENTORY_HEADERS, IMAGE_INVENTORY_SHEET } from './image-inventory.js';
+import { getImageEvidencePaths, IMAGE_INVENTORY_SHEET } from './image-inventory.js';
 
 interface LookupEntry {
   label: string;
@@ -13,6 +15,16 @@ interface LookupEntry {
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_TEMPLATE = resolve(moduleDirectory, '../../assets/accessibility-report-template.xlsx');
+export const CANONICAL_TEMPLATE_SHA256 = 'e2bad974cb5192fb4b64e81a60d9eabf6877e20593c7ed79c7e08314df36257f';
+
+async function assertCanonicalTemplate(path: string): Promise<void> {
+  const digest = createHash('sha256').update(await readFile(path)).digest('hex');
+  if (digest !== CANONICAL_TEMPLATE_SHA256) {
+    throw new Error(
+      `The report template must be an exact copy of Accessibility Testing Boilerplate v.4 (4) (${CANONICAL_TEMPLATE_SHA256}); received ${digest}.`
+    );
+  }
+}
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -233,77 +245,41 @@ function populateInventorySheets(workbook: ExcelJS.Workbook, summary: AuditSumma
   const pageSheet = workbook.getWorksheet('Page Inventroy');
   if (pageSheet) {
     pageSheet.spliceRows(1, pageSheet.rowCount);
-    pageSheet.addRow(['Requested URL', 'Final URL', 'HTTP Status', 'Page Title', 'Viewport', 'Consent Handling', 'Audit Errors']);
-    for (const page of summary.pages) {
-      for (const viewport of page.viewports) {
-        pageSheet.addRow([
-          page.url,
-          viewport.finalUrl,
-          viewport.status ?? 'No response',
-          viewport.title || 'Not available',
-          `${viewport.viewport.name} (${viewport.viewport.width}×${viewport.viewport.height})`,
-          viewport.consent.found
-            ? viewport.consent.dismissed
-              ? `Dismissed with “${viewport.consent.buttonName}” (${viewport.consent.action}).`
-              : `Detected but not dismissed${viewport.consent.error ? `: ${viewport.consent.error}` : '.'}`
-            : 'No visible consent banner detected.',
-          viewport.errors.length ? viewport.errors.join('\n') : 'None recorded'
-        ]);
-      }
+    const scannedUrls = [...new Set(summary.pages.map((page) => page.url.trim()).filter(Boolean))];
+    for (const url of scannedUrls) {
+      pageSheet.addRow([{
+        text: url,
+        hyperlink: url
+      }]);
     }
-    const represented = new Set(summary.pages.map((page) => page.url));
-    for (const skipped of summary.skippedUrls.filter((item) => !represented.has(item.url))) {
-      pageSheet.addRow([
-        skipped.url,
-        skipped.url,
-        'Not tested',
-        'Not available',
-        'Not started',
-        'Not tested',
-        skipped.reason
-      ]);
-    }
-    pageSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    pageSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
-    pageSheet.views = [{ state: 'frozen', ySplit: 1 }];
-    pageSheet.autoFilter = { from: 'A1', to: `G${Math.max(1, pageSheet.rowCount)}` };
-    [45, 45, 14, 35, 24, 36, 60].forEach((width, index) => { pageSheet.getColumn(index + 1).width = width; });
-    pageSheet.eachRow((row) => { row.alignment = { vertical: 'top', wrapText: true }; });
   }
 
   const imageSheet = workbook.getWorksheet(IMAGE_INVENTORY_SHEET);
   if (imageSheet) {
     imageSheet.spliceRows(1, imageSheet.rowCount);
-    imageSheet.addRow([...IMAGE_INVENTORY_HEADERS]);
-    const rows = getImageEvidenceRows(summary);
-    for (const item of rows) {
-      const row = imageSheet.addRow([
-        item.pageUrl,
-        item.viewport,
-        item.ruleId,
-        item.component,
-        item.location,
-        item.selector,
-        item.evidenceType,
-        item.result,
-        basename(item.screenshot),
-        {
-          text: 'Open screenshot',
-          hyperlink: workbookRelativePath(outputPath, item.screenshot),
-          tooltip: 'Open the screenshot file stored beside this workbook.'
-        }
-      ]);
-      row.getCell(10).font = { color: { argb: 'FF0563C1' }, underline: true };
+    for (const screenshotPath of getImageEvidencePaths(summary)) {
+      const reference = workbookRelativePath(outputPath, screenshotPath);
+      imageSheet.addRow([{
+        text: reference,
+        hyperlink: reference
+      }]);
     }
-    if (imageSheet.rowCount === 1) {
-      imageSheet.addRow(['All audited pages', 'All', 'N/A', 'N/A', 'N/A', 'N/A', 'Not captured', 'No finding screenshot evidence was generated.', 'N/A', 'N/A']);
-    }
-    imageSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    imageSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
-    imageSheet.views = [{ state: 'frozen', ySplit: 1 }];
-    imageSheet.autoFilter = { from: 'A1', to: `J${Math.max(1, imageSheet.rowCount)}` };
-    [42, 16, 28, 40, 48, 42, 22, 42, 32, 24].forEach((width, index) => { imageSheet.getColumn(index + 1).width = width; });
-    imageSheet.eachRow((row) => { row.alignment = { vertical: 'top', wrapText: true }; });
+  }
+}
+
+function extendReportConditionalFormatting(worksheet: Worksheet, finalRow: number): void {
+  if (finalRow <= 3) return;
+  const conditionalFormattings = (worksheet as Worksheet & {
+    conditionalFormattings: ConditionalFormattingOptions[];
+  }).conditionalFormattings;
+  for (const conditionalFormatting of conditionalFormattings) {
+    conditionalFormatting.ref = conditionalFormatting.ref
+      .split(/\s+/)
+      .map((range) => {
+        const match = /^(\$?[A-Z]+)\$?2:(\$?[A-Z]+)\$?3$/.exec(range);
+        return match ? `${match[1]}2:${match[2]}${finalRow}` : range;
+      })
+      .join(' ');
   }
 }
 
@@ -366,8 +342,10 @@ export interface ExcelReportOptions {
 }
 
 export async function writeExcelReport(summary: AuditSummary, options: ExcelReportOptions): Promise<string> {
+  const templatePath = options.templatePath ?? DEFAULT_TEMPLATE;
+  await assertCanonicalTemplate(templatePath);
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(options.templatePath ?? DEFAULT_TEMPLATE);
+  await workbook.xlsx.readFile(templatePath);
   const report = workbook.getWorksheet('Accessibility Report');
   const overview = workbook.getWorksheet('Accessibility Overview');
   const lookupSheet = workbook.getWorksheet('Lookup WCAG 2.2');
@@ -399,10 +377,6 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
     setLookupFormula(report, rowNumber, 'B', ['C', 'D', 'E'], criteria[0]!);
     setLookupFormula(report, rowNumber, 'F', ['G', 'H', 'I'], criteria[1]!);
     setLookupFormula(report, rowNumber, 'J', ['K', 'L', 'M'], criteria[2]!);
-    const screenshotCell = row.getCell(19);
-    if (screenshotCell.value && typeof screenshotCell.value === 'object' && 'hyperlink' in screenshotCell.value) {
-      screenshotCell.font = { ...screenshotCell.font, color: { argb: 'FF0563C1' }, underline: true };
-    }
     const estimateCell = row.getCell(32);
     estimateCell.numFmt = '0.00;-0.00;0';
     estimateCell.dataValidation = {
@@ -416,8 +390,9 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
     row.commit();
   });
 
-  report.autoFilter = { from: 'A1', to: `AF${Math.max(2, report.rowCount)}` };
-  report.views = [{ state: 'frozen', xSplit: 1, ySplit: 1 }];
+  const finalReportRow = Math.max(originalRowCount, summary.findings.length + 1);
+  report.autoFilter = { from: 'A1', to: `AF${finalReportRow}` };
+  extendReportConditionalFormatting(report, finalReportRow);
   overview.getCell('B3').value = 'Not supplied';
   overview.getCell('B4').value = new Date(summary.generatedAt);
   const landingPageUrl = summary.landingPageUrl || summary.requestedUrls[0] || 'Not supplied';
@@ -447,7 +422,6 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
     'Outstanding guided checks:',
     ...summary.manualChecks.map((check) => `• ${check.title}: ${check.procedure}`)
   ].join('\n');
-  overview.getCell('B15').alignment = { vertical: 'top', wrapText: true };
   refreshOverviewResults(overview, summary, criteriaByFinding);
   populateInventorySheets(workbook, summary, options.outputPath);
 

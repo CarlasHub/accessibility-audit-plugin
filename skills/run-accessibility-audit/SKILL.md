@@ -27,6 +27,6 @@ Call `run_accessibility_audit` once with the supplied targets. Read [test-matrix
 - Do not call the result a certification or complete WCAG conformance verdict.
 - Do not present an axe pass or absence of an automated signal as proof of accessibility.
 - Notes contain specific remediation only and no workflow or ticket commentary.
-- Preserve the 32-column report schema and remove placeholder findings.
-- Image Inventory names the rendered component and location and contains relative links to unique confirmed-failure and blocker screenshots. Component evidence is cropped around the component and target; full-page evidence is reserved for page-level failures or blockers without a component locator. Audit images are not embedded and no screen-reader worksheet is created.
+- Preserve the exact five-sheet `Accessibility Testing Boilerplate v.4 (4)` structure, worksheet order, tab colours, existing colour scheme, formulas, validations, and 32-column report schema. Remove placeholder finding values. Do not add fields, columns, tables, headers, or worksheets.
+- Page Inventroy is a headerless column-A list of unique URLs whose browser testing started. Image Inventory is a headerless column-A list of unique portable relative screenshot hyperlinks. Component evidence is cropped around the component and target; full-page evidence is reserved for page-level failures or blockers without a component locator. Audit images are not embedded and no screen-reader worksheet is created.
 - Accessibility Overview contains one landing-page QA URL. All report rows start as Fail, Assignment defaults to Implementation Queue unless specialist ownership is justified, and Estimate starts at numeric 0 with 0.25 increments allowed.

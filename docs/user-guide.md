@@ -127,7 +127,7 @@ To stop:
 
 One stop request allows the plugin to close Chromium and write validated partial JSON, XLSX, and ZIP output. A second `Ctrl+C` exits immediately and may prevent partial reports from being finalized.
 
-Cancelled output must be treated as partial. Check `Page Inventroy` and the JSON summary to see which pages and viewports completed.
+Cancelled output must be treated as partial. `Page Inventroy` lists the URLs whose browser testing started; check the JSON summary to determine which pages and viewports completed, remained partial, or never started.
 
 ## Step 5: open the output correctly
 
@@ -146,9 +146,9 @@ For sharing, send the ZIP. The recipient should extract the complete ZIP before 
 Review in this order:
 
 1. `Accessibility Overview`: confirm scope, auditor, methods, totals, limitations, and outstanding manual checks.
-2. `Page Inventroy`: confirm every requested page and viewport completed and inspect redirects, HTTP status, consent handling, and runtime errors.
+2. `Page Inventroy`: confirm the headerless column-A list contains the URLs whose browser testing started; use JSON to inspect completion, redirects, HTTP status, consent handling, and runtime errors.
 3. `Accessibility Report`: triage confirmed issues first, then perform the stated checks for review items.
-4. `Image Inventory`: open evidence links and confirm each image shows the named component, location, viewport, and affected element.
+4. `Image Inventory`: open each linked relative path in the headerless column-A list, then match it to the finding/component context in Accessibility Report and JSON.
 5. Complete the guided checks in [Manual verification](manual-verification.md).
 
 Do not conclude that the site passed because the workbook has few or no automated rows. Do not conclude that every row is a proven failure merely because its workflow Status defaults to `Fail`.

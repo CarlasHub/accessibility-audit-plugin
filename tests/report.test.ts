@@ -72,14 +72,28 @@ describe('Excel report', () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(path);
     expect(workbook.getWorksheet('Screen Reader Failures')).toBeUndefined();
+    expect(workbook.worksheets.map((worksheet) => worksheet.name)).toEqual([
+      'Accessibility Overview',
+      'Accessibility Report',
+      'Page Inventroy',
+      'Image Inventory',
+      'Lookup WCAG 2.2'
+    ]);
+    const pageInventory = workbook.getWorksheet('Page Inventroy');
+    expect(pageInventory?.actualColumnCount).toBe(1);
+    expect(pageInventory?.actualRowCount).toBe(1);
+    expect(pageInventory?.getCell('A1').value).toEqual({
+      text: 'https://example.runmytests.com/en',
+      hyperlink: 'https://example.runmytests.com/en'
+    });
+    expect(pageInventory?.properties.tabColor?.argb).toBe('FF0000FF');
     const inventory = workbook.getWorksheet('Image Inventory');
-    expect(inventory?.getCell('C2').value).toBe('image-missing-alt');
-    expect(inventory?.getCell('D2').value).toBe('“Unilever” home link');
-    expect(inventory?.getCell('E2').value).toBe('Within the “Primary” navigation landmark');
-    expect(inventory?.getCell('G2').value).toBe('Element screenshot');
+    expect(inventory?.actualColumnCount).toBe(1);
+    expect(inventory?.actualRowCount).toBe(1);
+    expect(inventory?.properties.tabColor?.argb).toBe('FF38761D');
     expect(inventory?.getImages()).toHaveLength(0);
-    expect(inventory?.getCell('J2').value).toEqual(expect.objectContaining({
-      text: 'Open screenshot',
+    expect(inventory?.getCell('A1').value).toEqual(expect.objectContaining({
+      text: 'screenshots/elements/element.png',
       hyperlink: 'screenshots/elements/element.png'
     }));
     const report = workbook.getWorksheet('Accessibility Report');
@@ -123,7 +137,8 @@ describe('Excel report', () => {
     await workbook.xlsx.readFile(path);
     expect(workbook.getWorksheet('Accessibility Overview')?.getCell('B9').value).toContain('no screenshot evidence captured');
     const inventory = workbook.getWorksheet('Image Inventory');
-    expect(inventory?.getCell('G2').value).toBe('Not captured');
+    expect(inventory?.actualRowCount).toBe(0);
+    expect(inventory?.actualColumnCount).toBe(0);
     expect(inventory?.getImages()).toHaveLength(0);
     const report = workbook.getWorksheet('Accessibility Report');
     expect(report?.getCell('X2').value).toBe('Fail');
@@ -131,7 +146,7 @@ describe('Excel report', () => {
     expect(report?.getCell('AF2').value).toBe(0);
   });
 
-  it('rejects incomplete finding wording and full-page evidence assigned to a component locator', async () => {
+  it('rejects incomplete finding wording and extra Image Inventory values', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'a11y-report-context-validation-'));
     const screenshotDirectory = join(directory, 'screenshots', 'elements');
     await mkdir(screenshotDirectory, { recursive: true });
@@ -144,7 +159,8 @@ describe('Excel report', () => {
     await workbook.xlsx.readFile(path);
     workbook.getWorksheet('Accessibility Report')!.getCell('Q2').value = 'The link is inaccessible.';
     workbook.getWorksheet('Accessibility Report')!.getCell('R2').value = 'Automated scan only.';
-    workbook.getWorksheet('Image Inventory')!.getCell('G2').value = 'Full-page screenshot';
+    workbook.getWorksheet('Image Inventory')!.getCell('B1').value = 'Invented metadata';
+    workbook.getWorksheet('Page Inventroy')!.getCell('B1').value = 'Invented metadata';
     await workbook.xlsx.writeFile(path);
 
     const validation = await validateExcelReport(path);
@@ -152,7 +168,8 @@ describe('Excel report', () => {
     expect(validation.errors).toContain('Issue is missing “Component:” context at row 2.');
     expect(validation.errors).toContain('Testing is missing “Actual:” evidence at row 2.');
     expect(validation.errors).toContain('Testing is missing “Expected:” evidence at row 2.');
-    expect(validation.errors).toContain('Image Inventory!G2 must not use full-page evidence for a component locator.');
+    expect(validation.errors).toContain('Image Inventory must contain only the column-A evidence reference list; extra values exist in B1.');
+    expect(validation.errors).toContain('Page Inventroy must contain only the column-A scanned URL list; extra values exist in B1.');
   });
 
   it('rejects non-Fail status and invalid estimate increments', async () => {

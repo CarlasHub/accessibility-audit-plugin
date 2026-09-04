@@ -1,13 +1,13 @@
 # Workbook reporting
 
-The reporter uses the bundled Accessibility Testing Boilerplate, removes placeholder rows, preserves the 32 Accessibility Report columns and WCAG lookup formulas, and populates operational fields for every finding.
+The reporter uses an exact bundled copy of `Accessibility Testing Boilerplate v.4 (4)`, removes placeholder finding values, preserves the worksheet order, tab colours, 32 Accessibility Report columns, WCAG lookup formulas, validations, and existing colour scheme, and populates only the template's existing report fields. It does not add worksheets or inventory columns.
 
 ## Read the workbook in this order
 
 1. **Accessibility Overview:** confirm the landing-page QA URL, audit date, auditor, scope, methods, totals, limitations, and outstanding guided checks.
-2. **Page Inventroy:** confirm that every requested URL completed at every requested viewport. A redirect, unavailable status, consent failure, runtime error, or cancelled viewport needs investigation before the scope can be called complete.
+2. **Page Inventroy:** confirm the headerless column-A list contains the unique URLs whose browser testing started. Use JSON for completed, partial, not-started, redirect, consent, status, and runtime-error detail.
 3. **Accessibility Report:** triage confirmed findings, then perform the Testing procedure for review findings.
-4. **Image Inventory:** open linked evidence and verify that the page, viewport, named component, location, and highlighted target match the finding.
+4. **Image Inventory:** open the linked relative screenshot references in column A and match them to the Screengrab links and evidence records in the report and JSON.
 
 `Lookup WCAG 2.2` is hidden reference data for formulas. It is not an audit-results worksheet.
 
@@ -57,11 +57,13 @@ Every populated report row starts with Status `Fail`. Development and QA finding
 
 Accessibility Overview contains one landing-page QA URL, supplied explicitly or defaulted to the first resolved URL.
 
-Image Inventory contains one row per unique confirmed-failure or blocker screenshot with page, viewport, rule, rendered component, component location, selector, evidence type, result, filename, and a relative hyperlink. Images are not embedded. Component evidence is cropped to an appropriate rendered component boundary and the affected element is outlined. Full-page evidence is permitted only for page-level failures or blockers without a component locator. The portable ZIP preserves the workbook and `screenshots` tree so links remain valid after transfer. When no screenshot evidence exists, the worksheet contains an explicit no-evidence row.
+`Page Inventroy` and `Image Inventory` follow the supplied blank-sheet layout exactly: neither has a header or metadata columns. Page Inventroy column A contains one hyperlink per unique URL whose browser testing started. Image Inventory column A contains one hyperlink per unique screenshot, displaying the same relative path used by the link. If no browser page started or no screenshot evidence exists, the corresponding sheet remains blank.
+
+Images are not embedded. Component evidence is cropped to an appropriate rendered component boundary and the affected element is outlined. Full-page evidence is permitted only for page-level failures or blockers without a component locator. The portable ZIP preserves the workbook and `screenshots` tree so links remain valid after transfer. Page, viewport, rule, component, location, selector, classification, and result detail remain in Accessibility Report and JSON rather than being duplicated into invented inventory columns.
 
 The generated workbook has no screen-reader worksheet. Assistive-technology testing remains in guided manual checks.
 
-Graceful cancellation still writes and validates JSON and XLSX output. Page Inventory identifies completed viewport evidence, consent-banner handling, and pages not started. Interrupted viewport work is excluded from findings.
+Graceful cancellation still writes and validates JSON and XLSX output. Page Inventroy lists only URLs whose browser testing started; JSON identifies completed, partial, not-started, and skipped work plus consent handling. Interrupted viewport work is excluded from findings.
 
 ## Evidence links
 
