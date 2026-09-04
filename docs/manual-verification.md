@@ -20,7 +20,7 @@ For every unique page template and interactive component state:
 
 1. Put the pointer aside and start at the browser address bar or beginning of the document.
 2. Use `Tab` and `Shift+Tab` to move through all interactive content.
-3. Use `Enter`, `Space`, `Escape`, and arrow keys according to the control type.
+3. Use `Enter`, `Space`, and arrow keys according to the control type. Test `Escape` only where the chosen pattern requires or documents it, such as dialogs and applicable menus or popovers; do not fail an ordinary accordion or disclosure solely because Escape does not close it.
 4. Open and close navigation menus, disclosures, dialogs, search, tabs, carousels, forms, and validation states.
 5. Confirm focus follows a logical order, remains visible, is not fully hidden by sticky content, and returns to a sensible control when a temporary layer closes.
 6. Confirm every action is available without a pointer and focus never becomes trapped.

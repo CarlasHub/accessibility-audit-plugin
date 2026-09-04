@@ -1,6 +1,6 @@
 # Test matrix reference
 
-The engine runs headless desktop, 390px mobile, and 320px reflow checks for HTTP/runtime state, axe, DOM semantics, keyboard traversal, focus signals, disclosures, tab relationships and operation, reflow, text spacing, target sizing, table/media signals, and screenshots. It tries bundled Chromium, Chrome, and Edge, then can install Playwright Chromium once in plugin-owned storage when none is available.
+The engine runs headless desktop, 390px mobile, and 320px reflow checks for HTTP/runtime state, axe, DOM semantics, keyboard traversal, focus signals, disclosure state/relationships/focus order, tab relationships and operation, reflow, text spacing, target sizing, table/media signals, and screenshots. It tries bundled Chromium, Chrome, and Edge, then can install Playwright Chromium once in plugin-owned storage when none is available. Generic disclosures and accordions are not tested against an Escape-to-close requirement; Escape remains a manual, pattern-specific check for controls such as dialogs and applicable menus or popovers.
 
 Same-origin link validation skips external, download, destructive, logout, and non-HTTP targets. Matching request-context and in-page 404/410 results are confirmed. Placeholder and 5xx results are reviews.
 

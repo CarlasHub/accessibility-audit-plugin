@@ -166,8 +166,6 @@ export interface DisclosureCheckResult {
   controlledVisibleAfterOpen: boolean | null;
   firstTabSelector: string | null;
   tabEnteredControlledRegion: boolean | null;
-  escapeClosed: boolean;
-  focusReturned: boolean;
   error?: string;
 }
 

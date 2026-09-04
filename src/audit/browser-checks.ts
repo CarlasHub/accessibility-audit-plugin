@@ -634,14 +634,12 @@ export async function runDisclosureChecks(page: Page): Promise<DisclosureCheckRe
       let controlledVisibleAfterOpen: boolean | null = null;
       let tabEnteredControlledRegion: boolean | null = null;
       let firstTabSelector: string | null = null;
-      let firstControlledFocusable: Locator | null = null;
       if (controlsId) {
         const controlled = page.locator(`#${controlsId.replaceAll(/([ !"#$%&'()*+,./:;<=>?@[\\\]^`{|}~])/g, '\\$1')}`);
         if ((await controlled.count()) > 0) {
           controlledVisibleAfterOpen = await controlled.isVisible().catch(() => false);
           const focusable = controlled.locator(focusableSelector);
           if ((await focusable.count()) > 0) {
-            firstControlledFocusable = focusable.first();
             await page.keyboard.press('Tab');
             const active = page.locator(':focus');
             firstTabSelector = (await active.count()) ? (await locatorDescription(active)).selector : null;
@@ -649,15 +647,6 @@ export async function runDisclosureChecks(page: Page): Promise<DisclosureCheckRe
           }
         }
       }
-      if (firstControlledFocusable && await firstControlledFocusable.isVisible().catch(() => false)) {
-        await firstControlledFocusable.focus();
-      } else {
-        await toggle.focus();
-      }
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(150);
-      const escapeClosed = (await toggle.getAttribute('aria-expanded')) !== 'true';
-      const focusReturned = await toggle.evaluate((element) => document.activeElement === element);
       results.push({
         selector: description.selector,
         name: description.name,
@@ -666,11 +655,9 @@ export async function runDisclosureChecks(page: Page): Promise<DisclosureCheckRe
         afterExpanded,
         controlledVisibleAfterOpen,
         firstTabSelector,
-        tabEnteredControlledRegion,
-        escapeClosed,
-        focusReturned
+        tabEnteredControlledRegion
       });
-      if (!escapeClosed) {
+      if ((await toggle.getAttribute('aria-expanded')) === 'true') {
         await toggle.focus();
         await page.keyboard.press('Enter');
         await page.waitForTimeout(100);
@@ -689,8 +676,6 @@ export async function runDisclosureChecks(page: Page): Promise<DisclosureCheckRe
         controlledVisibleAfterOpen: null,
         firstTabSelector: null,
         tabEnteredControlledRegion: null,
-        escapeClosed: false,
-        focusReturned: false,
         error: error instanceof Error ? error.message : String(error)
       });
     }

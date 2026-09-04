@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.9.4 - 2026-09-04
 
+- Consolidated shared text-colour treatments, repeated same-name landmarks, disclosure families, and description-list structure signals into component/root-cause rows instead of one row per DOM node or page instance.
+- Reclassified missing `aria-controls` alone as a Best Practice review for ordinary disclosures and accordions, combined it with unchanged `aria-expanded` evidence on the same component, and required observed open content before confirming a stale-state failure.
+- Removed the generic Escape-to-close disclosure check and documented Escape as a pattern-specific manual expectation rather than an accordion/disclosure requirement.
 - Replaced the bundled workbook byte-for-byte with `Accessibility Testing Boilerplate v.4 (4)` and added checksum, worksheet-order, tab-colour, field, style, and validation regression coverage.
 - Removed invented Page Inventroy and Image Inventory table schemas. Page Inventroy now lists only unique scanned URLs in column A; Image Inventory lists only unique linked relative evidence paths in column A.
 - Extended the template's existing conditional formatting and data validation behavior to additional Accessibility Report finding rows without adding report columns or worksheets.

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { AxeViolationResult, ElementContext, Finding, PageAudit, Severity, ViewportAudit } from '../types.js';
+import type { AxeNodeResult, AxeViolationResult, DisclosureCheckResult, ElementContext, Finding, PageAudit, Severity, ViewportAudit } from '../types.js';
 
 function fingerprint(value: string): string {
   return createHash('sha1').update(value).digest('hex').slice(0, 12);
@@ -141,6 +141,46 @@ function openingTagSignature(html: string): string {
   return (html.trim().match(/^<[^>]+>/)?.[0] ?? html.trim()).replace(/\s+/g, ' ');
 }
 
+interface ContrastDetails {
+  actual: string;
+  foreground: string;
+  background: string;
+  expected: string;
+}
+
+function contrastDetails(failureSummary = ''): ContrastDetails | null {
+  const actual = failureSummary.match(/contrast of\s+([\d.]+)/i)?.[1];
+  const foreground = failureSummary.match(/foreground color:\s*([^,)]+)/i)?.[1]?.trim().toLowerCase();
+  const background = failureSummary.match(/background color:\s*([^,)]+)/i)?.[1]?.trim().toLowerCase();
+  const expected = failureSummary.match(/expected contrast ratio of\s+([\d.]+):1/i)?.[1];
+  return actual && foreground && background && expected
+    ? { actual, foreground, background, expected }
+    : null;
+}
+
+function landmarkIdentity(audit: ViewportAudit, node: AxeNodeResult): { role: string; name: string } {
+  const context = node.target
+    .map((selector) => audit.elementContexts.find((item) => item.selector === selector))
+    .find(Boolean);
+  if (context) {
+    return {
+      role: context.role || context.tagName || 'landmark',
+      name: context.accessibleName.trim() || 'unnamed'
+    };
+  }
+  const tag = node.html.match(/^<([\w-]+)/)?.[1]?.toLowerCase() ?? 'landmark';
+  const role = node.html.match(/\brole\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase() ?? tag;
+  const name = node.html.match(/\b(?:aria-label|title)\s*=\s*["']([^"']+)["']/i)?.[1]?.trim() ?? 'unnamed';
+  return { role, name };
+}
+
+function axeNodeComponent(audit: ViewportAudit, node: AxeNodeResult): string {
+  const context = node.target
+    .map((selector) => audit.elementContexts.find((item) => item.selector === selector))
+    .find(Boolean);
+  return normalizeComponent(context?.captureSelector || node.target.join(' ') || 'page');
+}
+
 function severityFromAxe(impact: string | null): Severity {
   if (impact === 'critical') return 'Critical';
   if (impact === 'serious') return 'Serious';
@@ -173,6 +213,114 @@ function axeFindings(audit: ViewportAudit): Finding[] {
     if (violation.id === 'target-size') return [];
     const wcag = violation.tags.map(criterionFromTag).filter((item): item is string => Boolean(item));
     const isWcagViolation = wcag.length > 0;
+    if (violation.id === 'color-contrast') {
+      const groups = new Map<string, { details: ContrastDetails | null; nodes: AxeNodeResult[] }>();
+      for (const node of violation.nodes) {
+        const details = contrastDetails(node.failureSummary);
+        const signature = details
+          ? `${details.foreground}|${details.background}|${details.actual}|${details.expected}`
+          : stableComponentSignature(node.failureSummary ?? openingTagSignature(node.html));
+        const group = groups.get(signature) ?? { details, nodes: [] };
+        group.nodes.push(node);
+        groups.set(signature, group);
+      }
+      return [...groups.entries()].map(([signature, group]) => {
+        const selectors = [...new Set(group.nodes.flatMap((node) => node.target.length ? node.target : ['page']))];
+        const details = group.details;
+        const actual = details
+          ? `${details.foreground} foreground on ${details.background} background measured ${details.actual}:1; ${details.expected}:1 is required`
+          : 'axe-core identified insufficient text contrast for the listed elements';
+        const component = details
+          ? `text colour treatment ${details.foreground} on ${details.background}`
+          : 'text colour treatment';
+        return makeFinding({
+          identity: `color-contrast|${signature}`,
+          ruleId: 'axe-color-contrast',
+          classification: 'confirmed',
+          severity: severityFromAxe(violation.impact),
+          wcag: wcag.length ? wcag : ['1.4.3'],
+          summary: 'Shared text colour treatment has insufficient contrast',
+          issue: `The same rendered colour treatment is used by the listed text components and does not meet minimum contrast. ${actual}.`,
+          impact: axeUserImpact(violation.id),
+          testing: [
+            `1. Open the affected page at the ${audit.viewport.name} viewport.`,
+            `2. Locate the listed elements using ${conciseList(selectors, 8)}.`,
+            '3. Measure the rendered foreground and background colours in each affected state.',
+            `Actual: ${actual}.`,
+            `Expected: Text reaches at least ${details?.expected ?? 'the applicable minimum'}:1 contrast for the rendered text size and weight.`,
+            `Rule reference: ${violation.helpUrl}`
+          ].join('\n'),
+          remediation: 'Change the shared foreground or background colour token so every affected instance reaches the applicable contrast threshold in each state. Retest normal, bold, selected, hover and focus states wherever that shared colour treatment is used.',
+          component,
+          sharedComponentKey: createSharedComponentKey(component, `color-contrast|${signature}`),
+          urls: [audit.url],
+          viewports: [audit.viewport.name],
+          selectors,
+          evidence: group.nodes.map((node) => ({
+            kind: 'axe',
+            pageUrl: audit.url,
+            viewport: audit.viewport.name,
+            selector: node.target.join(', '),
+            detail: `${node.html}\n${node.failureSummary ?? ''}`.trim(),
+            screenshot: screenshotFor(audit, node.target[0])
+          })),
+          assignment: 'Mixed',
+          effort: 'Medium',
+          translationRequired: 'No'
+        });
+      });
+    }
+    if (violation.id === 'landmark-unique') {
+      const groups = new Map<string, { identity: { role: string; name: string }; nodes: AxeNodeResult[] }>();
+      for (const node of violation.nodes) {
+        const identity = landmarkIdentity(audit, node);
+        const signature = `${identity.role.toLowerCase()}|${identity.name.toLowerCase()}`;
+        const group = groups.get(signature) ?? { identity, nodes: [] };
+        group.nodes.push(node);
+        groups.set(signature, group);
+      }
+      return [...groups.entries()].map(([signature, group]) => {
+        const selectors = [...new Set(group.nodes.flatMap((node) => node.target.length ? node.target : ['page']))];
+        const { role, name } = group.identity;
+        const named = name === 'unnamed' ? 'without an accessible name' : `with the accessible name “${name}”`;
+        const component = `${role} landmarks ${named}`;
+        return makeFinding({
+          identity: `landmark-unique|${signature}`,
+          ruleId: 'axe-landmark-unique',
+          classification: 'review',
+          severity: severityFromAxe(violation.impact),
+          wcag: wcag.length ? wcag : ['Best Practice'],
+          summary: 'Repeated landmarks are not uniquely distinguishable',
+          issue: `Multiple visible ${role} landmarks are exposed ${named}. Review the complete landmark set to confirm that users cannot distinguish their purposes.`,
+          impact: 'Screen-reader users may be unable to distinguish equivalent landmarks in a landmark list or move directly to the intended region.',
+          testing: [
+            `1. Open the affected page at the ${audit.viewport.name} viewport.`,
+            `2. Inspect the visible ${role} landmarks using ${conciseList(selectors, 8)}.`,
+            '3. Open a screen-reader landmark list and compare the announced role/name combinations.',
+            `Actual: More than one ${role} landmark is exposed ${named}.`,
+            'Expected: Repeated landmarks of the same role have concise, unique names that communicate their different purposes.',
+            `Rule reference: ${violation.helpUrl}`
+          ].join('\n'),
+          remediation: 'Give repeated landmarks of the same role concise, unique accessible names using aria-labelledby when a visible heading is available, or aria-label otherwise. Do not add names to landmarks that are already distinguishable by role and context.',
+          component,
+          sharedComponentKey: createSharedComponentKey(component, `landmark-unique|${signature}`),
+          urls: [audit.url],
+          viewports: [audit.viewport.name],
+          selectors,
+          evidence: group.nodes.map((node) => ({
+            kind: 'axe',
+            pageUrl: audit.url,
+            viewport: audit.viewport.name,
+            selector: node.target.join(', '),
+            detail: node.html,
+            screenshot: screenshotFor(audit, node.target[0])
+          })),
+          assignment: 'Development',
+          effort: 'Small',
+          translationRequired: 'Review'
+        });
+      });
+    }
     if (violation.id === 'region' && violation.nodes.length > 0) {
       const selectors = [...new Set(violation.nodes.flatMap((node) => node.target))];
       return [makeFinding({
@@ -203,26 +351,42 @@ function axeFindings(audit: ViewportAudit): Finding[] {
         translationRequired: 'No'
       })];
     }
-    return violation.nodes.map((node) => {
-      const selectors = node.target.length ? node.target : ['page'];
-      const component = normalizeComponent(selectors.join(' '));
+    const groups = new Map<string, { component: string; failure: string; nodes: AxeNodeResult[] }>();
+    for (const node of violation.nodes) {
+      const component = axeNodeComponent(audit, node);
+      const failure = stableComponentSignature(node.failureSummary ?? '');
+      const signature = `${component}|${failure}`;
+      const group = groups.get(signature) ?? { component, failure, nodes: [] };
+      group.nodes.push(node);
+      groups.set(signature, group);
+    }
+    return [...groups.values()].map((group) => {
+      const selectors = [...new Set(group.nodes.flatMap((node) => node.target.length ? node.target : ['page']))];
+      const representative = group.nodes[0]!;
       return makeFinding({
-        identity: `${violation.id}|${component}`,
+        identity: `${violation.id}|${group.component}|${group.failure}`,
         ruleId: `axe-${violation.id}`,
         classification: isWcagViolation ? 'confirmed' : 'review',
         severity: severityFromAxe(violation.impact),
         wcag: wcag.length ? wcag : ['Best Practice'],
         summary: axeSummary(violation),
-        issue: axeAccessibilityIssue(violation, node.failureSummary),
+        issue: axeAccessibilityIssue(violation, representative.failureSummary),
         impact: axeUserImpact(violation.id),
-        testing: axeTesting(violation, audit, selectors.join(', '), node.failureSummary),
+        testing: axeTesting(violation, audit, conciseList(selectors, 8), representative.failureSummary),
         remediation: `${axeRemediation(violation)} Retest the component in every affected state.`,
-        component,
-        sharedComponentKey: createSharedComponentKey(component, `${violation.id}|${node.html}|${node.failureSummary ?? ''}`),
+        component: group.component,
+        sharedComponentKey: createSharedComponentKey(group.component, `${violation.id}|${group.failure}`),
         urls: [audit.url],
         viewports: [audit.viewport.name],
         selectors,
-        evidence: [{ kind: 'axe', pageUrl: audit.url, viewport: audit.viewport.name, selector: selectors.join(', '), detail: node.html, screenshot: screenshotFor(audit, selectors[0]) }],
+        evidence: group.nodes.map((node) => ({
+          kind: 'axe',
+          pageUrl: audit.url,
+          viewport: audit.viewport.name,
+          selector: node.target.join(', '),
+          detail: node.html,
+          screenshot: screenshotFor(audit, node.target[0])
+        })),
         assignment: assignmentForRule(violation.id),
         effort: 'Medium',
         translationRequired: 'No'
@@ -238,6 +402,20 @@ function screenshotFor(audit: ViewportAudit, selector?: string): string {
     if (!/^(?:page|html|body)$/i.test(selector.trim())) return '';
   }
   return audit.screenshot;
+}
+
+function disclosureSelectorFamily(selector: string): string {
+  return normalizeComponent(selector)
+    .replace(/#[A-Za-z0-9_-]+(?=-(?:toggle|trigger|button|control|filters-section)\b)/gi, '#[item]')
+    .replace(/\[data-(?:index|item|key)=["'][^"']+["']\]/gi, '[data-item]');
+}
+
+function disclosureFamily(audit: ViewportAudit, disclosure: DisclosureCheckResult): string {
+  const trigger = disclosureSelectorFamily(disclosure.selector);
+  if (!trigger.includes('[item]')) return trigger;
+  const context = audit.elementContexts.find((item) => item.selector === disclosure.selector);
+  const container = context?.captureSelector ? disclosureSelectorFamily(context.captureSelector) : '';
+  return [container, trigger].filter(Boolean).join(' >> ');
 }
 
 function domFindings(audit: ViewportAudit): Finding[] {
@@ -696,55 +874,96 @@ function domFindings(audit: ViewportAudit): Finding[] {
     }));
   }
 
+  const disclosureGroups = new Map<string, DisclosureCheckResult[]>();
   for (const disclosure of audit.disclosures) {
-    const component = normalizeComponent(disclosure.selector);
-    if (disclosure.afterExpanded === disclosure.beforeExpanded) {
+    const family = disclosureFamily(audit, disclosure);
+    disclosureGroups.set(family, [...(disclosureGroups.get(family) ?? []), disclosure]);
+  }
+  for (const [component, disclosures] of disclosureGroups) {
+    const selectorsFor = (items: DisclosureCheckResult[]): string[] => [...new Set(items.map((item) => item.selector))];
+    const namesFor = (items: DisclosureCheckResult[]): string => conciseList(
+      items.map((item) => `“${item.name || 'unnamed disclosure'}”`),
+      8
+    );
+    const evidenceFor = (kind: 'dom' | 'keyboard', items: DisclosureCheckResult[]) => items.map((item) => (
+      evidence(kind, item.selector, JSON.stringify(item))
+    ));
+    const sharedComponentKey = createSharedComponentKey(component, `disclosure-family|${component}`);
+    const completed = disclosures.filter((item) => !item.error);
+    const stateFailures = completed.filter((item) => (
+      item.beforeExpanded !== null
+      && item.afterExpanded !== null
+      && item.afterExpanded === item.beforeExpanded
+    ));
+    const missingRelationships = completed.filter((item) => !item.controls);
+    if (stateFailures.length) {
+      const related = [...new Set([...stateFailures, ...missingRelationships])];
+      const hasMissingRelationship = missingRelationships.length > 0;
+      const hasConfirmedMismatch = stateFailures.some((item) => item.controlledVisibleAfterOpen === true);
       findings.push(makeFinding({
-        identity: `disclosure-state|${component}`,
-        ruleId: 'disclosure-state-not-updated',
-        classification: 'confirmed',
-        severity: 'Serious',
+        identity: `disclosure-state${hasConfirmedMismatch ? '' : '-review'}${hasMissingRelationship ? '-and-relationship' : ''}|${component}`,
+        ruleId: hasConfirmedMismatch
+          ? (hasMissingRelationship ? 'disclosure-state-and-relationship' : 'disclosure-state-not-updated')
+          : (hasMissingRelationship ? 'disclosure-state-and-relationship-review' : 'disclosure-state-review'),
+        classification: hasConfirmedMismatch ? 'confirmed' : 'review',
+        severity: hasConfirmedMismatch ? 'Serious' : 'Moderate',
         wcag: ['4.1.2'],
-        summary: 'Disclosure state is not programmatically updated',
-        issue: `Activating “${disclosure.name || 'unnamed disclosure'}” did not change aria-expanded.`,
-        impact: 'Screen-reader users cannot determine whether the controlled content is open or closed.',
-        testing: 'The control was activated with Enter and aria-expanded was checked before and after.',
-        remediation: 'Use a native button and update aria-expanded to match the visible state whenever the disclosure opens or closes.',
+        summary: hasConfirmedMismatch
+          ? (hasMissingRelationship
+              ? 'Disclosure state is incorrect and its controlled region is not identified'
+              : 'Disclosure state is not programmatically updated')
+          : (hasMissingRelationship
+              ? 'Review disclosure activation, state, and controlled-region relationship'
+              : 'Review whether disclosure state updates after activation'),
+        issue: [
+          hasConfirmedMismatch
+            ? 'Activating the listed disclosure trigger(s) visibly revealed controlled content but did not change aria-expanded, confirming that the exposed state did not match the rendered state.'
+            : 'Activating the listed disclosure trigger(s) did not change aria-expanded, but automation could not establish that controlled content visibly opened. This may be a state mismatch or a keyboard-activation problem and requires review.',
+          hasMissingRelationship
+            ? (hasConfirmedMismatch
+                ? 'The same component family also omits aria-controls. The absent relationship is supporting review context; the confirmed failure is the inaccurate state.'
+                : 'The same component family also omits aria-controls. Its absence is optional in ordinary disclosure/accordion patterns and remains part of the same review rather than a separate failure.')
+            : ''
+        ].filter(Boolean).join(' '),
+        impact: 'If the visible state and exposed state differ, screen-reader users cannot reliably determine whether the affected content is open or closed. A failed keyboard activation can prevent keyboard users from accessing the content at all.',
+        testing: 'Activate each listed control separately with Enter and Space, confirm whether its content visibly opens, compare that rendered state with aria-expanded, and inspect whether the chosen component pattern exposes a reliable relationship to its content.',
+        remediation: 'Use a native button and update aria-expanded to match the visible state whenever the component opens or closes. If the chosen pattern needs an explicit relationship, give the controlled region a stable id and reference it with aria-controls.',
         component,
-        sharedComponentKey: createSharedComponentKey(component, JSON.stringify(disclosure)),
+        sharedComponentKey,
         urls: [audit.url],
         viewports: [audit.viewport.name],
-        selectors: [disclosure.selector],
-        evidence: [evidence('keyboard', disclosure.selector, JSON.stringify(disclosure))],
+        selectors: selectorsFor(related),
+        evidence: evidenceFor('keyboard', related),
         assignment: 'Development',
         effort: 'Small',
         translationRequired: 'No'
       }));
-    }
-    if (!disclosure.controls) {
+    } else if (missingRelationships.length) {
       findings.push(makeFinding({
         identity: `disclosure-controls|${component}`,
         ruleId: 'disclosure-controls-review',
         classification: 'review',
         severity: 'Minor',
-        wcag: ['4.1.2'],
-        summary: 'Disclosure does not identify its controlled region',
-        issue: `The “${disclosure.name || 'unnamed'}” disclosure has aria-expanded but no aria-controls relationship.`,
-        impact: 'Some assistive-technology users receive less context about the content affected by the control.',
-        testing: 'The disclosure trigger was inspected for aria-controls.',
-        remediation: 'Give the controlled region a stable id and reference that id from aria-controls on the disclosure button. Keep aria-expanded synchronized with visibility.',
+        wcag: ['Best Practice'],
+        summary: 'Review the disclosure-to-content relationships',
+        issue: 'The listed disclosure trigger(s) expose aria-expanded but do not use aria-controls. aria-controls is optional for ordinary disclosure and accordion patterns, so its absence alone is not reported as a WCAG failure; the rendered structure and chosen interaction pattern require review.',
+        impact: 'If the surrounding structure does not otherwise communicate the relationship, some assistive-technology users may receive less context about the content affected by each control.',
+        testing: 'Inspect the complete component structure and accessibility tree. Confirm whether each trigger and panel are already associated by the chosen disclosure or accordion pattern; do not fail the component solely because aria-controls is absent.',
+        remediation: 'If the chosen component pattern needs an explicit relationship, give each controlled region a stable unique id and reference it from aria-controls on its trigger. Keep aria-expanded synchronized with the visible state. Do not add redundant ARIA when native structure already provides the required relationship.',
         component,
-        sharedComponentKey: createSharedComponentKey(component, JSON.stringify(disclosure)),
+        sharedComponentKey,
         urls: [audit.url],
         viewports: [audit.viewport.name],
-        selectors: [disclosure.selector],
-        evidence: [evidence('dom', disclosure.selector, JSON.stringify(disclosure))],
+        selectors: selectorsFor(missingRelationships),
+        evidence: evidenceFor('dom', missingRelationships),
         assignment: 'Development',
         effort: 'Small',
         translationRequired: 'No'
       }));
     }
-    if (disclosure.tabEnteredControlledRegion === false) {
+
+    const focusOrderReviews = completed.filter((item) => item.tabEnteredControlledRegion === false);
+    if (focusOrderReviews.length) {
       findings.push(makeFinding({
         identity: `disclosure-focus-order|${component}`,
         ruleId: 'disclosure-focus-order',
@@ -752,41 +971,18 @@ function domFindings(audit: ViewportAudit): Finding[] {
         severity: 'Serious',
         wcag: ['2.4.3'],
         summary: 'Opening the disclosure bypasses its revealed controls',
-        issue: `After opening “${disclosure.name || 'the disclosure'}”, the next Tab stop was outside its controlled region. Confirm the complete forward and reverse sequence before recording a WCAG failure.`,
+        issue: `After opening ${namesFor(focusOrderReviews)}, the next Tab stop was outside the controlled region. Confirm the complete forward and reverse sequence before recording a WCAG failure.`,
         impact: 'Keyboard users may not discover or may need to navigate backwards to reach newly revealed controls.',
         testing: 'The disclosure was opened with Enter and the next Tab destination was compared with the aria-controls region. This remains a review signal because a single transition does not prove the complete focus order is illogical.',
         remediation: 'Place the trigger immediately before the revealed content in DOM order or move focus deliberately to the first relevant control when the interaction pattern requires it. Return focus predictably when closing.',
         component,
-        sharedComponentKey: createSharedComponentKey(component, JSON.stringify(disclosure)),
+        sharedComponentKey,
         urls: [audit.url],
         viewports: [audit.viewport.name],
-        selectors: [disclosure.selector],
-        evidence: [evidence('keyboard', disclosure.selector, JSON.stringify(disclosure))],
+        selectors: selectorsFor(focusOrderReviews),
+        evidence: evidenceFor('keyboard', focusOrderReviews),
         assignment: 'Development',
         effort: 'Medium',
-        translationRequired: 'No'
-      }));
-    }
-    if (!disclosure.escapeClosed && disclosure.afterExpanded === 'true') {
-      findings.push(makeFinding({
-        identity: `disclosure-escape|${component}`,
-        ruleId: 'disclosure-escape-review',
-        classification: 'review',
-        severity: 'Moderate',
-        wcag: ['Best Practice'],
-        summary: 'Disclosure does not close with Escape',
-        issue: `Pressing Escape did not close “${disclosure.name || 'the disclosure'}”.`,
-        impact: 'Keyboard and screen-reader users may need extra navigation to dismiss transient navigation or selection content.',
-        testing: 'The open disclosure was focused and Escape was pressed; aria-expanded remained true.',
-        remediation: 'For transient menus and popovers, support Escape to close the content and restore focus to the trigger without losing the user’s position.',
-        component,
-        sharedComponentKey: createSharedComponentKey(component, JSON.stringify(disclosure)),
-        urls: [audit.url],
-        viewports: [audit.viewport.name],
-        selectors: [disclosure.selector],
-        evidence: [evidence('keyboard', disclosure.selector, JSON.stringify(disclosure))],
-        assignment: 'Development',
-        effort: 'Small',
         translationRequired: 'No'
       }));
     }

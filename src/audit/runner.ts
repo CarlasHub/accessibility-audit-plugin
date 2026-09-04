@@ -385,6 +385,9 @@ async function auditViewport(
     const dom = await runDomChecks(page, axeTargetSizeSelectors);
     const keyboard = await runKeyboardChecks(page, options.maxTabStops);
     const disclosures = await runDisclosureChecks(page);
+    for (const disclosure of disclosures.filter((item) => item.error)) {
+      errors.push(`Disclosure interaction check incomplete for “${disclosure.name || disclosure.selector}”: ${disclosure.error}`);
+    }
     const tabs = await runTabChecks(page);
     const responsive = await runResponsiveChecks(page);
     const links = viewport.name === 'desktop' ? await runLinkChecks(page, options.maxLinksPerPage) : [];

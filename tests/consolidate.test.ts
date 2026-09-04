@@ -48,6 +48,88 @@ describe('finding consolidation', () => {
     expect(result[0]?.evidence).toHaveLength(2);
   });
 
+  it('merges translated rendered names when the stable reusable-component evidence matches', () => {
+    const english = finding('https://test.example/en', 'site-header-language-picker');
+    english.componentName = '“English” button';
+    const portuguese = finding('https://test.example/pt', 'site-header-language-picker');
+    portuguese.componentName = '“Português” button';
+    const result = consolidateFindings([english, portuguese]);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.urls).toEqual(['https://test.example/en', 'https://test.example/pt']);
+    expect(result[0]?.componentName).toBe('“English” button; “Português” button');
+  });
+
+  it('rolls related definition-list and list-item signals into one component/root-cause finding', () => {
+    const list = finding('https://test.example/job');
+    list.key = 'axe-definition-list:list';
+    list.ruleId = 'axe-definition-list';
+    list.component = 'dl.job-details';
+    list.componentName = 'Job details description list';
+    list.componentLocation = 'Within the job header';
+    const item = { ...finding('https://test.example/job'), evidence: [...finding('https://test.example/job').evidence] };
+    item.key = 'axe-dlitem:item';
+    item.ruleId = 'axe-dlitem';
+    item.component = 'dt.job-id';
+    item.componentName = '“Job ID” term';
+    item.componentLocation = 'Within the job header';
+    const result = consolidateFindings([list, item]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(expect.objectContaining({
+      ruleId: 'axe-description-list-structure',
+      summary: 'Description-list markup has an invalid parent/child structure'
+    }));
+    expect(result[0]?.selectors).toEqual(['header .logo']);
+    expect(result[0]?.evidence).toHaveLength(2);
+  });
+
+  it('rolls multiple failing colour treatments into one site-wide contrast finding per host', () => {
+    const first = finding('https://test.example/a', 'contrast-blue');
+    first.ruleId = 'axe-color-contrast';
+    first.component = 'text colour treatment #0066cc on #ffffff';
+    first.componentName = 'Primary link';
+    first.issue = 'The same rendered colour treatment does not meet contrast. #0066cc foreground on #ffffff background measured 3.1:1; 4.5:1 is required.';
+    const second = finding('https://test.example/b', 'contrast-pink');
+    second.ruleId = 'axe-color-contrast';
+    second.component = 'text colour treatment #e72582 on #ffffff';
+    second.componentName = 'Call-to-action link';
+    second.issue = 'The same rendered colour treatment does not meet contrast. #e72582 foreground on #ffffff background measured 3.8:1; 4.5:1 is required.';
+    const result = consolidateFindings([first, second]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(expect.objectContaining({
+      ruleId: 'axe-color-contrast',
+      component: 'site-wide text colour system',
+      componentName: 'Primary link; Call-to-action link',
+      urls: ['https://test.example/a', 'https://test.example/b']
+    }));
+    expect(result[0]?.issue).toContain('#0066cc foreground');
+    expect(result[0]?.issue).toContain('#e72582 foreground');
+  });
+
+  it('combines stale state and optional relationship evidence for one reusable disclosure', () => {
+    const staleState = finding('https://test.example/a', 'site-header-language');
+    staleState.ruleId = 'disclosure-state-and-relationship';
+    staleState.classification = 'confirmed';
+    staleState.wcag = ['4.1.2'];
+    staleState.component = 'header .language-toggle';
+    staleState.componentName = '“English” button';
+    const relationshipOnly = finding('https://test.example/b', 'site-header-language');
+    relationshipOnly.ruleId = 'disclosure-controls-review';
+    relationshipOnly.classification = 'review';
+    relationshipOnly.wcag = ['Best Practice'];
+    relationshipOnly.component = 'header .language-toggle';
+    relationshipOnly.componentName = '“Português” button';
+    const result = consolidateFindings([staleState, relationshipOnly]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(expect.objectContaining({
+      ruleId: 'disclosure-state-and-relationship',
+      classification: 'confirmed',
+      wcag: ['4.1.2'],
+      componentName: '“English” button; “Português” button',
+      urls: ['https://test.example/a', 'https://test.example/b']
+    }));
+    expect(result[0]?.issue).toContain('not independently treated as a WCAG failure');
+  });
+
   it('keeps matching page findings separate without evidence of a shared component', () => {
     const result = consolidateFindings([finding('https://test.example/a'), finding('https://test.example/b')]);
     expect(result).toHaveLength(2);

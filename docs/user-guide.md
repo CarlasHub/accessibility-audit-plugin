@@ -172,7 +172,7 @@ Read these fields together:
 | Notes | Concrete remediation only. |
 | Estimate | Starts at `0`; update in quarter increments after engineering assessment. |
 
-One reusable component/root-cause combination can be consolidated into one row across multiple pages. Each affected URL still appears separately in Links. Page-specific implementations or different root causes remain separate rows.
+One reusable component/root-cause combination is consolidated into one row across multiple pages, including repeated instances within the component. Each affected URL still appears separately in Links. Page-specific implementations or genuinely different root causes remain separate rows. For example, one shared failing colour treatment, one repeated same-name landmark set, or one family of filter disclosures should not become one row per element. Missing `aria-controls` alone is a Best Practice review for ordinary disclosures/accordions, and Escape is not a generic accordion/disclosure requirement.
 
 Target-size reviews are deliberately conservative. A control is not added to the workbook solely because one measured dimension is below 24 CSS pixels. The plugin first excludes inline text links and checks rendered spacing against neighbouring targets. A row is created only for a spacing collision or an axe target-size signal, and it remains a review until a person assesses the remaining WCAG exceptions. Exact measurements and neighbouring-target evidence remain in JSON.
 

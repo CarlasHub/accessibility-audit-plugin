@@ -6,7 +6,7 @@ export const REQUIRED_MANUAL_CHECKS: ManualCheck[] = [
     title: 'Complete keyboard-only journey',
     wcag: ['2.1.1', '2.1.2', '2.4.3', '2.4.7', '2.4.11'],
     applicableTo: 'Every unique page template and interactive component state',
-    procedure: 'Use Tab, Shift+Tab, Enter, Space, Escape, and arrow keys without a pointer. Confirm logical order, operation, no trap, visible focus, and no focus obscuration.'
+    procedure: 'Use Tab, Shift+Tab, Enter, Space, and pattern-appropriate arrow keys without a pointer. Test Escape only for patterns that require or document it, such as dialogs and applicable menus or popovers; do not require it for an ordinary accordion or disclosure. Confirm logical order, operation, no trap, visible focus, and no focus obscuration.'
   },
   {
     id: 'manual-screen-reader-combinations',

@@ -100,7 +100,7 @@ See [Understanding the report](docs/reporting.md) for a worksheet and column gui
 - Automatic one-time installation of headless Playwright Chromium when no supported browser is available; runtime and browser files stay in plugin-owned storage.
 - axe-core WCAG 2.2 A/AA rules plus selected best-practice signals, which remain review items when no WCAG success criterion is mapped.
 - DOM and semantic checks for page structure, image alternatives, controls, fields, landmarks, duplicate ids, tables, and media.
-- Sequential keyboard traversal, focus visibility review, focus obscuration checks, and disclosure interaction tests.
+- Sequential keyboard traversal, focus visibility review, focus obscuration checks, and disclosure state/relationship interaction tests.
 - Tab-component state, roving tabindex, arrow navigation, activation, and tab/panel relationship checks.
 - Conservative same-origin link validation for empty names, placeholders, missing fragments, confirmed 404/410 destinations, and server-error review signals.
 - Desktop, 390px mobile, and 320px reflow viewports.
@@ -362,6 +362,12 @@ Link validation deliberately avoids broad crawling and destructive requests:
 - Empty link names include text, ARIA labels, valid labelled-by text, descendant image alternatives, input values, and titles before being reported.
 - Equivalent custom and axe link-name evidence is de-duplicated.
 - axe `region` best-practice nodes are summarized as one page-structure review row per page instead of one failed row per DOM node.
+- Text-contrast failures on the same host are reported as one site-wide colour-system row. Every distinct measured foreground/background pair, affected component, selector, viewport, and page remains in the row or JSON evidence.
+- Repeated landmark-name signals with the same role/name combination are reported as one row across affected pages instead of one row per landmark instance.
+- Repeated disclosure triggers from the same rendered component family are grouped into one relationship review. Missing `aria-controls` alone remains a Best Practice review because it is optional in ordinary disclosure and accordion patterns.
+- An unchanged `aria-expanded` value is confirmed only when the controlled content is also observed to open; otherwise it remains a state-versus-keyboard-activation review. Related relationship context on the same disclosure component is reported in that row instead of separately.
+- Generic disclosure checks do not require Escape. Escape is evaluated manually only for interaction patterns that require it, such as dialogs and applicable menus or popovers.
+- Invalid `dl` parent/child and orphaned `dt`/`dd` signals from the same description-list component are reported as one structural root cause.
 - A target is not reported merely because one rendered dimension is below 24 CSS pixels. Inline text links are excluded, isolated undersized targets that satisfy the spacing geometry do not create workbook rows, and raw measurements remain available in JSON.
 - Target-size rows require a rendered spacing collision or an axe target-size violation/incomplete signal, remain `review` items while the Equivalent, Inline, User Agent Control, and Essential exceptions are unresolved, and group related controls in the same rendered component into one finding.
 - Focus-obscuration checks sample the visible centre and four inset corners. A control is reported as confirmed only when unrelated content covers every sampled point; off-screen geometry and one covered point do not create a failure.

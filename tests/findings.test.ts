@@ -50,6 +50,203 @@ function page(audit: ViewportAudit): PageAudit {
 }
 
 describe('evidence-gated link and tab findings', () => {
+  it('groups one shared contrast treatment into one finding while preserving every affected element', () => {
+    const findings = findingsFromPage(page(viewport({
+      axe: [{
+        id: 'color-contrast',
+        impact: 'serious',
+        tags: ['wcag2aa', 'wcag143'],
+        description: 'Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds',
+        help: 'Elements must meet minimum color contrast ratio thresholds',
+        helpUrl: 'https://dequeuniversity.com/rules/axe/4.13/color-contrast',
+        nodes: [
+          {
+            html: '<button id="first">First</button>',
+            target: ['#first'],
+            failureSummary: 'Element has insufficient color contrast of 4.08 (foreground color: #0066cc, background color: #c2e0ff, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1'
+          },
+          {
+            html: '<button id="second">Second</button>',
+            target: ['#second'],
+            failureSummary: 'Element has insufficient color contrast of 4.08 (foreground color: #0066cc, background color: #c2e0ff, font size: 12.0pt (16px), font weight: bold). Expected contrast ratio of 4.5:1'
+          }
+        ]
+      }],
+      elementContexts: [
+        {
+          selector: '#first',
+          tagName: 'button',
+          role: 'button',
+          accessibleName: 'First',
+          visibleText: 'First',
+          componentName: '“First” button',
+          location: 'Within the jobs tablist',
+          captureSelector: '#jobs'
+        },
+        {
+          selector: '#second',
+          tagName: 'button',
+          role: 'button',
+          accessibleName: 'Second',
+          visibleText: 'Second',
+          componentName: '“Second” button',
+          location: 'Within the jobs tablist',
+          captureSelector: '#jobs'
+        }
+      ]
+    })));
+    const contrast = findings.filter((finding) => finding.ruleId === 'axe-color-contrast');
+    expect(contrast).toHaveLength(1);
+    expect(contrast[0]).toEqual(expect.objectContaining({
+      classification: 'confirmed',
+      component: 'text colour treatment #0066cc on #c2e0ff',
+      componentName: '“First” button; “Second” button',
+      selectors: ['#first', '#second']
+    }));
+    expect(contrast[0]?.issue).not.toContain('font weight');
+  });
+
+  it('groups repeated disclosure relationship reviews by component family and does not require Escape', () => {
+    const disclosures = ['category', 'country', 'region'].map((name) => ({
+      selector: `#${name}-toggle`,
+      name: name[0]!.toUpperCase() + name.slice(1),
+      controls: null,
+      beforeExpanded: 'false',
+      afterExpanded: 'true',
+      controlledVisibleAfterOpen: null,
+      firstTabSelector: null,
+      tabEnteredControlledRegion: null
+    }));
+    const findings = findingsFromPage(page(viewport({
+      disclosures,
+      elementContexts: disclosures.map((disclosure) => ({
+        selector: disclosure.selector,
+        tagName: 'button',
+        role: 'button',
+        accessibleName: disclosure.name,
+        visibleText: disclosure.name,
+        componentName: `“${disclosure.name}” button`,
+        location: 'Within the “Filter Results” section',
+        captureSelector: disclosure.selector.replace('-toggle', '-filters-section')
+      }))
+    })));
+    const relationshipReviews = findings.filter((finding) => finding.ruleId === 'disclosure-controls-review');
+    expect(relationshipReviews).toHaveLength(1);
+    expect(relationshipReviews[0]).toEqual(expect.objectContaining({
+      classification: 'review',
+      wcag: ['Best Practice'],
+      selectors: ['#category-toggle', '#country-toggle', '#region-toggle']
+    }));
+    expect(relationshipReviews[0]?.issue).toContain('absence alone is not reported as a WCAG failure');
+    expect(findings.some((finding) => finding.ruleId.includes('escape'))).toBe(false);
+  });
+
+  it('reports stale disclosure state and missing relationship as one component finding', () => {
+    const findings = findingsFromPage(page(viewport({
+      disclosures: [{
+        selector: '#filters-toggle',
+        name: 'Filters',
+        controls: null,
+        beforeExpanded: 'false',
+        afterExpanded: 'false',
+        controlledVisibleAfterOpen: true,
+        firstTabSelector: null,
+        tabEnteredControlledRegion: null
+      }]
+    })));
+    expect(findings.filter((finding) => finding.ruleId.startsWith('disclosure-'))).toHaveLength(1);
+    expect(findings[0]).toEqual(expect.objectContaining({
+      ruleId: 'disclosure-state-and-relationship',
+      classification: 'confirmed',
+      wcag: ['4.1.2']
+    }));
+    expect(findings[0]?.issue).toContain('supporting review context');
+  });
+
+  it('keeps unchanged aria-expanded in review when the visible controlled state is unresolved', () => {
+    const findings = findingsFromPage(page(viewport({
+      disclosures: [{
+        selector: '#accordion-toggle',
+        name: 'More information',
+        controls: null,
+        beforeExpanded: 'false',
+        afterExpanded: 'false',
+        controlledVisibleAfterOpen: null,
+        firstTabSelector: null,
+        tabEnteredControlledRegion: null
+      }]
+    })));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toEqual(expect.objectContaining({
+      ruleId: 'disclosure-state-and-relationship-review',
+      classification: 'review',
+      severity: 'Moderate'
+    }));
+    expect(findings[0]?.issue).toContain('may be a state mismatch or a keyboard-activation problem');
+  });
+
+  it('does not turn an incomplete disclosure test into a workbook finding', () => {
+    const findings = findingsFromPage(page(viewport({
+      disclosures: [{
+        selector: '#third-party-toggle',
+        name: 'Map controls',
+        controls: null,
+        beforeExpanded: null,
+        afterExpanded: null,
+        controlledVisibleAfterOpen: null,
+        firstTabSelector: null,
+        tabEnteredControlledRegion: null,
+        error: 'Element was detached during interaction'
+      }]
+    })));
+    expect(findings.filter((finding) => finding.ruleId.startsWith('disclosure-'))).toEqual([]);
+  });
+
+  it('groups duplicate landmarks with the same role and name into one review finding', () => {
+    const findings = findingsFromPage(page(viewport({
+      axe: [{
+        id: 'landmark-unique',
+        impact: 'moderate',
+        tags: ['best-practice'],
+        description: 'Ensure landmarks are unique',
+        help: 'Landmarks should have a unique role or role and name combination',
+        helpUrl: 'https://dequeuniversity.com/rules/axe/4.13/landmark-unique',
+        nodes: [
+          { html: '<form role="search" aria-label="Site search"></form>', target: ['#header-search'] },
+          { html: '<form role="search" aria-label="Site search"></form>', target: ['#body-search'] }
+        ]
+      }],
+      elementContexts: [
+        {
+          selector: '#header-search',
+          tagName: 'form',
+          role: 'search',
+          accessibleName: 'Site search',
+          visibleText: '',
+          componentName: '“Site search” search landmark',
+          location: 'Within the header',
+          captureSelector: '#header-search'
+        },
+        {
+          selector: '#body-search',
+          tagName: 'form',
+          role: 'search',
+          accessibleName: 'Site search',
+          visibleText: '',
+          componentName: '“Site search” search landmark',
+          location: 'Within main content',
+          captureSelector: '#body-search'
+        }
+      ]
+    })));
+    const landmarks = findings.filter((finding) => finding.ruleId === 'axe-landmark-unique');
+    expect(landmarks).toHaveLength(1);
+    expect(landmarks[0]).toEqual(expect.objectContaining({
+      classification: 'review',
+      selectors: ['#header-search', '#body-search']
+    }));
+  });
+
   it('keeps axe best-practice signals in review when they have no WCAG criterion tag', () => {
     const findings = findingsFromPage(page(viewport({
       axe: [{
@@ -268,6 +465,52 @@ describe('evidence-gated link and tab findings', () => {
     expect(findings.filter((finding) => finding.ruleId === 'axe-aria-command-name')).toHaveLength(1);
     expect(findings.some((finding) => finding.ruleId === 'link-empty-accessible-name')).toBe(false);
     expect(findings.some((finding) => finding.ruleId === 'interactive-control-no-name')).toBe(false);
+  });
+
+  it('groups repeated axe nodes from the same rendered component and root cause', () => {
+    const failureSummary = 'Element does not have text that is visible to screen readers';
+    const findings = findingsFromPage(page(viewport({
+      axe: [{
+        id: 'link-name',
+        impact: 'serious',
+        tags: ['wcag2a', 'wcag244'],
+        description: 'Ensure links have discernible text',
+        help: 'Links must have discernible text',
+        helpUrl: 'https://dequeuniversity.com/rules/axe/4.13/link-name',
+        nodes: [
+          { html: '<a href="/one"></a>', target: ['#card-one-link'], failureSummary },
+          { html: '<a href="/two"></a>', target: ['#card-two-link'], failureSummary }
+        ]
+      }],
+      elementContexts: [
+        {
+          selector: '#card-one-link',
+          tagName: 'a',
+          role: 'link',
+          accessibleName: '',
+          visibleText: '',
+          componentName: 'Unnamed link',
+          location: 'Within the first result card',
+          captureSelector: '.result-card:nth-of-type(1)'
+        },
+        {
+          selector: '#card-two-link',
+          tagName: 'a',
+          role: 'link',
+          accessibleName: '',
+          visibleText: '',
+          componentName: 'Unnamed link',
+          location: 'Within the second result card',
+          captureSelector: '.result-card:nth-of-type(2)'
+        }
+      ]
+    })));
+    const links = findings.filter((finding) => finding.ruleId === 'axe-link-name');
+    expect(links).toHaveLength(1);
+    expect(links[0]).toEqual(expect.objectContaining({
+      component: '.result-card',
+      selectors: ['#card-one-link', '#card-two-link']
+    }));
   });
 
   it('does not apply link-purpose criteria to an unnamed non-link control', () => {

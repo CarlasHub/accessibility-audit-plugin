@@ -11,7 +11,7 @@ Use headless desktop, mobile, and 320px reflow checks. If no supported browser i
 
 Keep the target repository read-only. Do not install dependencies in or modify the target project, its governance, rules, CI, hooks, manifests, lockfiles, or source. Write only to the configured audit output directory.
 
-Use one row for the same reusable component implementation and root cause across all affected pages; keep page-specific implementations or root causes separate. List every affected page individually in Links. Preserve confirmed, review, blocker, and manual classifications. Report the exact workbook, JSON, and ZIP paths, page counts, finding counts, Image Inventory count, and validation result.
+Use one row for the same reusable component implementation and root cause across all affected pages, grouping repeated DOM instances within that component; keep page-specific implementations or distinct root causes separate. Missing `aria-controls` alone is a Best Practice review for ordinary disclosures/accordions, and generic disclosures/accordions do not require Escape to close. List every affected page individually in Links. Preserve confirmed, review, blocker, and manual classifications. Report the exact workbook, JSON, and ZIP paths, page counts, finding counts, Image Inventory count, and validation result.
 
 Preserve the exact bundled `Accessibility Testing Boilerplate v.4 (4)` worksheets, order, tab colours, existing fields, formulas, validations, and colour scheme. Do not add workbook fields, columns, headers, tables, or worksheets. `Page Inventroy` is only a headerless column-A list of unique URLs whose browser testing started. `Image Inventory` is only a headerless column-A list of unique linked relative screenshot references.
 
