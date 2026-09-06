@@ -159,6 +159,15 @@ function contrastDetails(failureSummary = ''): ContrastDetails | null {
 }
 
 function landmarkIdentity(audit: ViewportAudit, node: AxeNodeResult): { role: string; name: string } {
+  const axeData = [...(node.any ?? []), ...(node.all ?? []), ...(node.none ?? [])]
+    .map((check) => check.data)
+    .find((data): data is { role?: string; accessibleText?: string | null } => Boolean(data && typeof data === 'object'));
+  if (axeData?.role) {
+    return {
+      role: axeData.role,
+      name: axeData.accessibleText?.trim() || 'unnamed'
+    };
+  }
   const context = node.target
     .map((selector) => audit.elementContexts.find((item) => item.selector === selector))
     .find(Boolean);
@@ -172,6 +181,19 @@ function landmarkIdentity(audit: ViewportAudit, node: AxeNodeResult): { role: st
   const role = node.html.match(/\brole\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase() ?? tag;
   const name = node.html.match(/\b(?:aria-label|title)\s*=\s*["']([^"']+)["']/i)?.[1]?.trim() ?? 'unnamed';
   return { role, name };
+}
+
+function axeNodeOccurrences(node: AxeNodeResult): Array<{ html: string; target: string[] }> {
+  const related = [...(node.any ?? []), ...(node.all ?? []), ...(node.none ?? [])]
+    .flatMap((check) => check.relatedNodes ?? []);
+  const occurrences = [{ html: node.html, target: node.target }, ...related];
+  const seen = new Set<string>();
+  return occurrences.filter((occurrence) => {
+    const key = `${occurrence.target.join(',')}|${occurrence.html}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function axeNodeComponent(audit: ViewportAudit, node: AxeNodeResult): string {
@@ -190,7 +212,7 @@ function severityFromAxe(impact: string | null): Severity {
 }
 
 function criterionFromTag(tag: string): string | null {
-  const match = /^wcag(\d)(\d)(\d)$/.exec(tag);
+  const match = /^wcag(\d)(\d)(\d{1,2})$/.exec(tag);
   return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
 }
 
@@ -213,6 +235,10 @@ function axeFindings(audit: ViewportAudit): Finding[] {
     if (violation.id === 'target-size') return [];
     const wcag = violation.tags.map(criterionFromTag).filter((item): item is string => Boolean(item));
     const isWcagViolation = wcag.length > 0;
+    const incomplete = violation.resultType === 'incomplete';
+    // Incomplete axe results remain in ViewportAudit.axe and AxeRunMetadata for
+    // coverage review. They are indeterminate and must not become report rows.
+    if (incomplete) return [];
     if (violation.id === 'color-contrast') {
       const groups = new Map<string, { details: ContrastDetails | null; nodes: AxeNodeResult[] }>();
       for (const node of violation.nodes) {
@@ -271,16 +297,18 @@ function axeFindings(audit: ViewportAudit): Finding[] {
       });
     }
     if (violation.id === 'landmark-unique') {
-      const groups = new Map<string, { identity: { role: string; name: string }; nodes: AxeNodeResult[] }>();
+      const groups = new Map<string, { identity: { role: string; name: string }; implementation: string; nodes: AxeNodeResult[] }>();
       for (const node of violation.nodes) {
         const identity = landmarkIdentity(audit, node);
-        const signature = `${identity.role.toLowerCase()}|${identity.name.toLowerCase()}`;
-        const group = groups.get(signature) ?? { identity, nodes: [] };
+        const implementation = stableComponentSignature(openingTagSignature(node.html));
+        const signature = `${identity.role.toLowerCase()}|${identity.name.toLowerCase()}|${implementation}`;
+        const group = groups.get(signature) ?? { identity, implementation, nodes: [] };
         group.nodes.push(node);
         groups.set(signature, group);
       }
       return [...groups.entries()].map(([signature, group]) => {
-        const selectors = [...new Set(group.nodes.flatMap((node) => node.target.length ? node.target : ['page']))];
+        const occurrences = group.nodes.flatMap(axeNodeOccurrences);
+        const selectors = [...new Set(occurrences.flatMap((node) => node.target.length ? node.target : ['page']))];
         const { role, name } = group.identity;
         const named = name === 'unnamed' ? 'without an accessible name' : `with the accessible name “${name}”`;
         const component = `${role} landmarks ${named}`;
@@ -303,11 +331,11 @@ function axeFindings(audit: ViewportAudit): Finding[] {
           ].join('\n'),
           remediation: 'Give repeated landmarks of the same role concise, unique accessible names using aria-labelledby when a visible heading is available, or aria-label otherwise. Do not add names to landmarks that are already distinguishable by role and context.',
           component,
-          sharedComponentKey: createSharedComponentKey(component, `landmark-unique|${signature}`),
+          sharedComponentKey: createSharedComponentKey(component, `landmark-unique|${group.implementation}`),
           urls: [audit.url],
           viewports: [audit.viewport.name],
           selectors,
-          evidence: group.nodes.map((node) => ({
+          evidence: occurrences.map((node) => ({
             kind: 'axe',
             pageUrl: audit.url,
             viewport: audit.viewport.name,
@@ -454,6 +482,36 @@ function domFindings(audit: ViewportAudit): Finding[] {
     return findings;
   }
 
+  if (audit.interactionBlocker) {
+    findings.push(makeFinding({
+      identity: `interaction-blocker|${audit.interactionBlocker.selector}|${audit.viewport.name}`,
+      ruleId: 'interaction-coverage-blocked',
+      classification: 'blocker',
+      severity: 'Critical',
+      wcag: ['None'],
+      summary: 'Page interaction testing was blocked by an active modal surface',
+      issue: `${audit.interactionBlocker.reason} Page-level keyboard, disclosure, tab, form and link interaction results cannot be treated as complete.`,
+      impact: 'The audit cannot establish whether people can operate the underlying page because the blocking surface prevented representative interaction testing.',
+      testing: `The page was loaded at ${audit.viewport.name}; the remaining surface was identified as ${audit.interactionBlocker.selector} with role ${audit.interactionBlocker.role}.`,
+      remediation: 'Configure the audit to dismiss the authorised privacy or consent surface before testing, or remove the unexpected staging overlay, then rerun every interaction check for this viewport.',
+      component: audit.interactionBlocker.selector,
+      componentName: audit.interactionBlocker.name || `${audit.interactionBlocker.role} surface`,
+      componentLocation: 'Overlaying the tested page before page-level interaction checks',
+      sharedComponentKey: `audit-interaction-blocker:${normalizeComponent(audit.interactionBlocker.selector)}`,
+      urls: [audit.url],
+      viewports: [audit.viewport.name],
+      selectors: [audit.interactionBlocker.selector],
+      evidence: [evidence('keyboard', audit.interactionBlocker.selector, JSON.stringify({
+        blocker: audit.interactionBlocker,
+        consent: audit.consent,
+        keyboard: audit.keyboard
+      }))],
+      assignment: 'QA',
+      effort: 'Review',
+      translationRequired: 'No'
+    }));
+  }
+
   if (audit.dom.mainCount === 0) {
     findings.push(makeFinding({
       identity: 'main-landmark|page',
@@ -525,6 +583,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
   }
 
   for (const item of audit.dom.linkedImagesForReview) {
+    if (!/^(logo|company logo|site logo|image|home|homepage)$/i.test(item.name.trim())) continue;
     findings.push(makeFinding({
       identity: `linked-image-name|${normalizeComponent(item.selector)}`,
       ruleId: 'linked-image-purpose-review',
@@ -534,8 +593,8 @@ function domFindings(audit: ViewportAudit): Finding[] {
       summary: 'Review the linked image accessible name',
       issue: `${item.reason} Current name: “${item.name || 'empty'}”; image alt: “${item.alt}”.`,
       impact: 'Screen-reader and voice-control users may not understand or reliably request the link destination.',
-      testing: 'The rendered accessible-name inputs for a linked image were compared with whether the link points to a home-page destination. Final wording requires content review.',
-      remediation: 'Name the link by its destination and purpose, for example “Organisation careers home”. Ensure the image alt participates only once in that name and remove generic wording such as “logo” when it does not add useful purpose.',
+      testing: 'The image-only link uses a wholly generic accessible name such as “logo” or “image”. Review its destination and surrounding context to determine concise purpose text.',
+      remediation: 'Replace the generic name with concise text that identifies the organisation or destination in context. Ensure the image alternative participates only once in the link name.',
       component: normalizeComponent(item.selector),
       sharedComponentKey: createSharedComponentKey(normalizeComponent(item.selector), JSON.stringify({
         selector: item.selector,
@@ -761,9 +820,17 @@ function domFindings(audit: ViewportAudit): Finding[] {
     }));
   }
 
+  const groupKeyboardItems = (items: typeof audit.keyboard.sequence): Map<string, typeof items> => {
+    const groups = new Map<string, typeof items>();
+    for (const item of items) {
+      const component = normalizeComponent(item.componentSelector || item.selector);
+      groups.set(component, [...(groups.get(component) ?? []), item]);
+    }
+    return groups;
+  };
   const obscured = audit.keyboard.sequence.filter((item) => item.obscured);
-  for (const item of obscured) {
-    const component = normalizeComponent(item.selector);
+  for (const [component, items] of groupKeyboardItems(obscured)) {
+    const names = conciseList(items.map((item) => `“${item.name || 'unnamed'}”`), 10);
     findings.push(makeFinding({
       identity: `focus-obscured|${component}`,
       ruleId: 'keyboard-focus-obscured',
@@ -771,44 +838,18 @@ function domFindings(audit: ViewportAudit): Finding[] {
       severity: 'Serious',
       wcag: ['2.4.11'],
       summary: 'Keyboard focus is obscured',
-      issue: `The focused control “${item.name || 'unnamed'}” was entirely covered at all sampled points within its visible bounds.`,
+      issue: `The focused controls ${names} in the same rendered component were entirely covered at all sampled points within their visible bounds.`,
       impact: 'Keyboard users may not be able to see which control currently has focus.',
-      testing: `The page was traversed with Tab. At position ${item.index}, hit-testing at the centre and four inset corners found unrelated rendered content above the focused control at every sampled point.`,
+      testing: `The page was traversed with Tab. At positions ${items.map((item) => item.index).join(', ')}, hit-testing at the centre and four inset corners found unrelated rendered content above each focused control at every sampled point.`,
       remediation: 'Ensure focused controls are not hidden by sticky headers, cookie banners, dialogs, or other overlays. Scroll the focused item into an unobscured area and manage overlay focus correctly.',
       component,
-      sharedComponentKey: createSharedComponentKey(component, `keyboard-focus-obscured|${item.role}|${item.name}`),
+      sharedComponentKey: createSharedComponentKey(component, 'keyboard-focus-obscured'),
       urls: [audit.url],
       viewports: [audit.viewport.name],
-      selectors: [item.selector],
-      evidence: [evidence('keyboard', item.selector, `Tab position ${item.index}: ${item.name}; role: ${item.role}; all sampled points obscured.`)],
+      selectors: items.map((item) => item.selector),
+      evidence: items.map((item) => evidence('keyboard', item.selector, `Tab position ${item.index}: ${item.name}; role: ${item.role}; all sampled points obscured.`)),
       assignment: 'Development',
       effort: 'Medium',
-      translationRequired: 'No'
-    }));
-  }
-
-  const noIndicator = audit.keyboard.sequence.filter((item) => !item.visibleIndicator);
-  for (const item of noIndicator) {
-    const component = normalizeComponent(item.selector);
-    findings.push(makeFinding({
-      identity: `focus-indicator|${component}`,
-      ruleId: 'focus-indicator-review',
-      classification: 'review',
-      severity: 'Serious',
-      wcag: ['2.4.7', '2.4.11'],
-      summary: 'Review keyboard focus visibility',
-      issue: `The focused control “${item.name || 'unnamed'}” did not expose an outline, box shadow, or border in its computed focused style. Other visual changes may still provide a valid indicator and require manual comparison.`,
-      impact: 'Keyboard users may lose track of their position on the page.',
-      testing: `Computed styles were sampled at Tab position ${item.index} during sequential keyboard navigation.`,
-      remediation: 'Provide a persistent, high-contrast focus indicator that is not clipped or obscured and is visible against every background and component state.',
-      component,
-      sharedComponentKey: createSharedComponentKey(component, `focus-indicator|${item.role}|${item.name}`),
-      urls: [audit.url],
-      viewports: [audit.viewport.name],
-      selectors: [item.selector],
-      evidence: [evidence('keyboard', item.selector, `Tab position ${item.index}: ${item.name}; role: ${item.role}`)],
-      assignment: 'Mixed',
-      effort: 'Small',
       translationRequired: 'No'
     }));
   }
@@ -821,6 +862,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
   );
   const targetSizeCandidates = audit.dom.smallTargets.filter((target) => (
     !target.inlineException
+    && (target.hitTested === true || target.axeTargetSizeSignal || axeTargetSelectors.has(normalizeComponent(target.selector)))
     && (target.spacingRisk || target.axeTargetSizeSignal || axeTargetSelectors.has(normalizeComponent(target.selector)))
   ));
   const targetSizeGroups = new Map<string, typeof targetSizeCandidates>();
@@ -889,73 +931,58 @@ function domFindings(audit: ViewportAudit): Finding[] {
       evidence(kind, item.selector, JSON.stringify(item))
     ));
     const sharedComponentKey = createSharedComponentKey(component, `disclosure-family|${component}`);
+    // Interaction errors are retained in ViewportAudit.disclosures and reflected
+    // as tested-inconclusive coverage. An incomplete test is not an accessibility
+    // defect and therefore must not create an Accessibility Report row.
     const completed = disclosures.filter((item) => !item.error);
-    const stateFailures = completed.filter((item) => (
-      item.beforeExpanded !== null
-      && item.afterExpanded !== null
-      && item.afterExpanded === item.beforeExpanded
-    ));
-    const missingRelationships = completed.filter((item) => !item.controls);
+    const stateMatchesVisibility = (expanded: string | null, visible: boolean | null): boolean | null => {
+      if ((expanded !== 'true' && expanded !== 'false') || (visible !== true && visible !== false)) return null;
+      return (expanded === 'true') === visible;
+    };
+    const stateFailures = completed.filter((item) => {
+      const beforeMatches = stateMatchesVisibility(item.beforeExpanded, item.controlledVisibleBefore);
+      const afterMatches = stateMatchesVisibility(item.afterExpanded, item.controlledVisibleAfterOpen);
+      const spaceMatches = item.spaceTestCompleted
+        ? stateMatchesVisibility(item.spaceAfterExpanded ?? null, item.controlledVisibleAfterSpace ?? null)
+        : null;
+      const enterVisibleChanged = (item.controlledVisibleBefore === true || item.controlledVisibleBefore === false)
+        && (item.controlledVisibleAfterOpen === true || item.controlledVisibleAfterOpen === false)
+        && item.controlledVisibleBefore !== item.controlledVisibleAfterOpen;
+      const enterStateDidNotChange = item.beforeExpanded !== null
+        && item.afterExpanded !== null
+        && item.beforeExpanded === item.afterExpanded;
+      const spaceVisibleChanged = item.spaceTestCompleted
+        && (item.controlledVisibleBefore === true || item.controlledVisibleBefore === false)
+        && (item.controlledVisibleAfterSpace === true || item.controlledVisibleAfterSpace === false)
+        && item.controlledVisibleBefore !== item.controlledVisibleAfterSpace;
+      const spaceStateDidNotChange = item.spaceTestCompleted
+        && item.beforeExpanded !== null
+        && item.spaceAfterExpanded !== null
+        && item.beforeExpanded === item.spaceAfterExpanded;
+      return beforeMatches === false
+        || afterMatches === false
+        || spaceMatches === false
+        || (enterVisibleChanged && enterStateDidNotChange)
+        || (spaceVisibleChanged && spaceStateDidNotChange);
+    });
     if (stateFailures.length) {
-      const related = [...new Set([...stateFailures, ...missingRelationships])];
-      const hasMissingRelationship = missingRelationships.length > 0;
-      const hasConfirmedMismatch = stateFailures.some((item) => item.controlledVisibleAfterOpen === true);
       findings.push(makeFinding({
-        identity: `disclosure-state${hasConfirmedMismatch ? '' : '-review'}${hasMissingRelationship ? '-and-relationship' : ''}|${component}`,
-        ruleId: hasConfirmedMismatch
-          ? (hasMissingRelationship ? 'disclosure-state-and-relationship' : 'disclosure-state-not-updated')
-          : (hasMissingRelationship ? 'disclosure-state-and-relationship-review' : 'disclosure-state-review'),
-        classification: hasConfirmedMismatch ? 'confirmed' : 'review',
-        severity: hasConfirmedMismatch ? 'Serious' : 'Moderate',
+        identity: `disclosure-state-mismatch|${component}`,
+        ruleId: 'disclosure-state-not-updated',
+        classification: 'confirmed',
+        severity: 'Serious',
         wcag: ['4.1.2'],
-        summary: hasConfirmedMismatch
-          ? (hasMissingRelationship
-              ? 'Disclosure state is incorrect and its controlled region is not identified'
-              : 'Disclosure state is not programmatically updated')
-          : (hasMissingRelationship
-              ? 'Review disclosure activation, state, and controlled-region relationship'
-              : 'Review whether disclosure state updates after activation'),
-        issue: [
-          hasConfirmedMismatch
-            ? 'Activating the listed disclosure trigger(s) visibly revealed controlled content but did not change aria-expanded, confirming that the exposed state did not match the rendered state.'
-            : 'Activating the listed disclosure trigger(s) did not change aria-expanded, but automation could not establish that controlled content visibly opened. This may be a state mismatch or a keyboard-activation problem and requires review.',
-          hasMissingRelationship
-            ? (hasConfirmedMismatch
-                ? 'The same component family also omits aria-controls. The absent relationship is supporting review context; the confirmed failure is the inaccurate state.'
-                : 'The same component family also omits aria-controls. Its absence is optional in ordinary disclosure/accordion patterns and remains part of the same review rather than a separate failure.')
-            : ''
-        ].filter(Boolean).join(' '),
-        impact: 'If the visible state and exposed state differ, screen-reader users cannot reliably determine whether the affected content is open or closed. A failed keyboard activation can prevent keyboard users from accessing the content at all.',
-        testing: 'Activate each listed control separately with Enter and Space, confirm whether its content visibly opens, compare that rendered state with aria-expanded, and inspect whether the chosen component pattern exposes a reliable relationship to its content.',
-        remediation: 'Use a native button and update aria-expanded to match the visible state whenever the component opens or closes. If the chosen pattern needs an explicit relationship, give the controlled region a stable id and reference it with aria-controls.',
+        summary: 'Disclosure state does not match the visible controlled content',
+        issue: 'The recorded controlled content visibility contradicted aria-expanded before or after keyboard activation, or the content visibility changed without a corresponding state update.',
+        impact: 'Screen-reader users receive an incorrect expanded or collapsed state and cannot reliably determine whether the controlled content is available.',
+        testing: 'Record controlled-content visibility and aria-expanded before activation, activate the control with Enter and Space, then compare both values again. Confirm a failure only when the visible and exposed states contradict one another.',
+        remediation: 'Use a native button and synchronize aria-expanded with the actual controlled-content visibility whenever the component opens or closes.',
         component,
         sharedComponentKey,
         urls: [audit.url],
         viewports: [audit.viewport.name],
-        selectors: selectorsFor(related),
-        evidence: evidenceFor('keyboard', related),
-        assignment: 'Development',
-        effort: 'Small',
-        translationRequired: 'No'
-      }));
-    } else if (missingRelationships.length) {
-      findings.push(makeFinding({
-        identity: `disclosure-controls|${component}`,
-        ruleId: 'disclosure-controls-review',
-        classification: 'review',
-        severity: 'Minor',
-        wcag: ['Best Practice'],
-        summary: 'Review the disclosure-to-content relationships',
-        issue: 'The listed disclosure trigger(s) expose aria-expanded but do not use aria-controls. aria-controls is optional for ordinary disclosure and accordion patterns, so its absence alone is not reported as a WCAG failure; the rendered structure and chosen interaction pattern require review.',
-        impact: 'If the surrounding structure does not otherwise communicate the relationship, some assistive-technology users may receive less context about the content affected by each control.',
-        testing: 'Inspect the complete component structure and accessibility tree. Confirm whether each trigger and panel are already associated by the chosen disclosure or accordion pattern; do not fail the component solely because aria-controls is absent.',
-        remediation: 'If the chosen component pattern needs an explicit relationship, give each controlled region a stable unique id and reference it from aria-controls on its trigger. Keep aria-expanded synchronized with the visible state. Do not add redundant ARIA when native structure already provides the required relationship.',
-        component,
-        sharedComponentKey,
-        urls: [audit.url],
-        viewports: [audit.viewport.name],
-        selectors: selectorsFor(missingRelationships),
-        evidence: evidenceFor('dom', missingRelationships),
+        selectors: selectorsFor(stateFailures),
+        evidence: evidenceFor('keyboard', stateFailures),
         assignment: 'Development',
         effort: 'Small',
         translationRequired: 'No'
@@ -1117,13 +1144,13 @@ function domFindings(audit: ViewportAudit): Finding[] {
       identity: `autoplay-media|${selectors.map(normalizeComponent).join('|')}`,
       ruleId: 'autoplay-media-review',
       classification: 'review',
-      severity: 'Serious',
+      severity: 'Moderate',
       wcag: ['1.4.2', '2.2.2'],
       summary: 'Review automatically playing media',
-      issue: 'Visible audio or video uses autoplay. Duration, audio level, controls, and motion behavior require manual testing.',
-      impact: 'Audio can interfere with screen-reader output, while unpausable motion can distract or make content difficult to use.',
-      testing: 'The rendered page was checked for visible audio/video elements with autoplay.',
-      remediation: 'Do not autoplay audio. Provide prominent pause, stop, and mute controls for permitted media and honor prefers-reduced-motion for non-essential motion.',
+      issue: 'A visible audio or video element has the autoplay attribute. This does not establish playback duration, audible output, motion, or the availability of controls, so WCAG failure requires timed manual confirmation.',
+      impact: 'If audio plays for more than three seconds without a control, it can interfere with screen-reader output. If moving content continues for more than five seconds without pause, stop, or hide controls, it can distract users and impede reading.',
+      testing: 'Observe actual playback for at least five seconds with audio enabled. Record whether audio lasts more than three seconds and whether parallel moving content lasts more than five seconds, then inspect the applicable controls.',
+      remediation: 'If audio starts automatically and lasts more than three seconds, provide a mechanism to pause or stop it or independently control its volume. If moving content starts automatically and lasts more than five seconds in parallel with other content, provide pause, stop, or hide controls.',
       component: 'media',
       urls: [audit.url],
       viewports: [audit.viewport.name],
@@ -1140,18 +1167,5 @@ function domFindings(audit: ViewportAudit): Finding[] {
 export function findingsFromPage(page: PageAudit): Finding[] {
   return page.viewports
     .filter((audit) => !audit.cancelled)
-    .flatMap((audit) => [...axeFindings(audit), ...domFindings(audit)].map((finding) => enrichComponent(finding, audit)))
-    .map((finding) => {
-      if (finding.classification === 'confirmed' || finding.classification === 'blocker') return finding;
-      return {
-        ...finding,
-        evidence: finding.evidence.map((item) => ({
-          kind: item.kind,
-          pageUrl: item.pageUrl,
-          ...(item.viewport ? { viewport: item.viewport } : {}),
-          ...(item.selector ? { selector: item.selector } : {}),
-          detail: item.detail
-        }))
-      };
-    });
+    .flatMap((audit) => [...axeFindings(audit), ...domFindings(audit)].map((finding) => enrichComponent(finding, audit)));
 }

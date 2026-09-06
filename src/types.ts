@@ -95,6 +95,22 @@ export interface AxeNodeResult {
   html: string;
   target: string[];
   failureSummary?: string;
+  any?: AxeCheckResult[];
+  all?: AxeCheckResult[];
+  none?: AxeCheckResult[];
+}
+
+export interface AxeRelatedNode {
+  html: string;
+  target: string[];
+}
+
+export interface AxeCheckResult {
+  id: string;
+  data?: unknown;
+  relatedNodes?: AxeRelatedNode[];
+  impact?: string | null;
+  message?: string;
 }
 
 export interface AxeViolationResult {
@@ -106,6 +122,15 @@ export interface AxeViolationResult {
   help: string;
   helpUrl: string;
   nodes: AxeNodeResult[];
+}
+
+export interface AxeRunMetadata {
+  completed: boolean;
+  error?: string;
+  violationCount: number;
+  incompleteCount: number;
+  passCount: number;
+  passes: Array<{ id: string; tags: string[]; nodeCount: number }>;
 }
 
 export interface DomCheckResult {
@@ -125,6 +150,8 @@ export interface DomCheckResult {
     height: number;
     groupSelector: string;
     inlineException: boolean;
+    /** True only when the target was inside the viewport and passed elementFromPoint hit testing. */
+    hitTested: boolean;
     spacingRisk: boolean;
     axeTargetSizeSignal?: boolean;
     nearbyTargets: Array<{
@@ -147,8 +174,14 @@ export interface KeyboardCheckResult {
     role: string;
     visibleIndicator: boolean;
     obscured: boolean;
-  }>;
+    componentSelector?: string;
+    modalSelector?: string;
+    }>;
   repeatedAt?: number;
+  completedCycle: boolean;
+  truncated: boolean;
+  scope: 'document' | 'modal-only' | 'unknown';
+  modalSelector?: string;
 }
 
 export interface ResponsiveCheckResult {
@@ -161,12 +194,68 @@ export interface DisclosureCheckResult {
   selector: string;
   name: string;
   controls: string | null;
+  initialExpanded?: string | null;
+  baselinePrepared?: boolean;
   beforeExpanded: string | null;
   afterExpanded: string | null;
+  controlledVisibleBefore: boolean | null;
   controlledVisibleAfterOpen: boolean | null;
+  spaceAfterExpanded?: string | null;
+  controlledVisibleAfterSpace?: boolean | null;
+  spaceTestCompleted?: boolean;
   firstTabSelector: string | null;
   tabEnteredControlledRegion: boolean | null;
   error?: string;
+}
+
+export interface InteractionBlocker {
+  selector: string;
+  role: string;
+  name: string;
+  reason: string;
+}
+
+export type CoverageStatus =
+  | 'confirmed-passed'
+  | 'confirmed-failed'
+  | 'tested-inconclusive'
+  | 'manual-review-required'
+  | 'not-tested'
+  | 'not-applicable';
+
+export type CoverageArea =
+  | 'viewport-render'
+  | 'keyboard-only'
+  | 'focus-order-and-visibility'
+  | 'names-roles-states-relationships'
+  | 'structure-headings-landmarks'
+  | 'navigation-and-bypass'
+  | 'links-and-buttons'
+  | 'images-and-alternatives'
+  | 'forms-errors-and-validation'
+  | 'interactive-components'
+  | 'dynamic-content-and-status'
+  | 'zoom-text-spacing-and-responsive'
+  | 'contrast-and-non-colour-cues'
+  | 'motion-autoplay-and-controls'
+  | 'language-and-language-changes'
+  | 'page-title'
+  | 'broken-or-misleading-links'
+  | 'automated-axe'
+  | 'manual-assessment';
+
+export interface CoverageAssessment {
+  area: CoverageArea;
+  status: CoverageStatus;
+  detail: string;
+}
+
+export interface PageCoverage {
+  url: string;
+  viewports: Array<{
+    viewport: string;
+    assessments: CoverageAssessment[];
+  }>;
 }
 
 export interface TabCheckResult {
@@ -195,6 +284,15 @@ export interface LinkCheckResult {
   reason: string;
 }
 
+export interface LinkCheckMetadata {
+  completed: boolean;
+  candidateCount: number;
+  checkedCount: number;
+  truncated: boolean;
+  scope: 'desktop-same-origin' | 'not-applicable' | 'blocked';
+  error?: string;
+}
+
 export interface ElementScreenshot {
   selector: string;
   path: string;
@@ -207,13 +305,16 @@ export interface ViewportAudit {
   status: number | null;
   title: string;
   axe: AxeViolationResult[];
+  axeRun: AxeRunMetadata;
   dom: DomCheckResult;
   keyboard: KeyboardCheckResult;
   responsive: ResponsiveCheckResult;
   disclosures: DisclosureCheckResult[];
   tabs: TabCheckResult[];
   links: LinkCheckResult[];
+  linkRun: LinkCheckMetadata;
   consent: ConsentHandlingResult;
+  interactionBlocker: InteractionBlocker | null;
   elementContexts: ElementContext[];
   screenshot: string;
   elementScreenshots: ElementScreenshot[];
@@ -245,6 +346,7 @@ export interface AuditSummary {
   auditedUrls: string[];
   skippedUrls: Array<{ url: string; reason: string }>;
   pages: PageAudit[];
+  coverage: PageCoverage[];
   findings: Finding[];
   manualChecks: ManualCheck[];
   limitations: string[];

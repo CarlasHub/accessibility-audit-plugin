@@ -3,6 +3,7 @@ import type {
   DisclosureCheckResult,
   DomCheckResult,
   KeyboardCheckResult,
+  LinkCheckMetadata,
   LinkCheckResult,
   ResponsiveCheckResult,
   TabCheckResult
@@ -21,15 +22,40 @@ const focusableSelector = [
 export async function runDomChecks(page: Page, axeTargetSizeSelectors: string[] = []): Promise<DomCheckResult> {
   return page.evaluate(({ focusables, targetSizeSelectors }) => {
     const visible = (element: Element): boolean => {
-      const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
-      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      if (rect.width <= 0 || rect.height <= 0 || rect.right <= 0 || rect.left >= innerWidth) return false;
+      if (element.closest('[hidden], [inert], [aria-hidden="true"], .slick-cloned:not(.slick-active)')) return false;
+      let current: Element | null = element;
+      while (current) {
+        const style = getComputedStyle(current);
+        if (
+          style.display === 'none'
+          || style.visibility === 'hidden'
+          || style.visibility === 'collapse'
+          || style.contentVisibility === 'hidden'
+          || Number.parseFloat(style.opacity || '1') === 0
+          || style.pointerEvents === 'none'
+        ) return false;
+        current = current.parentElement;
+      }
+      if (rect.top < innerHeight && rect.bottom > 0) {
+        const samplePoints = [
+          [Math.max(0, Math.min(innerWidth - 1, rect.left + rect.width / 2)), Math.max(0, Math.min(innerHeight - 1, rect.top + rect.height / 2))],
+          [Math.max(0, Math.min(innerWidth - 1, rect.left + 2)), Math.max(0, Math.min(innerHeight - 1, rect.top + 2))]
+        ];
+        const hit = samplePoints.some(([x, y]) => {
+          const top = document.elementFromPoint(x!, y!);
+          return Boolean(top && (top === element || element.contains(top) || top.contains(element)));
+        });
+        if (!hit) return false;
+      }
+      return true;
     };
     const cssPath = (element: Element): string => {
       if (element.id) return `#${CSS.escape(element.id)}`;
       const parts: string[] = [];
       let current: Element | null = element;
-      while (current && current !== document.documentElement && parts.length < 5) {
+      while (current && current !== document.documentElement && current !== document.body && parts.length < 5) {
         let part = current.tagName.toLowerCase();
         const stableClasses = [...current.classList].filter((name) => !/\d{3,}/.test(name)).slice(0, 2);
         if (stableClasses.length) part += `.${stableClasses.map((name) => CSS.escape(name)).join('.')}`;
@@ -108,26 +134,14 @@ export async function runDomChecks(page: Page, axeTargetSizeSelectors: string[] 
         if (descendantTextWithoutImages(link)) return [];
         const accessibleName = name(link);
         const alt = image.getAttribute('alt') ?? '';
-        const rawHref = link.getAttribute('href')?.trim() ?? '';
-        let destination: URL | null = null;
-        try { destination = new URL((link as HTMLAnchorElement).href, document.baseURI); } catch { destination = null; }
         const generic = /^(logo|company logo|site logo|image|home|homepage)$/i.test(accessibleName);
-        const homeDestination = Boolean(
-          rawHref
-          && !/^(?:#|javascript:)/i.test(rawHref)
-          && destination
-          && !destination.hash
-          && /^\/(?:[a-z]{2}(?:-[A-Z]{2})?)?\/?$/.test(destination.pathname)
-        );
-        if (!generic && !(homeDestination && !/home/i.test(accessibleName))) return [];
+        if (!generic) return [];
         return [{
           selector: cssPath(link),
           name: accessibleName,
           alt,
           href: (link as HTMLAnchorElement).href,
-          reason: generic
-            ? 'The linked image has a generic accessible name.'
-            : 'The linked image points to a home page but its accessible name does not identify that destination.'
+          reason: 'The linked image has a generic accessible name.'
         }];
       });
     const emptyLinks = [...document.querySelectorAll('a[href], a[role="link"]')]
@@ -232,6 +246,7 @@ export async function runDomChecks(page: Page, axeTargetSizeSelectors: string[] 
           height: rounded(rect.height),
           groupSelector: groupSelectorFor(element),
           inlineException: inlineExceptionFor(element),
+          hitTested: rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth,
           spacingRisk: nearbyTargets.length > 0,
           axeTargetSizeSignal: hasAxeTargetSizeSignal(element),
           nearbyTargets
@@ -268,7 +283,7 @@ export async function runDomChecks(page: Page, axeTargetSizeSelectors: string[] 
   }, { focusables: focusableSelector, targetSizeSelectors: axeTargetSizeSelectors });
 }
 
-export async function runLinkChecks(page: Page, maxLinks: number): Promise<LinkCheckResult[]> {
+export async function runLinkChecks(page: Page, maxLinks: number): Promise<{ results: LinkCheckResult[]; metadata: LinkCheckMetadata }> {
   const candidates = await page.evaluate((limit) => {
     const visible = (element: Element): boolean => {
       const style = getComputedStyle(element);
@@ -305,21 +320,22 @@ export async function runLinkChecks(page: Page, maxLinks: number): Promise<LinkC
         : '';
       return labelledText || element.getAttribute('aria-label')?.trim() || textAlternative(element) || element.getAttribute('title')?.trim() || '';
     };
-    return [...document.querySelectorAll('a[href], a[role="link"]')]
-      .filter(visible)
-      .slice(0, limit)
-      .map((link) => ({
+    const visibleLinks = [...document.querySelectorAll('a[href], a[role="link"]')].filter(visible);
+    return {
+      candidateCount: visibleLinks.length,
+      links: visibleLinks.slice(0, limit).map((link) => ({
         selector: cssPath(link),
         name: accessibleName(link),
         rawHref: link.getAttribute('href') ?? '',
         download: link.hasAttribute('download')
-      }));
+      }))
+    };
   }, maxLinks);
 
   const results: LinkCheckResult[] = [];
   const checked = new Map<string, { status: number; finalUrl: string }>();
   const pageUrl = new URL(page.url());
-  for (const candidate of candidates) {
+  for (const candidate of candidates.links) {
     const rawHref = candidate.rawHref.trim();
     if (!candidate.name || candidate.download || /^(mailto|tel|sms|data|blob):/i.test(rawHref)) continue;
     if (!rawHref || rawHref === '#') {
@@ -428,7 +444,16 @@ export async function runLinkChecks(page: Page, maxLinks: number): Promise<LinkC
       });
     }
   }
-  return results;
+  return {
+    results,
+    metadata: {
+      completed: true,
+      candidateCount: candidates.candidateCount,
+      checkedCount: candidates.links.length,
+      truncated: candidates.candidateCount > candidates.links.length,
+      scope: 'desktop-same-origin'
+    }
+  };
 }
 
 export async function runKeyboardChecks(page: Page, maxTabStops: number): Promise<KeyboardCheckResult> {
@@ -451,7 +476,7 @@ export async function runKeyboardChecks(page: Page, maxTabStops: number): Promis
         if (target.id) return `#${CSS.escape(target.id)}`;
         const parts: string[] = [];
         let current: Element | null = target;
-        while (current && current !== document.documentElement && parts.length < 6) {
+        while (current && current !== document.documentElement && current !== document.body && parts.length < 6) {
           let part = current.tagName.toLowerCase();
           const stableClasses = [...current.classList].filter((value) => !/\d{3,}/.test(value)).slice(0, 2);
           if (stableClasses.length) part += `.${stableClasses.map((value) => CSS.escape(value)).join('.')}`;
@@ -489,24 +514,56 @@ export async function runKeyboardChecks(page: Page, maxTabStops: number): Promis
         ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent?.trim() ?? '').join(' ')
         : '';
       const name = (
-        element.getAttribute('aria-label') ??
-        labelledText ??
-        (element instanceof HTMLImageElement ? element.alt : '') ??
-        element.textContent?.trim() ??
-        element.getAttribute('title') ??
+        element.getAttribute('aria-label')?.trim() ||
+        labelledText.trim() ||
+        (element instanceof HTMLImageElement ? element.alt.trim() : '') ||
+        element.textContent?.trim() ||
+        element.getAttribute('title')?.trim() ||
         ''
       ).trim();
-      const visibleIndicator =
-        (style.outlineStyle !== 'none' && Number.parseFloat(style.outlineWidth) > 0) ||
-        (style.boxShadow !== 'none' && style.boxShadow !== '') ||
-        style.borderStyle !== 'none';
+      const visualSignature = (computed: CSSStyleDeclaration): string[] => [
+        computed.outlineStyle,
+        computed.outlineWidth,
+        computed.outlineColor,
+        computed.outlineOffset,
+        computed.boxShadow,
+        computed.borderTopColor,
+        computed.borderRightColor,
+        computed.borderBottomColor,
+        computed.borderLeftColor,
+        computed.borderTopWidth,
+        computed.borderRightWidth,
+        computed.borderBottomWidth,
+        computed.borderLeftWidth,
+        computed.backgroundColor,
+        computed.color,
+        computed.textDecorationLine,
+        computed.textDecorationColor,
+        computed.textDecorationThickness
+      ];
+      const focusedVisual = visualSignature(style);
+      const focusVisible = element.matches(':focus-visible');
+      const scrollPosition = { x: scrollX, y: scrollY };
+      element.blur();
+      document.body.focus({ preventScroll: true });
+      const unfocusedVisual = visualSignature(getComputedStyle(element));
+      element.focus({ preventScroll: true });
+      scrollTo(scrollPosition.x, scrollPosition.y);
+      const visibleIndicator = focusVisible && focusedVisual.some((value, index) => value !== unfocusedVisual[index]);
+      const modal = element.closest('[role="dialog"], [role="alertdialog"], [aria-modal="true"], #system-ialert');
+      const pageChrome = element.closest('header, [role="banner"], footer, [role="contentinfo"]');
+      const componentRoot = pageChrome
+        ?? element.closest('[role="tablist"], form, nav, section, article, main, [role="region"]')
+        ?? element;
       return {
         index: position,
         selector: cssPath(element),
         name,
         role: element.getAttribute('role') ?? element.tagName.toLowerCase(),
         visibleIndicator,
-        obscured
+        obscured,
+        componentSelector: cssPath(componentRoot),
+        ...(modal ? { modalSelector: cssPath(modal) } : {})
       };
     }, index + 1);
     if (!item) break;
@@ -526,7 +583,23 @@ export async function runKeyboardChecks(page: Page, maxTabStops: number): Promis
     if (original === '') body.removeAttribute('tabindex');
     else if (original !== undefined) body.setAttribute('tabindex', original);
   });
-  return repeatedAt === undefined ? { sequence } : { sequence, repeatedAt };
+  const modalSelectors = sequence.map((item) => item.modalSelector).filter((value): value is string => Boolean(value));
+  const modalSelector = modalSelectors[0];
+  const modalOnly = Boolean(
+    repeatedAt !== undefined
+    && sequence.length > 0
+    && modalSelector
+    && modalSelectors.length === sequence.length
+    && modalSelectors.every((value) => value === modalSelector)
+  );
+  return {
+    sequence,
+    ...(repeatedAt === undefined ? {} : { repeatedAt }),
+    completedCycle: repeatedAt !== undefined,
+    truncated: repeatedAt === undefined && sequence.length >= maxTabStops,
+    scope: modalOnly ? 'modal-only' : sequence.length ? 'document' : 'unknown',
+    ...(modalOnly && modalSelector ? { modalSelector } : {})
+  };
 }
 
 export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckResult> {
@@ -535,7 +608,7 @@ export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckRe
       if (element.id) return `#${CSS.escape(element.id)}`;
       const parts: string[] = [];
       let current: Element | null = element;
-      while (current && current !== document.documentElement && parts.length < 6) {
+      while (current && current !== document.documentElement && current !== document.body && parts.length < 6) {
         let part = current.tagName.toLowerCase();
         const stableClasses = [...current.classList].filter((value) => !/\d{3,}/.test(value)).slice(0, 2);
         if (stableClasses.length) part += `.${stableClasses.map((value) => CSS.escape(value)).join('.')}`;
@@ -620,23 +693,53 @@ export async function runDisclosureChecks(page: Page): Promise<DisclosureCheckRe
     try {
       description = await locatorDescription(toggle);
       const originalExpanded = await toggle.getAttribute('aria-expanded');
+      const controlsId = await toggle.getAttribute('aria-controls');
       if (originalExpanded === 'true') {
         await toggle.focus();
         await page.keyboard.press('Enter');
         await page.waitForTimeout(150);
       }
       const beforeExpanded = await toggle.getAttribute('aria-expanded');
-      const controlsId = await toggle.getAttribute('aria-controls');
+      const baselinePrepared = originalExpanded !== 'true' || beforeExpanded === 'false';
+      if (!baselinePrepared) {
+        results.push({
+          selector: description.selector,
+          name: description.name,
+          controls: controlsId,
+          initialExpanded: originalExpanded,
+          baselinePrepared: false,
+          beforeExpanded,
+          afterExpanded: null,
+          controlledVisibleBefore: null,
+          controlledVisibleAfterOpen: null,
+          spaceAfterExpanded: null,
+          controlledVisibleAfterSpace: null,
+          spaceTestCompleted: false,
+          firstTabSelector: null,
+          tabEnteredControlledRegion: null,
+          error: 'The disclosure started expanded and could not be returned to a collapsed baseline with Enter.'
+        });
+        continue;
+      }
+      let controlled: Locator | null = null;
+      let controlledVisibleBefore: boolean | null = null;
+      if (controlsId) {
+        controlled = page.locator(`#${controlsId.replaceAll(/([ !"#$%&'()*+,./:;<=>?@[\\\]^`{|}~])/g, '\\$1')}`);
+        if ((await controlled.count()) > 0) {
+          controlledVisibleBefore = await controlled.isVisible().catch(() => false);
+        }
+      }
       await toggle.focus();
       await page.keyboard.press('Enter');
       await page.waitForTimeout(200);
       const afterExpanded = await toggle.getAttribute('aria-expanded');
       let controlledVisibleAfterOpen: boolean | null = null;
+      let spaceAfterExpanded: string | null = null;
+      let controlledVisibleAfterSpace: boolean | null = null;
+      let spaceTestCompleted = false;
       let tabEnteredControlledRegion: boolean | null = null;
       let firstTabSelector: string | null = null;
-      if (controlsId) {
-        const controlled = page.locator(`#${controlsId.replaceAll(/([ !"#$%&'()*+,./:;<=>?@[\\\]^`{|}~])/g, '\\$1')}`);
-        if ((await controlled.count()) > 0) {
+      if (controlsId && controlled && (await controlled.count()) > 0) {
           controlledVisibleAfterOpen = await controlled.isVisible().catch(() => false);
           const focusable = controlled.locator(focusableSelector);
           if ((await focusable.count()) > 0) {
@@ -645,15 +748,36 @@ export async function runDisclosureChecks(page: Page): Promise<DisclosureCheckRe
             firstTabSelector = (await active.count()) ? (await locatorDescription(active)).selector : null;
             tabEnteredControlledRegion = await active.evaluate((element, id) => Boolean(document.getElementById(id)?.contains(element)), controlsId);
           }
-        }
+      }
+
+      await toggle.focus();
+      if ((await toggle.getAttribute('aria-expanded')) === 'true') {
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(100);
+      }
+      if ((await toggle.getAttribute('aria-expanded')) === 'false') {
+        await toggle.focus();
+        await page.keyboard.press('Space');
+        await page.waitForTimeout(200);
+        spaceAfterExpanded = await toggle.getAttribute('aria-expanded');
+        controlledVisibleAfterSpace = controlled && (await controlled.count()) > 0
+          ? await controlled.isVisible().catch(() => false)
+          : null;
+        spaceTestCompleted = true;
       }
       results.push({
         selector: description.selector,
         name: description.name,
         controls: controlsId,
+        initialExpanded: originalExpanded,
+        baselinePrepared,
         beforeExpanded,
         afterExpanded,
+        controlledVisibleBefore,
         controlledVisibleAfterOpen,
+        spaceAfterExpanded,
+        controlledVisibleAfterSpace,
+        spaceTestCompleted,
         firstTabSelector,
         tabEnteredControlledRegion
       });
@@ -671,9 +795,14 @@ export async function runDisclosureChecks(page: Page): Promise<DisclosureCheckRe
         selector: description.selector,
         name: description.name,
         controls: null,
+        baselinePrepared: false,
         beforeExpanded: null,
         afterExpanded: null,
+        controlledVisibleBefore: null,
         controlledVisibleAfterOpen: null,
+        spaceAfterExpanded: null,
+        controlledVisibleAfterSpace: null,
+        spaceTestCompleted: false,
         firstTabSelector: null,
         tabEnteredControlledRegion: null,
         error: error instanceof Error ? error.message : String(error)

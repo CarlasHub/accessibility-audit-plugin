@@ -4,6 +4,7 @@ import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ExcelJS, { type CellValue, type ConditionalFormattingOptions, type DataValidation, type Style, type Worksheet } from 'exceljs';
 import type { AuditSummary, Finding } from '../types.js';
+import { cellText } from './cell-text.js';
 import { getImageEvidencePaths, IMAGE_INVENTORY_SHEET } from './image-inventory.js';
 
 interface LookupEntry {
@@ -28,11 +29,6 @@ async function assertCanonicalTemplate(path: string): Promise<void> {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
-}
-
-function cellText(value: { text: unknown; value: unknown }): string {
-  const candidate = value.text ?? value.value ?? '';
-  return typeof candidate === 'string' ? candidate.trim() : String(candidate).trim();
 }
 
 function getLookup(worksheet: Worksheet): Map<string, LookupEntry> {
@@ -405,20 +401,29 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
   const hasScreenshotEvidence = summary.findings.some((finding) =>
     finding.evidence.some((item) => Boolean(item.screenshot))
   );
+  const blockedViewportCount = summary.pages.flatMap((page) => page.viewports)
+    .filter((viewport) => Boolean(viewport.interactionBlocker)).length;
+  const incompleteCoverageCount = summary.coverage
+    .flatMap((page) => page.viewports)
+    .flatMap((viewport) => viewport.assessments)
+    .filter((item) => !['confirmed-passed', 'confirmed-failed', 'not-applicable'].includes(item.status))
+    .length;
   overview.getCell('B9').value = [
     'Headless Playwright Chromium',
     'axe-core WCAG 2.2 A/AA',
-    'keyboard traversal',
+    'automated keyboard sampling',
     'DOM/ARIA checks',
     'desktop/mobile/reflow',
     'text spacing',
     'disclosures',
     'tabs',
     'same-origin link validation',
-    hasScreenshotEvidence ? 'linked element-level evidence for confirmed failures and blockers' : 'no screenshot evidence captured'
+    hasScreenshotEvidence ? 'linked contextual evidence for confirmed, blocker, and review findings where capture succeeded' : 'no screenshot evidence captured',
+    blockedViewportCount > 0 ? `${blockedViewportCount} viewport run(s) blocked before page-level interaction coverage` : 'no unresolved interaction blocker recorded'
   ].join('; ') + '.';
   overview.getCell('B15').value = [
     ...summary.limitations,
+    `Coverage matrix: audit-results.json records ${incompleteCoverageCount} inconclusive, manual-review-required, or not-tested page/viewport/area result(s). These are not passes.`,
     'Outstanding guided checks:',
     ...summary.manualChecks.map((check) => `• ${check.title}: ${check.procedure}`)
   ].join('\n');

@@ -82,7 +82,7 @@ describe('finding consolidation', () => {
     expect(result[0]?.evidence).toHaveLength(2);
   });
 
-  it('rolls multiple failing colour treatments into one site-wide contrast finding per host', () => {
+  it('keeps different failing colour treatments separate on the same host', () => {
     const first = finding('https://test.example/a', 'contrast-blue');
     first.ruleId = 'axe-color-contrast';
     first.component = 'text colour treatment #0066cc on #ffffff';
@@ -94,18 +94,28 @@ describe('finding consolidation', () => {
     second.componentName = 'Call-to-action link';
     second.issue = 'The same rendered colour treatment does not meet contrast. #e72582 foreground on #ffffff background measured 3.8:1; 4.5:1 is required.';
     const result = consolidateFindings([first, second]);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual(expect.objectContaining({
-      ruleId: 'axe-color-contrast',
-      component: 'site-wide text colour system',
-      componentName: 'Primary link; Call-to-action link',
-      urls: ['https://test.example/a', 'https://test.example/b']
-    }));
-    expect(result[0]?.issue).toContain('#0066cc foreground');
-    expect(result[0]?.issue).toContain('#e72582 foreground');
+    expect(result).toHaveLength(2);
+    expect(result.map((item) => item.component)).toEqual([
+      'text colour treatment #0066cc on #ffffff',
+      'text colour treatment #e72582 on #ffffff'
+    ]);
   });
 
-  it('combines stale state and optional relationship evidence for one reusable disclosure', () => {
+  it('merges an identical failing colour treatment across proven shared occurrences', () => {
+    const first = finding('https://test.example/a', 'contrast-blue');
+    first.ruleId = 'axe-color-contrast';
+    first.component = 'text colour treatment #0066cc on #ffffff';
+    first.issue = 'The same rendered colour treatment does not meet contrast. #0066cc foreground on #ffffff background measured 3.1:1; 4.5:1 is required.';
+    const second = { ...first, urls: ['https://test.example/b'], evidence: [{ ...first.evidence[0]!, pageUrl: 'https://test.example/b' }] };
+    expect(consolidateFindings([first, second])).toEqual([
+      expect.objectContaining({
+        component: 'text colour treatment #0066cc on #ffffff',
+        urls: ['https://test.example/a', 'https://test.example/b']
+      })
+    ]);
+  });
+
+  it('does not combine confirmed state failure with optional relationship-only review evidence', () => {
     const staleState = finding('https://test.example/a', 'site-header-language');
     staleState.ruleId = 'disclosure-state-and-relationship';
     staleState.classification = 'confirmed';
@@ -119,15 +129,113 @@ describe('finding consolidation', () => {
     relationshipOnly.component = 'header .language-toggle';
     relationshipOnly.componentName = '“Português” button';
     const result = consolidateFindings([staleState, relationshipOnly]);
+    expect(result).toHaveLength(2);
+    expect(result.map((item) => item.classification).sort()).toEqual(['confirmed', 'review']);
+    expect(result.find((item) => item.classification === 'confirmed')?.urls).toEqual(['https://test.example/a']);
+    expect(result.find((item) => item.classification === 'review')?.urls).toEqual(['https://test.example/b']);
+  });
+
+  it('is byte-stable when finding input order is reversed', () => {
+    const first = finding('https://test.example/b', 'site-header-logo');
+    first.componentName = 'Zulu';
+    const second = finding('https://test.example/a', 'site-header-logo');
+    second.componentName = 'Alpha';
+    expect(JSON.stringify(consolidateFindings([first, second])))
+      .toBe(JSON.stringify(consolidateFindings([second, first])));
+  });
+
+  it('merges one repeated interaction blocker across pages while retaining every page and evidence item', () => {
+    const first = finding('https://test.example/a', 'audit-interaction-blocker:#privacy-dialog');
+    first.key = 'interaction-blocker:#privacy-dialog:desktop';
+    first.ruleId = 'interaction-coverage-blocked';
+    first.classification = 'blocker';
+    first.wcag = ['None'];
+    first.component = '#privacy-dialog';
+    const second = {
+      ...first,
+      urls: ['https://test.example/b'],
+      evidence: [{ ...first.evidence[0]!, pageUrl: 'https://test.example/b' }]
+    };
+    const result = consolidateFindings([first, second]);
     expect(result).toHaveLength(1);
-    expect(result[0]).toEqual(expect.objectContaining({
-      ruleId: 'disclosure-state-and-relationship',
-      classification: 'confirmed',
-      wcag: ['4.1.2'],
-      componentName: '“English” button; “Português” button',
-      urls: ['https://test.example/a', 'https://test.example/b']
+    expect(result[0]?.urls).toEqual(['https://test.example/a', 'https://test.example/b']);
+    expect(result[0]?.evidence).toHaveLength(2);
+  });
+
+  it('groups missing fragments only within the same rendered in-page navigation component', () => {
+    const first = finding('https://test.example/job-one');
+    first.key = 'link-broken-destination:#overview';
+    first.ruleId = 'link-broken-destination';
+    first.component = 'nav.job-sections';
+    first.componentLocation = 'Within the job-page section navigation';
+    first.evidence = [{ ...first.evidence[0]!, detail: 'The in-page fragment #overview is missing.' }];
+    const second = { ...first, key: 'link-broken-destination:#benefits', evidence: [{ ...first.evidence[0]!, detail: 'The in-page fragment #benefits is missing.' }] };
+    const distinct = finding('https://test.example/job-one');
+    distinct.key = 'link-broken-destination:#why';
+    distinct.ruleId = 'link-broken-destination';
+    distinct.component = 'a.hero-cta';
+    distinct.componentLocation = 'Within the job-page hero';
+    distinct.evidence = [{ ...distinct.evidence[0]!, detail: 'The in-page fragment #why is missing.' }];
+
+    const result = consolidateFindings([first, second, distinct]);
+    expect(result).toHaveLength(2);
+    expect(result.find((item) => item.component === 'nav.job-sections')).toEqual(expect.objectContaining({
+      wcag: ['Best Practice'],
+      selectors: ['header .logo']
     }));
-    expect(result[0]?.issue).toContain('not independently treated as a WCAG failure');
+    expect(result.find((item) => item.component === 'a.hero-cta')?.ruleId).toBe('link-broken-destination');
+  });
+
+  it('groups equivalent placeholder links within one reusable rendered component', () => {
+    const first = finding('https://test.example/a');
+    first.key = 'link-destination-review:first';
+    first.ruleId = 'link-destination-review';
+    first.classification = 'review';
+    first.wcag = ['Best Practice'];
+    first.component = '#first-location';
+    first.selectors = ['#first-location'];
+    first.componentName = '“First location” link';
+    first.componentLocation = 'Within the location-suggestions component';
+    first.issue = '“First location” points to #. The link uses an empty or placeholder destination.';
+    first.evidence = [{
+      kind: 'network',
+      pageUrl: first.urls[0]!,
+      selector: '#first-location',
+      detail: JSON.stringify({ href: '#', reason: 'The link uses an empty or placeholder destination.' })
+    }];
+    const second = finding('https://test.example/b');
+    second.key = 'link-destination-review:second';
+    second.ruleId = 'link-destination-review';
+    second.classification = 'review';
+    second.wcag = ['Best Practice'];
+    second.component = '#second-location';
+    second.selectors = ['#second-location'];
+    second.componentName = '“Second location” link';
+    second.componentLocation = first.componentLocation;
+    second.issue = '“Second location” points to #. The link uses an empty or placeholder destination.';
+    second.evidence = [{
+      kind: 'network',
+      pageUrl: second.urls[0]!,
+      selector: '#second-location',
+      detail: JSON.stringify({ href: '#', reason: 'The link uses an empty or placeholder destination.' })
+    }];
+    const action = { ...second, key: 'link-destination-review:action', evidence: [{
+      kind: 'network' as const,
+      pageUrl: second.urls[0]!,
+      selector: '#action',
+      detail: JSON.stringify({ href: 'javascript:void(0)', reason: 'The anchor uses a javascript: destination.' })
+    }] };
+
+    const result = consolidateFindings([first, second, action]);
+    expect(result).toHaveLength(2);
+    const grouped = result.find((item) => item.summary === 'Review placeholder links in the same component');
+    expect(grouped).toEqual(expect.objectContaining({
+      urls: ['https://test.example/a', 'https://test.example/b'],
+      selectors: ['#first-location', '#second-location'],
+      componentName: '“First location” link; “Second location” link',
+      issue: expect.stringContaining('2 listed link occurrence(s)')
+    }));
+    expect(result.find((item) => item.key === 'link-destination-review:action')).toBeDefined();
   });
 
   it('keeps matching page findings separate without evidence of a shared component', () => {

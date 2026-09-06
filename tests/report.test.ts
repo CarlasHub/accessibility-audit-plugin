@@ -18,6 +18,7 @@ function summaryWithScreenshot(screenshot: string): AuditSummary {
     auditedUrls: ['https://example.runmytests.com/en'],
     skippedUrls: [],
     pages: [{ url: 'https://example.runmytests.com/en', viewports: [] }],
+    coverage: [],
     findings: [{
       key: 'image-missing-alt:header-logo',
       ruleId: 'image-missing-alt',
@@ -121,7 +122,29 @@ describe('Excel report', () => {
       text: 'https://example.runmytests.com/en',
       hyperlink: 'https://example.runmytests.com/en'
     }));
-    expect(overview?.getCell('B9').value).toContain('linked element-level evidence for confirmed failures and blockers');
+    expect(overview?.getCell('B9').value).toContain('linked contextual evidence for confirmed, blocker, and review findings');
+  });
+
+  it('writes scalar Best Practice lookup values instead of object-string formula results', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'a11y-report-best-practice-'));
+    const path = join(directory, 'report.xlsx');
+    const summary = summaryWithScreenshot('');
+    const finding = summary.findings[0]!;
+    finding.wcag = ['Best Practice'];
+    finding.ruleId = 'heading-one-review';
+    finding.classification = 'review';
+    finding.evidence[0]!.screenshot = '';
+    await writeExcelReport(summary, { outputPath: path });
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(path);
+    const report = workbook.getWorksheet('Accessibility Report')!;
+    for (const address of ['C2', 'D2', 'E2']) {
+      expect(JSON.stringify(report.getCell(address).value)).not.toContain('[object Object]');
+    }
+    expect(report.getCell('B2').value).toContain('Best Practice');
+    expect((report.getCell('E2').value as { result?: unknown }).result).not.toBe('[object Object]');
+    expect((await validateExcelReport(path)).valid).toBe(true);
   });
 
   it('states when screenshots were disabled and leaves the Image Inventory without evidence images', async () => {

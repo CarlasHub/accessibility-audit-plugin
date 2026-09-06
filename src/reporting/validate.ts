@@ -1,6 +1,7 @@
 import { access } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import ExcelJS from 'exceljs';
+import { cellText } from './cell-text.js';
 import { IMAGE_INVENTORY_SHEET } from './image-inventory.js';
 
 export interface WorkbookValidation {
@@ -39,13 +40,6 @@ const requiredIssueLabels = [
 ];
 
 const requiredTestingMarkers = ['1.', 'Actual:', 'Expected:'];
-
-function cellText(value: { text: unknown; value: unknown }): string {
-  const candidate = value.text ?? value.value ?? '';
-  if (typeof candidate === 'string') return candidate.trim();
-  if (typeof candidate === 'object' && candidate && 'result' in candidate) return String(candidate.result ?? '').trim();
-  return String(candidate).trim();
-}
 
 function cellHyperlink(value: unknown): string {
   return typeof value === 'object' && value !== null && 'hyperlink' in value

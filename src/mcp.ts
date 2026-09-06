@@ -114,7 +114,7 @@ export function createAccessibilityAuditMcpServer(
     timeoutMs: z.number().int().positive().default(30_000),
     maxTabStops: z.number().int().min(1).max(500).default(120),
     maxLinksPerPage: z.number().int().min(1).max(1000).default(200),
-    captureScreenshots: z.boolean().default(true).describe('Capture linked full-page and element screenshots only for confirmed failures and page blockers.'),
+    captureScreenshots: z.boolean().default(true).describe('Capture linked contextual evidence for confirmed, blocker, and review findings; full-page images are limited to page-level findings or unresolved blockers.'),
     templatePath: z.string().optional().describe('Optional path to a byte-identical copy of Accessibility Testing Boilerplate v.4 (4); every other workbook is rejected.'),
     reportName: z.string().default(DEFAULT_REPORT_NAME)
   };
@@ -239,7 +239,7 @@ export function createAccessibilityAuditMcpServer(
   server.registerTool(
     'audit_pages',
     {
-      description: 'Audit explicit page URLs at desktop, mobile, and 320px reflow sizes; run axe, DOM, keyboard, link, component, and screenshot checks; consolidate repeated component defects; and write JSON plus the standard Excel workbook.',
+      description: 'Audit explicit page URLs at desktop, mobile, and 320px reflow sizes; run axe, DOM, keyboard, link, component, and screenshot checks; retain incomplete/blocker/truncation evidence and a page-level coverage matrix; consolidate only equivalent component defects; and write JSON plus the standard Excel workbook.',
       inputSchema: { urls: z.array(z.string().url()).min(1), ...commonInput }
     },
     async ({ urls, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly, channel, headless, autoInstallBrowser, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName }, extra) => {

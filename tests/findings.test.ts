@@ -10,6 +10,7 @@ function viewport(overrides: Partial<ViewportAudit> = {}): ViewportAudit {
     status: 200,
     title: 'Test',
     axe: [],
+    axeRun: { completed: true, violationCount: 0, incompleteCount: 0, passCount: 0, passes: [] },
     dom: {
       h1Count: 1,
       mainCount: 1,
@@ -24,11 +25,12 @@ function viewport(overrides: Partial<ViewportAudit> = {}): ViewportAudit {
       tablesForReview: [],
       autoplayMedia: []
     },
-    keyboard: { sequence: [] },
+    keyboard: { sequence: [], completedCycle: false, truncated: false, scope: 'unknown' },
     responsive: { horizontalOverflow: 0, overflowElements: [], textSpacingOverflow: 0 },
     disclosures: [],
     tabs: [],
     links: [],
+    linkRun: { completed: true, candidateCount: 0, checkedCount: 0, truncated: false, scope: 'desktop-same-origin' },
     consent: {
       found: false,
       dismissed: false,
@@ -37,6 +39,7 @@ function viewport(overrides: Partial<ViewportAudit> = {}): ViewportAudit {
       surfaceSelector: '',
       frameUrl: ''
     },
+    interactionBlocker: null,
     elementContexts: [],
     screenshot: '/tmp/page.png',
     elementScreenshots: [],
@@ -113,6 +116,7 @@ describe('evidence-gated link and tab findings', () => {
       controls: null,
       beforeExpanded: 'false',
       afterExpanded: 'true',
+      controlledVisibleBefore: null,
       controlledVisibleAfterOpen: null,
       firstTabSelector: null,
       tabEnteredControlledRegion: null
@@ -131,17 +135,11 @@ describe('evidence-gated link and tab findings', () => {
       }))
     })));
     const relationshipReviews = findings.filter((finding) => finding.ruleId === 'disclosure-controls-review');
-    expect(relationshipReviews).toHaveLength(1);
-    expect(relationshipReviews[0]).toEqual(expect.objectContaining({
-      classification: 'review',
-      wcag: ['Best Practice'],
-      selectors: ['#category-toggle', '#country-toggle', '#region-toggle']
-    }));
-    expect(relationshipReviews[0]?.issue).toContain('absence alone is not reported as a WCAG failure');
+    expect(relationshipReviews).toHaveLength(0);
     expect(findings.some((finding) => finding.ruleId.includes('escape'))).toBe(false);
   });
 
-  it('reports stale disclosure state and missing relationship as one component finding', () => {
+  it('reports a confirmed disclosure state mismatch without treating missing aria-controls as the failure', () => {
     const findings = findingsFromPage(page(viewport({
       disclosures: [{
         selector: '#filters-toggle',
@@ -149,6 +147,7 @@ describe('evidence-gated link and tab findings', () => {
         controls: null,
         beforeExpanded: 'false',
         afterExpanded: 'false',
+        controlledVisibleBefore: false,
         controlledVisibleAfterOpen: true,
         firstTabSelector: null,
         tabEnteredControlledRegion: null
@@ -156,14 +155,14 @@ describe('evidence-gated link and tab findings', () => {
     })));
     expect(findings.filter((finding) => finding.ruleId.startsWith('disclosure-'))).toHaveLength(1);
     expect(findings[0]).toEqual(expect.objectContaining({
-      ruleId: 'disclosure-state-and-relationship',
+      ruleId: 'disclosure-state-not-updated',
       classification: 'confirmed',
       wcag: ['4.1.2']
     }));
-    expect(findings[0]?.issue).toContain('supporting review context');
+    expect(findings[0]?.issue).not.toContain('aria-controls');
   });
 
-  it('keeps unchanged aria-expanded in review when the visible controlled state is unresolved', () => {
+  it('does not promote unchanged aria-expanded with unresolved visibility to a finding', () => {
     const findings = findingsFromPage(page(viewport({
       disclosures: [{
         selector: '#accordion-toggle',
@@ -171,21 +170,33 @@ describe('evidence-gated link and tab findings', () => {
         controls: null,
         beforeExpanded: 'false',
         afterExpanded: 'false',
+        controlledVisibleBefore: null,
         controlledVisibleAfterOpen: null,
         firstTabSelector: null,
         tabEnteredControlledRegion: null
       }]
     })));
-    expect(findings).toHaveLength(1);
-    expect(findings[0]).toEqual(expect.objectContaining({
-      ruleId: 'disclosure-state-and-relationship-review',
-      classification: 'review',
-      severity: 'Moderate'
-    }));
-    expect(findings[0]?.issue).toContain('may be a state mismatch or a keyboard-activation problem');
+    expect(findings).toEqual([]);
   });
 
-  it('does not turn an incomplete disclosure test into a workbook finding', () => {
+  it('does not report an initially expanded disclosure whose visible and exposed states still agree', () => {
+    const findings = findingsFromPage(page(viewport({
+      disclosures: [{
+        selector: '#initially-open',
+        name: 'Details',
+        controls: 'details-panel',
+        beforeExpanded: 'true',
+        afterExpanded: 'true',
+        controlledVisibleBefore: true,
+        controlledVisibleAfterOpen: true,
+        firstTabSelector: null,
+        tabEnteredControlledRegion: null
+      }]
+    })));
+    expect(findings.filter((finding) => finding.ruleId.startsWith('disclosure-'))).toEqual([]);
+  });
+
+  it('retains an incomplete disclosure interaction in raw evidence without creating a finding', () => {
     const findings = findingsFromPage(page(viewport({
       disclosures: [{
         selector: '#third-party-toggle',
@@ -193,6 +204,7 @@ describe('evidence-gated link and tab findings', () => {
         controls: null,
         beforeExpanded: null,
         afterExpanded: null,
+        controlledVisibleBefore: null,
         controlledVisibleAfterOpen: null,
         firstTabSelector: null,
         tabEnteredControlledRegion: null,
@@ -247,6 +259,90 @@ describe('evidence-gated link and tab findings', () => {
     }));
   });
 
+  it('preserves axe related nodes and uses the computed landmark role', () => {
+    const findings = findingsFromPage(page(viewport({
+      axe: [{
+        id: 'landmark-unique',
+        impact: 'moderate',
+        tags: ['best-practice'],
+        description: 'Ensure landmarks are unique',
+        help: 'Landmarks should have a unique role or role and name combination',
+        helpUrl: 'https://dequeuniversity.com/rules/axe/4.13/landmark-unique',
+        nodes: [{
+          html: '<form id="search-a" class="search-form"></form>',
+          target: ['#search-a'],
+          any: [{
+            id: 'landmark-is-unique',
+            data: { role: 'search', accessibleText: null },
+            relatedNodes: [{ html: '<form id="search-b" class="search-form"></form>', target: ['#search-b'] }]
+          }]
+        }]
+      }]
+    })));
+    expect(findings).toEqual([
+      expect.objectContaining({
+        component: 'search landmarks without an accessible name',
+        selectors: ['#search-a', '#search-b']
+      })
+    ]);
+    expect(findings[0]?.evidence).toHaveLength(2);
+  });
+
+  it('parses WCAG tags whose final success-criterion number has two digits', () => {
+    const findings = findingsFromPage(page(viewport({
+      axe: [{
+        id: 'reflow',
+        impact: 'serious',
+        tags: ['wcag2aa', 'wcag1410'],
+        description: 'Ensure content reflows',
+        help: 'Content must reflow',
+        helpUrl: 'https://example.test/reflow',
+        nodes: [{ html: '<main id="main"></main>', target: ['#main'], failureSummary: 'Content does not reflow.' }]
+      }]
+    })));
+    expect(findings[0]?.wcag).toContain('1.4.10');
+  });
+
+  it('reports an unresolved interaction surface as an audit coverage blocker', () => {
+    const findings = findingsFromPage(page(viewport({
+      interactionBlocker: {
+        selector: '#privacy-dialog',
+        role: 'dialog',
+        name: 'Privacy choices',
+        reason: 'A visible modal remained active.'
+      },
+      keyboard: {
+        sequence: [],
+        completedCycle: false,
+        truncated: false,
+        scope: 'modal-only',
+        modalSelector: '#privacy-dialog'
+      }
+    })));
+    expect(findings).toContainEqual(expect.objectContaining({
+      ruleId: 'interaction-coverage-blocked',
+      classification: 'blocker',
+      wcag: ['None']
+    }));
+  });
+
+  it('does not flag an organisation-named logo link solely because it points home', () => {
+    const base = viewport();
+    const findings = findingsFromPage(page(viewport({
+      dom: {
+        ...base.dom,
+        linkedImagesForReview: [{
+          selector: '#brand-home',
+          name: 'BAT Logo',
+          alt: 'BAT Logo',
+          href: 'https://test.example/',
+          reason: 'The linked image points home but its name does not contain the word home.'
+        }]
+      }
+    })));
+    expect(findings.some((finding) => finding.ruleId === 'linked-image-purpose-review')).toBe(false);
+  });
+
   it('keeps axe best-practice signals in review when they have no WCAG criterion tag', () => {
     const findings = findingsFromPage(page(viewport({
       axe: [{
@@ -289,8 +385,35 @@ describe('evidence-gated link and tab findings', () => {
           height: 20,
           groupSelector: 'main',
           inlineException: false,
+          hitTested: true,
           spacingRisk: false,
           nearbyTargets: []
+        }]
+      }
+    })));
+    expect(findings.some((finding) => finding.ruleId === 'target-size-review')).toBe(false);
+  });
+
+  it('does not report an undersized target when viewport hit testing was not completed', () => {
+    const findings = findingsFromPage(page(viewport({
+      dom: {
+        ...viewport().dom,
+        smallTargets: [{
+          selector: '#hidden-responsive-control',
+          name: 'Hidden responsive control',
+          width: 18,
+          height: 18,
+          groupSelector: 'nav',
+          inlineException: false,
+          hitTested: false,
+          spacingRisk: true,
+          nearbyTargets: [{
+            selector: '#other-responsive-control',
+            name: 'Other control',
+            width: 18,
+            height: 18,
+            centerDistance: 12
+          }]
         }]
       }
     })));
@@ -308,6 +431,7 @@ describe('evidence-gated link and tab findings', () => {
           height: 18,
           groupSelector: 'main',
           inlineException: true,
+          hitTested: true,
           spacingRisk: true,
           nearbyTargets: [{
             selector: 'p > a:nth-of-type(2)',
@@ -334,6 +458,7 @@ describe('evidence-gated link and tab findings', () => {
             height: 12,
             groupSelector: '.carousel-dots',
             inlineException: false,
+            hitTested: true,
             spacingRisk: true,
             nearbyTargets: [{
               selector: '#slide-two',
@@ -350,6 +475,7 @@ describe('evidence-gated link and tab findings', () => {
             height: 12,
             groupSelector: '.carousel-dots',
             inlineException: false,
+            hitTested: true,
             spacingRisk: true,
             nearbyTargets: [{
               selector: '#slide-one',
@@ -419,6 +545,7 @@ describe('evidence-gated link and tab findings', () => {
           height: 37,
           groupSelector: '.job-card-actions',
           inlineException: false,
+          hitTested: true,
           spacingRisk: false,
           axeTargetSizeSignal: true,
           nearbyTargets: []
@@ -431,6 +558,77 @@ describe('evidence-gated link and tab findings', () => {
       wcag: ['2.5.8'],
       issue: expect.stringContaining('may not provide a 24×24 CSS pixel target or sufficient separation')
     }));
+  });
+
+  it('retains generic axe incomplete evidence without promoting it to a workbook finding', () => {
+    const audit = viewport({
+      axe: [{
+        id: 'aria-valid-attr-value',
+        resultType: 'incomplete',
+        impact: 'critical',
+        tags: ['wcag2a', 'wcag412'],
+        description: 'Ensure all ARIA attributes have valid values',
+        help: 'ARIA attributes must conform to valid values',
+        helpUrl: 'https://dequeuniversity.com/rules/axe/4.13/aria-valid-attr-value',
+        nodes: [{
+          html: '<div role="combobox" aria-controls="generated-list"></div>',
+          target: ['#location-picker'],
+          failureSummary: 'Fix all of the following: Invalid ARIA attribute value'
+        }]
+      }],
+      axeRun: {
+        completed: true,
+        violationCount: 0,
+        incompleteCount: 1,
+        passCount: 0,
+        passes: []
+      }
+    });
+
+    expect(findingsFromPage(page(audit))).toEqual([]);
+    expect(audit.axe).toHaveLength(1);
+    expect(audit.axeRun.incompleteCount).toBe(1);
+  });
+
+  it('retains indeterminate focus-indicator samples without promoting them to findings', () => {
+    const findings = findingsFromPage(page(viewport({
+      keyboard: {
+        completedCycle: true,
+        truncated: false,
+        scope: 'document',
+        sequence: [
+          {
+            index: 1,
+            selector: '#filter-one',
+            componentSelector: '#filters',
+            role: 'button',
+            name: 'Filter one',
+            visibleIndicator: false,
+            obscured: false
+          },
+          {
+            index: 2,
+            selector: '#filter-two',
+            componentSelector: '#filters',
+            role: 'button',
+            name: 'Filter two',
+            visibleIndicator: false,
+            obscured: false
+          },
+          {
+            index: 3,
+            selector: '#sort',
+            componentSelector: '#sort-form',
+            role: 'combobox',
+            name: 'Sort jobs',
+            visibleIndicator: false,
+            obscured: false
+          }
+        ]
+      }
+    })));
+
+    expect(findings.filter((finding) => finding.ruleId === 'focus-indicator-review')).toEqual([]);
   });
 
   it('does not duplicate axe unnamed-link and unnamed-control findings from DOM heuristics', () => {

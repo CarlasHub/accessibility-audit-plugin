@@ -36,6 +36,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
     expect(result.findings.some((finding) => finding.ruleId.includes('image-alt') || finding.ruleId.includes('image-redundant-alt'))).toBe(true);
     expect(result.findings.some((finding) => finding.ruleId === 'form-field-no-label' || finding.ruleId === 'axe-label')).toBe(true);
     expect(result.findings.some((finding) => finding.ruleId === 'disclosure-focus-order')).toBe(true);
+    expect(result.pages[0]?.viewports.every((viewport) => viewport.disclosures.find((item) => item.selector === '#menu-toggle')?.spaceTestCompleted)).toBe(true);
     expect(result.findings.some((finding) => (
       finding.ruleId === 'linked-image-purpose-review'
       && finding.selectors.includes('#cookie-settings')
@@ -55,11 +56,68 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       .filter((finding) => finding.classification === 'confirmed' && finding.selectors.length > 0)
       .every((finding) => finding.evidence.every((item) => !item.screenshot || item.screenshot.includes('/screenshots/elements/')))).toBe(true);
     expect(result.findings
-      .filter((finding) => finding.classification === 'review')
-      .every((finding) => finding.evidence.every((item) => !item.screenshot))).toBe(true);
+      .filter((finding) => finding.classification === 'review' && finding.selectors.length > 0)
+      .some((finding) => finding.evidence.some((item) => item.screenshot?.includes('/screenshots/elements/')))).toBe(true);
     expect(result.pages[0]?.viewports[0]?.dom.emptyLinks.some((link) => link.selector === '#meaningful-image-link')).toBe(false);
     expect(result.pages[0]?.viewports[0]?.dom.emptyNamedControls.some((control) => control.selector === '#labelled-input')).toBe(false);
   });
+
+  it('dismisses an iAlert consent modal before testing the page keyboard sequence', async () => {
+    const fixture = `<!doctype html>
+      <html lang="en">
+        <head><title>iAlert fixture</title></head>
+        <body class="system-ialert-active ialert-experience-modal">
+          <div id="system-ialert" role="dialog" aria-modal="true" aria-label="Privacy choices">
+            <p>Choose your privacy and cookie settings.</p>
+            <button id="system-ialert-reject-button">Reject all</button>
+            <button id="system-ialert-button">Accept all</button>
+          </div>
+          <a id="page-link" href="#main">Skip to main content</a>
+          <main id="main"><h1>Page content</h1><button id="page-action">Page action</button></main>
+          <script>
+            document.querySelector('#system-ialert-reject-button').addEventListener('click', () => {
+              document.querySelector('#system-ialert').remove();
+              document.body.classList.remove('system-ialert-active');
+            });
+          </script>
+        </body>
+      </html>`;
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(fixture);
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Fixture server did not expose a TCP port.');
+      const url = `http://127.0.0.1:${address.port}/`;
+      const outputDir = await mkdtemp(join(tmpdir(), 'a11y-ialert-'));
+      const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+      const result = await runAudit([url], 'iAlert fixture', [], resolveOptions({
+        auditor: 'Test Auditor',
+        outputDir,
+        allowedHosts: ['127.0.0.1'],
+        stagingOnly: false,
+        concurrency: 1,
+        captureScreenshots: false,
+        viewports: [{ name: 'desktop', width: 1200, height: 800 }],
+        ...(channel ? { channel } : {})
+      }));
+      const viewport = result.pages[0]!.viewports[0]!;
+      expect(viewport.consent).toEqual(expect.objectContaining({
+        found: true,
+        dismissed: true,
+        action: 'reject',
+        buttonName: 'Reject all'
+      }));
+      expect(viewport.interactionBlocker).toBeNull();
+      expect(viewport.keyboard.scope).toBe('document');
+      expect(viewport.keyboard.sequence.map((item) => item.selector)).toEqual(expect.arrayContaining(['#page-link', '#page-action']));
+      expect(result.findings.some((finding) => finding.ruleId === 'interaction-coverage-blocked')).toBe(false);
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()));
+    }
+  }, 120_000);
 
   it('runs the professional service entry point and validates its workbook', async () => {
     const fixture = await readFile(resolve('tests/fixtures/site/index.html'));

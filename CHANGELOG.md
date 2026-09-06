@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.5 - 2026-09-04
+
+- Added a retained per-page/per-viewport coverage matrix that distinguishes confirmed pass/fail evidence from inconclusive, manual-review-required, not-tested, and not-applicable areas.
+- Detect unresolved modal and consent surfaces as interaction-coverage blockers, skip invalid underlying interaction checks, and consolidate the same blocker while retaining every affected page and viewport.
+- Added iAlert consent handling and a real-Chromium regression that proves the modal is dismissed before the page keyboard sequence begins.
+- Retained axe incomplete results, pass counts, rule metadata, and related landmark nodes in JSON; incomplete axe results can no longer appear as automated passes or workbook findings.
+- Split contrast reporting by exact measured colour treatment and landmark reporting by role, name, and implementation instead of host-wide or role-only over-grouping.
+- Removed missing `aria-controls` as a standalone finding and require performed, observed state/visibility evidence before confirming an `aria-expanded` failure.
+- Exercise disclosures from a known collapsed baseline with Enter and Space; incomplete setup remains raw inconclusive coverage rather than a finding, failure, or silent pass.
+- Hardened target-size collection against hidden, off-screen, and covered responsive layers by requiring viewport hit-test evidence unless axe independently signals the target.
+- Retained link candidate/check counts and configured-limit truncation in JSON so partial link validation is never represented as complete.
+- Capture at most one representative contextual screenshot per final reporting unit and full-page evidence for unresolved blocking surfaces without allowing unrelated full-page fallbacks.
+- Fixed workbook lookup formula values so Best Practice rows no longer produce `[object Object]` cached results, and added adversarial consolidation, coverage, target, workbook, consent, and input-order regression tests.
+
 ## 0.9.4 - 2026-09-04
 
 - Consolidated shared text-colour treatments, repeated same-name landmarks, disclosure families, and description-list structure signals into component/root-cause rows instead of one row per DOM node or page instance.

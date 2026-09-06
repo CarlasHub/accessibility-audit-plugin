@@ -4,6 +4,7 @@ import {
   createBrowserLaunchOptions,
   isMissingBrowserExecutableError,
   needsFullPageScreenshotFallback,
+  retainRepresentativeScreenshotPerFinding,
   screenshotCandidatesForFindings
 } from '../src/audit/runner.js';
 import type { Finding } from '../src/types.js';
@@ -44,7 +45,7 @@ describe('browser launch isolation', () => {
 });
 
 describe('screenshot evidence selection', () => {
-  it('captures only selectors supplied by confirmed failures and blockers', () => {
+  it('prioritizes blockers, then confirmed failures, then review findings', () => {
     const base: Finding = {
       key: 'confirmed',
       ruleId: 'test',
@@ -67,10 +68,67 @@ describe('screenshot evidence selection', () => {
     };
     const blocker = { ...base, key: 'blocker', classification: 'blocker' as const, selectors: ['#blocker'] };
     const review = { ...base, key: 'review', classification: 'review' as const, selectors: ['#review'] };
-    expect(screenshotCandidatesForFindings([base, blocker, review])).toEqual(['#confirmed', '#blocker']);
+    expect(screenshotCandidatesForFindings([base, blocker, review])).toEqual(['#blocker', '#confirmed', '#review']);
     expect(needsFullPageScreenshotFallback([base], [{ selector: '#confirmed', path: '/tmp/confirmed.png' }])).toBe(false);
     expect(needsFullPageScreenshotFallback([base], [])).toBe(false);
     expect(needsFullPageScreenshotFallback([{ ...blocker, selectors: [] }], [])).toBe(true);
     expect(needsFullPageScreenshotFallback([review], [])).toBe(false);
+  });
+
+  it('takes one representative component selector per finding and caps capture volume', () => {
+    const findings = Array.from({ length: 15 }, (_, index): Finding => ({
+      key: `review-${String(index).padStart(2, '0')}`,
+      ruleId: 'review-rule',
+      classification: 'review',
+      severity: 'Moderate',
+      wcag: ['Best Practice'],
+      summary: 'Review issue',
+      issue: 'Issue',
+      impact: 'Impact',
+      testing: 'Testing',
+      remediation: 'Fix it.',
+      component: `component-${index}`,
+      urls: ['https://preview.example.test/'],
+      viewports: ['desktop'],
+      selectors: [`#component-${index}`, `#occurrence-${index}`],
+      evidence: [],
+      assignment: 'Development',
+      effort: 'Small',
+      translationRequired: 'No'
+    }));
+
+    expect(screenshotCandidatesForFindings(findings)).toEqual(
+      Array.from({ length: 12 }, (_, index) => `#component-${index}`)
+    );
+  });
+
+  it('retains at most one representative screenshot on each final reporting unit', () => {
+    const finding: Finding = {
+      key: 'confirmed',
+      ruleId: 'test',
+      classification: 'confirmed',
+      severity: 'Serious',
+      wcag: ['1.1.1'],
+      summary: 'Confirmed issue',
+      issue: 'Issue',
+      impact: 'Impact',
+      testing: 'Testing',
+      remediation: 'Fix it.',
+      component: 'component',
+      urls: ['https://preview.example.test/'],
+      viewports: ['desktop', 'mobile'],
+      selectors: ['#first', '#second'],
+      evidence: [
+        { kind: 'dom', pageUrl: 'https://preview.example.test/', selector: '#first', detail: 'first', screenshot: '/tmp/first.png' },
+        { kind: 'dom', pageUrl: 'https://preview.example.test/', selector: '#second', detail: 'second', screenshot: '/tmp/second.png' },
+        { kind: 'dom', pageUrl: 'https://preview.example.test/', selector: '#third', detail: 'third' }
+      ],
+      assignment: 'Development',
+      effort: 'Small',
+      translationRequired: 'No'
+    };
+
+    retainRepresentativeScreenshotPerFinding([finding]);
+    expect(finding.evidence.map((item) => item.screenshot)).toEqual(['/tmp/first.png', undefined, undefined]);
   });
 });

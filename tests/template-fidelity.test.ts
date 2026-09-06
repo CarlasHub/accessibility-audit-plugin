@@ -35,6 +35,7 @@ function summaryWithEvidence(screenshot: string): AuditSummary {
     auditedUrls: ['https://preview.example.test/'],
     skippedUrls: [],
     pages: [{ url: 'https://preview.example.test/', viewports: [] }],
+    coverage: [],
     findings: [{
       key: 'test-finding',
       ruleId: 'image-missing-alt',

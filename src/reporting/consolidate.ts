@@ -15,7 +15,7 @@ function conciseMergedText(first?: string, second?: string, limit = 6): string |
         return false;
       }
       return Boolean(value);
-    }))];
+    }))].sort((a, b) => a.localeCompare(b));
   if (!values.length) return undefined;
   if (values.length <= limit && !hadTruncation) return values.join('; ');
   return `${values.slice(0, limit).join('; ')}; and additional affected components`;
@@ -51,7 +51,10 @@ function mergeFindingContext(findings: Finding[]): Pick<Finding, 'urls' | 'viewp
     urls: uniqueSorted(findings.flatMap((finding) => finding.urls)),
     viewports: uniqueSorted(findings.flatMap((finding) => finding.viewports)),
     selectors: uniqueSorted(findings.flatMap((finding) => finding.selectors)),
-    evidence: findings.flatMap((finding) => finding.evidence)
+    evidence: [...new Map(findings.flatMap((finding) => finding.evidence).map((item) => [
+      JSON.stringify([item.kind, item.pageUrl, item.viewport ?? '', item.selector ?? '', item.detail, item.screenshot ?? '']),
+      item
+    ])).values()].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
   };
   const componentName = findings.reduce<string | undefined>(
     (merged, finding) => conciseMergedText(merged, finding.componentName),
@@ -74,111 +77,101 @@ function findingHost(finding: Finding): string {
   }
 }
 
-function rollUpSitewideContrast(findings: Finding[]): Finding[] {
+function rollUpBrokenComponentLinks(findings: Finding[]): Finding[] {
   const groups = new Map<string, Finding[]>();
   const untouched: Finding[] = [];
   for (const finding of findings) {
-    if (finding.ruleId !== 'axe-color-contrast') {
+    const missingFragment = finding.ruleId === 'link-broken-destination'
+      && finding.evidence.some((item) => /in-page fragment/i.test(item.detail));
+    if (!missingFragment) {
       untouched.push(finding);
       continue;
     }
-    const host = findingHost(finding);
-    groups.set(host, [...(groups.get(host) ?? []), finding]);
+    const key = `${findingHost(finding)}|${finding.component}|${finding.componentLocation ?? ''}`;
+    groups.set(key, [...(groups.get(key) ?? []), finding]);
   }
-  for (const [host, grouped] of groups) {
+  for (const [groupKey, unsorted] of groups) {
+    const grouped = [...unsorted].sort((a, b) => a.key.localeCompare(b.key));
+    if (grouped.length === 1) {
+      untouched.push(grouped[0]!);
+      continue;
+    }
     const first = grouped[0]!;
-    const treatments = uniqueSorted(grouped.flatMap((finding) => {
-      const match = finding.issue.match(/([^.;]+ foreground on [^.;]+ background measured [\d.]+:1; [\d.]+:1 is required)/i);
-      return match?.[1] ? [match[1].trim()] : [];
-    }));
-    const measured = treatments.length
-      ? treatments.join('; ')
-      : 'See the recorded axe evidence for the measured foreground/background pairs and thresholds.';
+    const context = mergeFindingContext(grouped);
     untouched.push({
       ...first,
-      ...mergeFindingContext(grouped),
-      key: `axe-color-contrast:sitewide-${host || 'audit-scope'}`,
-      ruleId: 'axe-color-contrast',
+      ...context,
+      key: `link-broken-destination:component:${groupKey}`,
       classification: 'confirmed',
-      severity: grouped.some((finding) => finding.severity === 'Critical') ? 'Critical' : 'Serious',
-      wcag: ['1.4.3'],
-      summary: 'Site-wide text colour treatments have insufficient contrast',
-      issue: `The listed site components use rendered foreground/background treatments that do not meet minimum text contrast. Measured treatments: ${measured}.`,
-      impact: 'People with low vision or colour-vision deficiencies may be unable to read text wherever the affected colour treatments are used.',
-      testing: 'Measure every listed foreground/background pair in each affected default, selected, hover and focus state. Confirm the applicable 4.5:1 normal-text or 3:1 large-text threshold and retain each page/selector result in the evidence.',
-      remediation: 'Correct the shared colour-system tokens and any component-specific overrides so every listed text treatment reaches the applicable contrast threshold. Retest all affected components and interaction states after the palette changes.',
-      component: 'site-wide text colour system',
-      sharedComponentKey: `sitewide-color-contrast:${host || 'audit-scope'}`,
-      assignment: 'Mixed',
-      effort: 'Medium',
+      severity: 'Moderate',
+      wcag: ['Best Practice'],
+      summary: 'In-page navigation links point to missing sections',
+      issue: `The ${grouped.length} listed links in the same in-page navigation component reference fragment identifiers that are not present in the rendered affected pages.`,
+      impact: 'Activating these links does not move to the promised section, causing confusion and extra navigation for keyboard, screen-reader and other users.',
+      testing: 'Activate or inspect each listed in-page navigation link and confirm that its fragment identifier matches one unique id or named anchor in the same rendered document.',
+      remediation: 'Update each href fragment to the intended existing section id or restore the missing section target. Retest every listed link on every affected page.',
+      sharedComponentKey: `broken-fragment-component:${groupKey}`,
+      assignment: 'Development',
+      effort: 'Small',
       translationRequired: 'No'
     });
   }
   return untouched;
 }
 
-function rollUpDisclosureSemantics(findings: Finding[]): Finding[] {
-  const disclosureRules = new Set([
-    'disclosure-state-and-relationship',
-    'disclosure-state-and-relationship-review',
-    'disclosure-state-not-updated',
-    'disclosure-state-review',
-    'disclosure-controls-review'
-  ]);
+function reviewLinkEvidenceSignature(finding: Finding): string | null {
+  const item = finding.evidence.find((evidence) => evidence.kind === 'network');
+  if (!item) return null;
+  try {
+    const detail = JSON.parse(item.detail) as { href?: unknown; reason?: unknown; status?: unknown };
+    return JSON.stringify({
+      href: typeof detail.href === 'string' ? detail.href : '',
+      reason: typeof detail.reason === 'string' ? detail.reason : '',
+      status: typeof detail.status === 'number' ? detail.status : null
+    });
+  } catch {
+    return null;
+  }
+}
+
+function rollUpReviewComponentLinks(findings: Finding[]): Finding[] {
   const groups = new Map<string, Finding[]>();
   const untouched: Finding[] = [];
   for (const finding of findings) {
-    if (!disclosureRules.has(finding.ruleId)) {
+    const signature = finding.ruleId === 'link-destination-review'
+      ? reviewLinkEvidenceSignature(finding)
+      : null;
+    if (!signature || !finding.componentLocation) {
       untouched.push(finding);
       continue;
     }
-    const key = finding.sharedComponentKey
-      ? `shared:${finding.sharedComponentKey}`
-      : `page:${uniqueSorted(finding.urls).join('|')}|${finding.component}`;
+    const key = `${findingHost(finding)}|${finding.componentLocation}|${signature}`;
     groups.set(key, [...(groups.get(key) ?? []), finding]);
   }
-  for (const grouped of groups.values()) {
-    const stateFinding = grouped.find((finding) => finding.ruleId !== 'disclosure-controls-review');
-    const hasConfirmedState = grouped.some((finding) => (
-      finding.classification === 'confirmed'
-      && (finding.ruleId === 'disclosure-state-and-relationship' || finding.ruleId === 'disclosure-state-not-updated')
-    ));
-    const hasRelationshipEvidence = grouped.some((finding) => (
-      finding.ruleId === 'disclosure-state-and-relationship'
-      || finding.ruleId === 'disclosure-state-and-relationship-review'
-      || finding.ruleId === 'disclosure-controls-review'
-    ));
-    if (!stateFinding) {
-      untouched.push(...grouped);
+  for (const [groupKey, grouped] of groups) {
+    if (grouped.length === 1) {
+      untouched.push(grouped[0]!);
       continue;
     }
+    const first = [...grouped].sort((a, b) => a.key.localeCompare(b.key))[0]!;
+    const context = mergeFindingContext(grouped);
+    const signature = reviewLinkEvidenceSignature(first);
+    const parsed = signature ? JSON.parse(signature) as { href: string; reason: string } : { href: '', reason: '' };
+    const occurrenceCount = context.evidence.filter((item) => item.kind === 'network').length;
     untouched.push({
-      ...stateFinding,
-      ...mergeFindingContext(grouped),
-      key: `${hasConfirmedState ? 'disclosure-state' : 'disclosure-state-review'}${hasRelationshipEvidence ? '-and-relationship' : ''}:${stateFinding.sharedComponentKey ?? stateFinding.key}`,
-      ruleId: hasConfirmedState
-        ? (hasRelationshipEvidence ? 'disclosure-state-and-relationship' : 'disclosure-state-not-updated')
-        : (hasRelationshipEvidence ? 'disclosure-state-and-relationship-review' : 'disclosure-state-review'),
-      classification: hasConfirmedState ? 'confirmed' : 'review',
-      severity: hasConfirmedState ? 'Serious' : 'Moderate',
-      wcag: ['4.1.2'],
-      summary: hasConfirmedState
-        ? (hasRelationshipEvidence
-            ? 'Disclosure state is incorrect and its controlled-region relationship needs review'
-            : 'Disclosure state is not programmatically updated')
-        : (hasRelationshipEvidence
-            ? 'Review disclosure activation, state, and controlled-region relationship'
-            : 'Review whether disclosure state updates after activation'),
-      issue: hasConfirmedState
-        ? (hasRelationshipEvidence
-            ? 'Activating the listed disclosure trigger visibly revealed controlled content without reliably updating aria-expanded on the confirmed affected instances. The same reusable component also omits aria-controls in additional recorded instances; that absence is relationship context and is not independently treated as a WCAG failure.'
-            : 'Activating the listed disclosure trigger visibly revealed controlled content without reliably updating aria-expanded on the confirmed affected instances.')
-        : (hasRelationshipEvidence
-            ? 'Automated activation did not change aria-expanded, but the controlled content could not be identified well enough to prove that it visibly opened. The same reusable component omits aria-controls; both signals require one component-level review and neither is independently treated as a confirmed failure.'
-            : 'Automated activation did not change aria-expanded, but the controlled content could not be identified well enough to prove that it visibly opened. Review whether this is a state mismatch or a keyboard-activation problem.'),
-      impact: 'Screen-reader users cannot reliably determine whether the affected content is open or closed. Where the structure does not otherwise communicate the relationship, they may also receive less context about which content is affected.',
-      testing: 'On every listed page and viewport, activate the named trigger with Enter and Space and compare the visible state with aria-expanded. Separately inspect whether the chosen disclosure pattern communicates its controlled content; do not fail an ordinary disclosure solely because aria-controls is absent.',
-      remediation: 'Use a native button and synchronize aria-expanded with the visible state whenever the component opens or closes. If the chosen pattern needs an explicit controlled-region relationship, add a stable unique panel id and reference it with aria-controls without duplicating native semantics.'
+      ...first,
+      ...context,
+      key: `link-destination-review:component:${groupKey}`,
+      summary: 'Review placeholder links in the same component',
+      issue: `${occurrenceCount} listed link occurrence(s) in the same rendered component point to ${parsed.href || 'an empty destination'}. ${parsed.reason}`,
+      impact: 'The links may not provide reliable destinations or may use the wrong semantic control.',
+      testing: 'Activate or inspect each listed link in this rendered component. Confirm whether it should navigate to a real destination or perform an action as a native button before treating the signal as a defect.',
+      remediation: 'Replace placeholder destinations with working URLs. If a control performs an action instead of navigation, implement it as a native button and preserve an accurate accessible name.',
+      component: `placeholder links at ${first.componentLocation}`,
+      sharedComponentKey: `review-link-component:${groupKey}`,
+      assignment: 'Development',
+      effort: 'Small',
+      translationRequired: 'No'
     });
   }
   return untouched;
@@ -233,18 +226,36 @@ function rollUpDescriptionListStructure(findings: Finding[]): Finding[] {
 
 export function consolidateFindings(findings: Finding[]): Finding[] {
   const merge = (existing: Finding, finding: Finding): void => {
+    const context = mergeFindingContext([existing, finding]);
     existing.wcag = uniqueSorted([...existing.wcag, ...finding.wcag]);
-    existing.urls = uniqueSorted([...existing.urls, ...finding.urls]);
-    existing.viewports = uniqueSorted([...existing.viewports, ...finding.viewports]);
-    existing.selectors = uniqueSorted([...existing.selectors, ...finding.selectors]);
-    existing.evidence.push(...finding.evidence);
-    const mergedName = conciseMergedText(existing.componentName, finding.componentName);
-    const mergedLocation = conciseMergedText(existing.componentLocation, finding.componentLocation);
-    if (mergedName) existing.componentName = mergedName;
-    if (mergedLocation) existing.componentLocation = mergedLocation;
+    existing.urls = context.urls;
+    existing.viewports = context.viewports;
+    existing.selectors = context.selectors;
+    existing.evidence = context.evidence;
+    if (context.componentName) existing.componentName = context.componentName;
+    if (context.componentLocation) existing.componentLocation = context.componentLocation;
   };
   const localFindings = new Map<string, Finding>();
-  const reportingUnits = rollUpDisclosureSemantics(rollUpSitewideContrast(rollUpDescriptionListStructure(findings)));
+  const ordered = [...findings].sort((a, b) => JSON.stringify([
+    a.ruleId,
+    a.key,
+    uniqueSorted(a.urls),
+    uniqueSorted(a.viewports),
+    uniqueSorted(a.selectors),
+    a.componentName ?? '',
+    a.componentLocation ?? ''
+  ]).localeCompare(JSON.stringify([
+    b.ruleId,
+    b.key,
+    uniqueSorted(b.urls),
+    uniqueSorted(b.viewports),
+    uniqueSorted(b.selectors),
+    b.componentName ?? '',
+    b.componentLocation ?? ''
+  ])));
+  const reportingUnits = rollUpReviewComponentLinks(
+    rollUpBrokenComponentLinks(rollUpDescriptionListStructure(ordered))
+  );
   for (const finding of reportingUnits) {
     const pageIdentity = uniqueSorted(finding.urls).join('|');
     const localKey = `page:${pageIdentity}|${finding.component}|${rootCause(finding)}`;
@@ -286,7 +297,10 @@ export function consolidateFindings(findings: Finding[]): Finding[] {
   }
   return [...consolidated.values()].sort((a, b) => {
     const rank = { blocker: 0, confirmed: 1, review: 2, manual: 3 } as const;
-    return rank[a.classification] - rank[b.classification] || a.ruleId.localeCompare(b.ruleId);
+    return rank[a.classification] - rank[b.classification]
+      || a.ruleId.localeCompare(b.ruleId)
+      || a.key.localeCompare(b.key)
+      || uniqueSorted(a.urls).join('|').localeCompare(uniqueSorted(b.urls).join('|'));
   });
 }
 

@@ -75,7 +75,7 @@ Every supplied page is checked at desktop (1440×1000), mobile (390×844), and 3
 - same-site links that are empty, placeholders, missing fragments, or consistently return 404/410;
 - target-size spacing conflicts, plus selected table, media, and responsive-layout signals that require review.
 
-The browser runs headlessly by default, so it should not take over the desktop. Visible consent banners are dismissed before the main checks and evidence capture. Confirmed component failures receive a focused screenshot when the element can be located reliably.
+The browser runs headlessly by default, so it should not take over the desktop. Visible consent banners are dismissed before the main checks and evidence capture. If one remains blocking, the plugin records the coverage blocker and does not claim that underlying interactions were tested. Each final confirmed, blocker, or review reporting unit can retain one representative contextual screenshot when the relevant state and element can be reproduced reliably; all occurrences remain traceable in JSON without creating a large duplicate image set.
 
 ### How to interpret the result
 
@@ -105,13 +105,14 @@ See [Understanding the report](docs/reporting.md) for a worksheet and column gui
 - Conservative same-origin link validation for empty names, placeholders, missing fragments, confirmed 404/410 destinations, and server-error review signals.
 - Desktop, 390px mobile, and 320px reflow viewports.
 - Consent-banner detection and dismissal before interaction testing and evidence capture; reject or necessary-only actions are preferred.
-- Contextual component screenshots for confirmed failures, with the affected element outlined inside its navigation, form, tablist, card, section, or other component boundary.
-- Full-page screenshots only for page-level failures and blockers that have no component locator; a failed component capture never falls back to misleading full-page evidence.
+- At most one representative contextual component screenshot per final confirmed, blocker, or review reporting unit, with the affected element outlined inside its navigation, form, tablist, card, section, or other component boundary.
+- Full-page screenshots only for page-level failures or unresolved blocking surfaces; a failed component capture never falls back to unrelated full-page evidence.
 - Lightweight relative screenshot links in `Accessibility Report` and `Image Inventory`; images are not embedded in the workbook.
 - Graceful cancellation that writes and validates partial JSON and XLSX output.
 - URL, XLSX, CSV, TXT, and JSON page-list inputs.
 - One row for the same reusable component implementation, rendered name, and root cause across affected pages; generic unnamed controls also require the same rendered location, and page-specific findings remain separate.
 - Embedded instructions, command, skill, rules, MCP server, workbook template, validation, CI checks, and generated marketplace payloads for Claude and GitHub Copilot.
+- A per-page, per-viewport JSON coverage matrix that distinguishes confirmed pass/fail evidence from inconclusive, manual, not-tested, and not-applicable areas.
 
 ## Requirements
 
@@ -327,9 +328,9 @@ The default output directory is `Accessibility Audit Results` under the user’s
 Generated files:
 
 - `Accessibility_Audit_Report.xlsx` — validated 32-column accessibility workbook.
-- `audit-results.json` — complete evidence, classifications, requested/completed/skipped pages, and guided checks.
-- `screenshots/*.png` — full-page screenshots only for confirmed page-level failures or blockers without a component locator.
-- `screenshots/elements/*.png` — confirmed-failure component screenshots when the element is visible and stable; the affected element is outlined within surrounding component context.
+- `audit-results.json` — complete evidence, classifications, requested/completed/skipped pages, axe incomplete/pass metadata, keyboard and link truncation, interaction blockers, the coverage matrix, and guided checks.
+- `screenshots/*.png` — full-page screenshots only for page-level failures or unresolved blocking surfaces.
+- `screenshots/elements/*.png` — one retained representative contextual image per final confirmed, blocker, or review reporting unit when the element and tested state are visible and stable; the affected element is outlined within surrounding component context.
 - `<output-directory>.zip` — portable copy of the workbook, JSON, and linked screenshot tree, written beside the output directory.
 
 Workbook worksheets:
@@ -362,10 +363,10 @@ Link validation deliberately avoids broad crawling and destructive requests:
 - Empty link names include text, ARIA labels, valid labelled-by text, descendant image alternatives, input values, and titles before being reported.
 - Equivalent custom and axe link-name evidence is de-duplicated.
 - axe `region` best-practice nodes are summarized as one page-structure review row per page instead of one failed row per DOM node.
-- Text-contrast failures on the same host are reported as one site-wide colour-system row. Every distinct measured foreground/background pair, affected component, selector, viewport, and page remains in the row or JSON evidence.
-- Repeated landmark-name signals with the same role/name combination are reported as one row across affected pages instead of one row per landmark instance.
-- Repeated disclosure triggers from the same rendered component family are grouped into one relationship review. Missing `aria-controls` alone remains a Best Practice review because it is optional in ordinary disclosure and accordion patterns.
-- An unchanged `aria-expanded` value is confirmed only when the controlled content is also observed to open; otherwise it remains a state-versus-keyboard-activation review. Related relationship context on the same disclosure component is reported in that row instead of separately.
+- Identical text-contrast treatments can be shared across pages only when the measured foreground, background, ratio, implementation evidence, and root cause match. Distinct colour treatments remain distinct rows, and a host is never labelled site-wide without traceable evidence for every affected page.
+- Repeated landmark-name signals are grouped only when the role, accessible name, and implementation signature match; related axe nodes are retained.
+- Repeated disclosure triggers are grouped only within the same rendered component family and root cause. Missing `aria-controls` alone produces no finding for an ordinary disclosure or accordion.
+- Disclosure checks establish a collapsed baseline, test both Enter and Space, and compare visible content with `aria-expanded`. A mismatch is confirmed only when that interaction result was observed; incomplete or ambiguous tests remain raw JSON and inconclusive coverage evidence, not workbook findings.
 - Generic disclosure checks do not require Escape. Escape is evaluated manually only for interaction patterns that require it, such as dialogs and applicable menus or popovers.
 - Invalid `dl` parent/child and orphaned `dt`/`dd` signals from the same description-list component are reported as one structural root cause.
 - A target is not reported merely because one rendered dimension is below 24 CSS pixels. Inline text links are excluded, isolated undersized targets that satisfy the spacing geometry do not create workbook rows, and raw measurements remain available in JSON.
@@ -477,11 +478,11 @@ Check `allowedHosts`, `stagingOnly`, redirects, authentication, and `skippedUrls
 
 ### A broken link looks incorrect
 
-Inspect the JSON evidence, response status, final URL, authentication state, and page-specific routing. Only matching 404/410 checks are confirmed; other uncertain states remain review findings.
+Inspect the JSON evidence, response status, final URL, authentication state, and page-specific routing. Only matching 404/410 checks are confirmed; placeholder destinations and 5xx responses remain review findings.
 
 ### Images are missing from Image Inventory
 
-Keep `captureScreenshots` enabled, confirm the output directory is writable, and inspect the JSON evidence path. Screenshots are intentionally generated only for confirmed failures and page blockers. A component whose selector cannot be resolved is left without a screenshot instead of receiving unrelated full-page evidence. Keep the workbook beside its `screenshots` directory or use the generated ZIP so the relative links continue to work.
+Keep `captureScreenshots` enabled, confirm the output directory is writable, and inspect the JSON evidence path. The final report retains at most one representative screenshot for each confirmed, blocker, or review reporting unit when the state and element can be reproduced. A component whose selector cannot be resolved is left without a screenshot instead of receiving unrelated full-page evidence. Keep the workbook beside its `screenshots` directory or use the generated ZIP so the relative links continue to work.
 
 ## Support and contribution
 

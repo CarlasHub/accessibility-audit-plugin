@@ -1,10 +1,15 @@
 import type { Frame, Locator, Page } from '@playwright/test';
-import type { ConsentHandlingResult, ElementContext } from '../types.js';
+import type { ConsentHandlingResult, ElementContext, InteractionBlocker } from '../types.js';
 
 const consentSurfaceSelector = [
   '#onetrust-banner-sdk',
   '#CybotCookiebotDialog',
   '#truste-consent-track',
+  '#system-ialert',
+  '[id*="ialert" i][role="dialog"]',
+  '[id*="ialert" i][role="alertdialog"]',
+  '[class*="ialert" i][role="dialog"]',
+  '[class*="ialert" i][role="alertdialog"]',
   '[role="dialog"][aria-label*="cookie" i]',
   '[role="dialog"][aria-label*="consent" i]',
   '[id*="cookie" i]',
@@ -50,7 +55,7 @@ async function visibleConsentSurfaces(frame: Frame): Promise<Locator[]> {
       const text = (element.textContent ?? '').replace(/\s+/g, ' ').trim();
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
-      const knownProvider = /onetrust|cookiebot|truste/i.test(element.id);
+      const knownProvider = /onetrust|cookiebot|truste|ialert/i.test(`${element.id} ${element.className}`);
       const modal = ['dialog', 'alertdialog'].includes(element.getAttribute('role') ?? '');
       const overlay = ['fixed', 'sticky'].includes(style.position) && rect.width * rect.height >= 4_000;
       return /cookie|consent|privacy/i.test(text) && (knownProvider || modal || overlay);
@@ -58,6 +63,53 @@ async function visibleConsentSurfaces(frame: Frame): Promise<Locator[]> {
     if (qualifies) result.push(root);
   }
   return result;
+}
+
+/** Returns a visible modal surface that would invalidate page-level interaction coverage. */
+export async function detectInteractionBlocker(page: Page): Promise<InteractionBlocker | null> {
+  for (const frame of page.frames()) {
+    const candidates = frame.locator([
+      '[role="dialog"][aria-modal="true"]',
+      '[role="alertdialog"]',
+      '[aria-modal="true"]',
+      '#system-ialert'
+    ].join(', '));
+    const count = Math.min(await candidates.count().catch(() => 0), 50);
+    for (let index = 0; index < count; index += 1) {
+      const candidate = candidates.nth(index);
+      if (!(await candidate.isVisible().catch(() => false))) continue;
+      const details = await candidate.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const viewportCoverage = Math.max(0, Math.min(innerWidth, rect.right) - Math.max(0, rect.left))
+          * Math.max(0, Math.min(innerHeight, rect.bottom) - Math.max(0, rect.top));
+        const viewportArea = Math.max(1, innerWidth * innerHeight);
+        const role = element.getAttribute('role') || (element.id === 'system-ialert' ? 'dialog surface' : element.tagName.toLowerCase());
+        const labelledBy = element.getAttribute('aria-labelledby');
+        const labelledText = labelledBy
+          ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim()
+          : '';
+        const name = (
+          element.getAttribute('aria-label')
+          || labelledText
+          || element.querySelector('h1, h2, h3, [role="heading"]')?.textContent
+          || ''
+        ).replace(/\s+/g, ' ').trim().slice(0, 160);
+        const selector = element.id
+          ? `#${CSS.escape(element.id)}`
+          : `${element.tagName.toLowerCase()}${[...element.classList].slice(0, 2).map((value) => `.${CSS.escape(value)}`).join('')}`;
+        return { selector, role, name, coversViewport: viewportCoverage / viewportArea >= 0.08 };
+      }).catch(() => null);
+      if (!details) continue;
+      if (!details.coversViewport && !/dialog/i.test(details.role)) continue;
+      return {
+        selector: details.selector,
+        role: details.role,
+        name: details.name,
+        reason: 'A visible modal or blocking surface remained active before page-level interaction tests.'
+      };
+    }
+  }
+  return null;
 }
 
 async function buttonName(button: Locator): Promise<string> {
@@ -186,6 +238,7 @@ export async function collectElementContexts(page: Page, selectors: string[]): P
           if (explicit) return explicit;
           const tag = target.tagName.toLowerCase();
           if (tag === 'a' && target.hasAttribute('href')) return 'link';
+          if (tag === 'a') return 'anchor';
           if (tag === 'button') return 'button';
           if (tag === 'select') return 'combobox';
           if (tag === 'textarea') return 'textbox';
@@ -194,6 +247,8 @@ export async function collectElementContexts(page: Page, selectors: string[]): P
           if (tag === 'main') return 'main';
           if (tag === 'header') return 'banner';
           if (tag === 'footer') return 'contentinfo';
+          if (tag === 'form' && /search/i.test(`${target.getAttribute('role') ?? ''} ${target.getAttribute('action') ?? ''} ${target.className}`)) return 'search';
+          if (tag === 'form' && explicitName(target)) return 'form';
           if (/^h[1-6]$/.test(tag)) return 'heading';
           if (target instanceof HTMLInputElement) {
             if (['button', 'submit', 'reset', 'image'].includes(target.type)) return 'button';
@@ -208,7 +263,8 @@ export async function collectElementContexts(page: Page, selectors: string[]): P
           '[data-component]', '[data-module]', 'fieldset',
           '[class*="form-group" i]', '[class*="form-field" i]', '[class*="field-wrapper" i]',
           '[class*="input-wrapper" i]', '[class*="card" i]',
-          'article', 'section', 'form', 'nav'
+          'article', 'section', 'form', 'nav', 'header', 'footer',
+          '[role="banner"]', '[role="contentinfo"]'
         ].join(',');
         const componentRoot = element.matches(structuralSelector) ? element : element.closest(structuralSelector);
         let heading = '';

@@ -10,19 +10,23 @@ import type {
   AuditOptions,
   AuditProgressEvent,
   AuditSummary,
+  AxeRunMetadata,
   AxeViolationResult,
   ConsentHandlingResult,
   DomCheckResult,
   ElementContext,
   ElementScreenshot,
   Finding,
+  InteractionBlocker,
+  LinkCheckMetadata,
   PageAudit,
   ViewportAudit
 } from '../types.js';
 import { REQUIRED_MANUAL_CHECKS } from './manual-checks.js';
 import { runDisclosureChecks, runDomChecks, runKeyboardChecks, runLinkChecks, runResponsiveChecks, runTabChecks } from './browser-checks.js';
-import { collectElementContexts, dismissConsentBanner } from './page-preparation.js';
+import { collectElementContexts, detectInteractionBlocker, dismissConsentBanner } from './page-preparation.js';
 import { findingsFromPage } from './findings.js';
+import { buildCoverageMatrix } from './coverage.js';
 import { assertRemediationOnlyNotes, consolidateFindings } from '../reporting/consolidate.js';
 import { singleLineText } from '../text.js';
 
@@ -157,7 +161,7 @@ async function launchAuditBrowser(
   return chromium.launch(createBrowserLaunchOptions({}, options.headless));
 }
 
-async function runAxe(page: Page): Promise<AxeViolationResult[]> {
+async function runAxe(page: Page): Promise<{ results: AxeViolationResult[]; metadata: AxeRunMetadata }> {
   await page.addScriptTag({ content: axe.source });
   const output = await page.evaluate(async () => {
     const engine = (window as unknown as {
@@ -165,6 +169,7 @@ async function runAxe(page: Page): Promise<AxeViolationResult[]> {
         run: (context: Document, options: unknown) => Promise<{
           violations: AxeViolationResult[];
           incomplete: AxeViolationResult[];
+          passes: AxeViolationResult[];
         }>;
       };
     }).axe;
@@ -173,25 +178,38 @@ async function runAxe(page: Page): Promise<AxeViolationResult[]> {
         type: 'tag',
         values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice']
       },
-      resultTypes: ['violations', 'incomplete']
+      resultTypes: ['violations', 'incomplete', 'passes']
     });
   });
-  return [
-    ...output.violations.map((result) => ({ ...result, resultType: 'violation' as const })),
-    ...output.incomplete
-      .filter((result) => result.id === 'target-size')
-      .map((result) => ({ ...result, resultType: 'incomplete' as const }))
-  ];
+  return {
+    results: [
+      ...output.violations.map((result) => ({ ...result, resultType: 'violation' as const })),
+      ...output.incomplete.map((result) => ({ ...result, resultType: 'incomplete' as const }))
+    ],
+    metadata: {
+      completed: true,
+      violationCount: output.violations.length,
+      incompleteCount: output.incomplete.length,
+      passCount: output.passes.length,
+      passes: output.passes.map((result) => ({ id: result.id, tags: result.tags, nodeCount: result.nodes.length }))
+    }
+  };
 }
 
 export function screenshotCandidatesForFindings(findings: Finding[]): string[] {
   const selectors = new Set<string>();
   const add = (selector?: string | null): void => { if (selector?.trim()) selectors.add(selector.trim()); };
-  for (const finding of findings) {
-    if (finding.classification !== 'confirmed' && finding.classification !== 'blocker') continue;
-    for (const selector of finding.selectors) add(selector);
+  const rank = { blocker: 0, confirmed: 1, review: 2, manual: 3 } as const;
+  const ordered = [...findings].sort((a, b) => (
+    rank[a.classification] - rank[b.classification]
+    || a.ruleId.localeCompare(b.ruleId)
+    || a.key.localeCompare(b.key)
+  ));
+  for (const finding of ordered) {
+    if (finding.classification === 'manual') continue;
+    add(finding.selectors.find((selector) => !/^(?:page|html|body)$/i.test(selector.trim())));
   }
-  return [...selectors].slice(0, 50);
+  return [...selectors].slice(0, 12);
 }
 
 export function needsFullPageScreenshotFallback(
@@ -200,13 +218,29 @@ export function needsFullPageScreenshotFallback(
 ): boolean {
   const capturedSelectors = new Set(elementScreenshots.map((item) => item.selector));
   return findings.some((finding) =>
-    (finding.classification === 'confirmed' || finding.classification === 'blocker')
+    finding.classification !== 'manual'
     && (
       finding.selectors.length === 0
       || finding.selectors.every((selector) => /^(?:page|html|body)$/i.test(selector.trim()))
     )
     && !finding.selectors.some((selector) => capturedSelectors.has(selector))
   );
+}
+
+export function retainRepresentativeScreenshotPerFinding(findings: Finding[]): void {
+  for (const finding of findings) {
+    let retained = false;
+    finding.evidence = finding.evidence.map((item) => {
+      if (!item.screenshot) return item;
+      if (!retained) {
+        retained = true;
+        return item;
+      }
+      const withoutScreenshot = { ...item };
+      delete withoutScreenshot.screenshot;
+      return withoutScreenshot;
+    });
+  }
 }
 
 function elementContextFor(contexts: ElementContext[], selector: string): ElementContext | undefined {
@@ -296,6 +330,8 @@ async function captureElementScreenshots(
       target = await resolveEvidenceTarget(page, selector, context);
       if (!target) continue;
       await target.scrollIntoViewIfNeeded();
+      await target.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
+      await page.waitForTimeout(50);
       const capture = await contextualCaptureLocator(page, target, context);
       originalStyle = await target.getAttribute('style');
       await target.evaluate((element) => {
@@ -321,6 +357,25 @@ async function captureElementScreenshots(
   return screenshots;
 }
 
+async function prepareEvidenceStates(page: Page, findings: Finding[]): Promise<void> {
+  for (const finding of findings) {
+    if (!/^disclosure-state/.test(finding.ruleId)) continue;
+    for (const selector of finding.selectors.slice(0, 10)) {
+      try {
+        const control = page.locator(selector).first();
+        if ((await control.count()) === 0 || !(await control.isVisible().catch(() => false))) continue;
+        if ((await control.getAttribute('aria-expanded')) === 'false') {
+          await control.focus();
+          await page.keyboard.press('Enter');
+          await page.waitForTimeout(200);
+        }
+      } catch {
+        // The finding retains its JSON interaction evidence if a dynamic selector cannot be replayed.
+      }
+    }
+  }
+}
+
 function emptyConsent(): ConsentHandlingResult {
   return {
     found: false,
@@ -344,6 +399,23 @@ async function auditViewport(
   let finalUrl = url;
   let title = '';
   let consent = emptyConsent();
+  let interactionBlocker: InteractionBlocker | null = null;
+  let axeRun: AxeRunMetadata = {
+    completed: false,
+    error: 'axe did not start.',
+    violationCount: 0,
+    incompleteCount: 0,
+    passCount: 0,
+    passes: []
+  };
+  let linkRun: LinkCheckMetadata = {
+    completed: false,
+    candidateCount: 0,
+    checkedCount: 0,
+    truncated: false,
+    scope: viewport.name === 'desktop' ? 'blocked' : 'not-applicable',
+    ...(viewport.name === 'desktop' ? { error: 'Link checks did not start.' } : {})
+  };
   const screenshot = resolve(options.outputDir, 'screenshots', `${safeSlug(url)}-${viewport.name}.png`);
   let context: Awaited<ReturnType<Browser['newContext']>> | undefined;
   const closeOnAbort = (): void => { void context?.close().catch(() => undefined); };
@@ -375,22 +447,60 @@ async function auditViewport(
     if (consent.found && !consent.dismissed) {
       errors.push('A visible consent banner could not be dismissed before accessibility interaction testing.');
     }
-    const axeResults = await runAxe(page).catch((error) => {
-      errors.push(`axe-core error: ${error instanceof Error ? error.message : String(error)}`);
-      return [];
-    });
+    interactionBlocker = await detectInteractionBlocker(page);
+    if (interactionBlocker) errors.push(`${interactionBlocker.reason} ${interactionBlocker.selector}`);
+    let axeResults: AxeViolationResult[] = [];
+    try {
+      const axeOutput = await runAxe(page);
+      axeResults = axeOutput.results;
+      axeRun = axeOutput.metadata;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`axe-core error: ${message}`);
+      axeRun = {
+        completed: false,
+        error: message,
+        violationCount: 0,
+        incompleteCount: 0,
+        passCount: 0,
+        passes: []
+      };
+    }
     const axeTargetSizeSelectors = axeResults
       .filter((result) => result.id === 'target-size')
       .flatMap((result) => result.nodes.flatMap((node) => node.target));
     const dom = await runDomChecks(page, axeTargetSizeSelectors);
     const keyboard = await runKeyboardChecks(page, options.maxTabStops);
-    const disclosures = await runDisclosureChecks(page);
+    if (!interactionBlocker && keyboard.scope === 'modal-only') {
+      interactionBlocker = {
+        selector: keyboard.modalSelector ?? 'modal surface',
+        role: 'dialog',
+        name: '',
+        reason: 'Sequential keyboard focus remained inside one modal surface and did not reach the underlying page.'
+      };
+      errors.push(`${interactionBlocker.reason} ${interactionBlocker.selector}`);
+    }
+    const disclosures = interactionBlocker ? [] : await runDisclosureChecks(page);
     for (const disclosure of disclosures.filter((item) => item.error)) {
       errors.push(`Disclosure interaction check incomplete for “${disclosure.name || disclosure.selector}”: ${disclosure.error}`);
     }
-    const tabs = await runTabChecks(page);
+    const tabs = interactionBlocker ? [] : await runTabChecks(page);
     const responsive = await runResponsiveChecks(page);
-    const links = viewport.name === 'desktop' ? await runLinkChecks(page, options.maxLinksPerPage) : [];
+    let links: ViewportAudit['links'] = [];
+    if (!interactionBlocker && viewport.name === 'desktop') {
+      const linkOutput = await runLinkChecks(page, options.maxLinksPerPage);
+      links = linkOutput.results;
+      linkRun = linkOutput.metadata;
+    } else if (interactionBlocker && viewport.name === 'desktop') {
+      linkRun = {
+        completed: false,
+        candidateCount: 0,
+        checkedCount: 0,
+        truncated: false,
+        scope: 'blocked',
+        error: `Link checks were blocked by ${interactionBlocker.selector}.`
+      };
+    }
     if (signal?.aborted) throw new Error(CANCELLED_REASON);
     const preliminaryAudit: ViewportAudit = {
       viewport,
@@ -399,13 +509,16 @@ async function auditViewport(
       status,
       title,
       axe: axeResults,
+      axeRun,
       dom,
       keyboard,
       responsive,
       disclosures,
       tabs,
       links,
+      linkRun,
       consent,
+      interactionBlocker,
       elementContexts: [],
       screenshot: '',
       elementScreenshots: [],
@@ -417,15 +530,20 @@ async function auditViewport(
       allViewportFindings.flatMap((finding) => finding.selectors)
     );
     const screenshotFindings = allViewportFindings
-      .filter((finding) => finding.classification === 'confirmed' || finding.classification === 'blocker');
+      .filter((finding) => finding.classification !== 'manual');
     if (options.captureScreenshots && screenshotFindings.length > 0) {
       await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => undefined);
       await page.waitForLoadState('networkidle', { timeout: Math.min(options.timeoutMs, 5_000) }).catch(() => undefined);
       const captureConsent = await dismissConsentBanner(page);
-      const evidenceSurfaceClear = !captureConsent.found || captureConsent.dismissed;
+      const captureBlocker = await detectInteractionBlocker(page);
+      const evidenceSurfaceClear = (!captureConsent.found || captureConsent.dismissed) && !captureBlocker;
       if (!evidenceSurfaceClear) {
-        errors.push('Screenshot capture was skipped because the visible consent banner could not be dismissed.');
+        errors.push(`Component screenshot capture was blocked by a visible surface${captureBlocker ? `: ${captureBlocker.selector}` : '.'}`);
+        await mkdir(resolve(options.outputDir, 'screenshots'), { recursive: true });
+        await page.screenshot({ path: screenshot, fullPage: true, animations: 'disabled', caret: 'hide' });
+        preliminaryAudit.screenshot = screenshot;
       } else {
+        await prepareEvidenceStates(page, screenshotFindings);
         preliminaryAudit.elementScreenshots = await captureElementScreenshots(
           page,
           url,
@@ -452,13 +570,16 @@ async function auditViewport(
       status,
       title,
       axe: [],
+      axeRun,
       dom: emptyDom(),
-      keyboard: { sequence: [] },
+      keyboard: { sequence: [], completedCycle: false, truncated: false, scope: 'unknown' },
       responsive: { horizontalOverflow: 0, overflowElements: [], textSpacingOverflow: 0 },
       disclosures: [],
       tabs: [],
       links: [],
+      linkRun,
       consent,
+      interactionBlocker,
       elementContexts: [],
       screenshot: '',
       elementScreenshots: [],
@@ -589,6 +710,7 @@ export async function runAudit(
   }
 
   const findings = consolidateFindings(pages.flatMap(findingsFromPage));
+  retainRepresentativeScreenshotPerFinding(findings);
   assertRemediationOnlyNotes(findings);
   const startedUrls = new Set(pages.map((page) => page.url));
   const cancellationSkips = execution.signal?.aborted
@@ -613,6 +735,7 @@ export async function runAudit(
     skippedUrls: [...skippedUrls, ...cancellationSkips],
     pages,
     findings,
+    coverage: buildCoverageMatrix(pages, findings),
     manualChecks: REQUIRED_MANUAL_CHECKS,
     limitations: [
       'This output is an evidence-backed test result, not a WCAG conformance certification.',

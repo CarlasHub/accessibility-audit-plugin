@@ -114,7 +114,11 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
   const archivePath = await createAuditArchive(options.outputDir, reportPath, jsonPath);
   const completedPageCount = summary.pages.filter((page) =>
     page.viewports.length === options.viewports.length &&
-    page.viewports.every((viewport) => !viewport.cancelled)
+    page.viewports.every((viewport) => (
+      !viewport.cancelled
+      && !viewport.interactionBlocker
+      && viewport.axeRun.completed
+    ))
   ).length;
   const notStartedPageCount = Math.max(0, collected.urls.length - summary.pages.length);
   const partialPageCount = Math.max(0, collected.urls.length - completedPageCount - notStartedPageCount);
