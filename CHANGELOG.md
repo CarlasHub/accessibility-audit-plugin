@@ -5,6 +5,7 @@
 - Removed customer and validation-site names from runtime instructions, URL tests, finding fixtures, report fixtures, and staging-host detection.
 - Documented that audit targets are supplied at run time and that no customer-specific hostname, selector, rule, default, or prior-run evidence belongs in the plugin package.
 - Added a build-time site-neutrality verification that rejects known validation-customer names in runtime and user-facing package content.
+- Pinned Vitest's compatible Vite major so clean installs remain reproducible with both npm 10 and npm 11.
 
 ## 0.9.6 - 2026-09-06
 
