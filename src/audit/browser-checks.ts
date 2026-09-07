@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import type {
   DisclosureCheckResult,
+  DisclosureStateSnapshot,
   DomCheckResult,
   KeyboardCheckResult,
   LinkCheckMetadata,
@@ -681,132 +682,662 @@ function locatorDescription(locator: Locator): Promise<{ name: string; selector:
   });
 }
 
-export async function runDisclosureChecks(page: Page): Promise<DisclosureCheckResult[]> {
-  const controls = page.locator('button[aria-expanded], [role="button"][aria-expanded]');
-  const results: DisclosureCheckResult[] = [];
-  const count = Math.min(await controls.count(), 30);
+interface DisclosureIdentity {
+  selector: string;
+  name: string;
+  tagName: string;
+  role: string;
+  id: string;
+  controls: string | null;
+}
 
-  for (let index = 0; index < count; index += 1) {
-    const toggle = controls.nth(index);
-    if (!(await toggle.isVisible().catch(() => false))) continue;
-    let description = { name: '', selector: `disclosure-${index + 1}` };
-    try {
-      description = await locatorDescription(toggle);
-      const originalExpanded = await toggle.getAttribute('aria-expanded');
-      const controlsId = await toggle.getAttribute('aria-controls');
-      if (originalExpanded === 'true') {
-        await toggle.focus();
-        await page.keyboard.press('Enter');
-        await page.waitForTimeout(150);
+interface DisclosureSnapshotRead {
+  state?: DisclosureStateSnapshot;
+  error?: string;
+}
+
+interface DisclosureActivationResult {
+  state?: DisclosureStateSnapshot;
+  targetVerified: boolean;
+  settled: boolean;
+  elapsedMs: number;
+  error?: string;
+}
+
+const disclosureSelector = 'button[aria-expanded], [role="button"][aria-expanded]';
+const disclosureMarkerAttribute = 'data-accessibility-audit-disclosure-target';
+let disclosureActivationSerial = 0;
+
+async function waitForDisclosureInventorySettled(page: Page): Promise<void> {
+  await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  })).catch(() => undefined);
+
+  const started = Date.now();
+  let previous = '';
+  let stableSince = started;
+  while (Date.now() - started < 1_500) {
+    const current = await page.evaluate((selector) => [...document.querySelectorAll(selector)]
+      .map((element) => [
+        element.tagName,
+        element.id,
+        element.getAttribute('role'),
+        element.getAttribute('aria-label'),
+        element.getAttribute('aria-expanded'),
+        element.getAttribute('aria-controls'),
+        element.hasAttribute('hidden'),
+        element.closest('[hidden], [inert], [aria-hidden="true"]') !== null
+      ].join('|'))
+      .join('\n'), disclosureSelector).catch(() => '');
+    const now = Date.now();
+    if (current !== previous) {
+      previous = current;
+      stableSince = now;
+    }
+    if (now - started >= 600 && now - stableSince >= 250) return;
+    await page.waitForTimeout(50);
+  }
+}
+
+async function collectDisclosureIdentities(page: Page): Promise<DisclosureIdentity[]> {
+  await waitForDisclosureInventorySettled(page);
+  return page.evaluate(({ selector, limit }) => {
+    const cssPath = (element: Element): string => {
+      if (element.id) return `#${CSS.escape(element.id)}`;
+      const parts: string[] = [];
+      let current: Element | null = element;
+      while (current && current !== document.documentElement && parts.length < 6) {
+        let part = current.tagName.toLowerCase();
+        const stableClasses = [...current.classList].filter((value) => !/\d{3,}/.test(value)).slice(0, 2);
+        if (stableClasses.length) part += `.${stableClasses.map((value) => CSS.escape(value)).join('.')}`;
+        if (current.parentElement) {
+          const siblings = [...current.parentElement.children].filter((sibling) => sibling.tagName === current?.tagName);
+          if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+        }
+        parts.unshift(part);
+        current = current.parentElement;
       }
-      const beforeExpanded = await toggle.getAttribute('aria-expanded');
-      const baselinePrepared = originalExpanded !== 'true' || beforeExpanded === 'false';
-      if (!baselinePrepared) {
-        results.push({
-          selector: description.selector,
-          name: description.name,
-          controls: controlsId,
-          initialExpanded: originalExpanded,
-          baselinePrepared: false,
-          beforeExpanded,
-          afterExpanded: null,
-          controlledVisibleBefore: null,
-          controlledVisibleAfterOpen: null,
-          spaceAfterExpanded: null,
-          controlledVisibleAfterSpace: null,
-          spaceTestCompleted: false,
-          firstTabSelector: null,
-          tabEnteredControlledRegion: null,
-          error: 'The disclosure started expanded and could not be returned to a collapsed baseline with Enter.'
-        });
+      return parts.join(' > ');
+    };
+    const accessibleName = (element: Element): string => {
+      const labelledBy = element.getAttribute('aria-labelledby');
+      const labelledText = labelledBy
+        ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent?.trim() ?? '').filter(Boolean).join(' ')
+        : '';
+      return (
+        labelledText
+        || element.getAttribute('aria-label')?.trim()
+        || element.textContent?.trim()
+        || element.getAttribute('title')?.trim()
+        || ''
+      ).replace(/\s+/g, ' ').trim();
+    };
+    const visuallyRendered = (element: Element): boolean => {
+      if (element.closest('[hidden]')) return false;
+      let current: Element | null = element;
+      while (current) {
+        const style = getComputedStyle(current);
+        if (
+          style.display === 'none'
+          || style.visibility === 'hidden'
+          || style.visibility === 'collapse'
+          || style.contentVisibility === 'hidden'
+          || Number.parseFloat(style.opacity || '1') === 0
+        ) return false;
+        current = current.parentElement;
+      }
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    const activeControl = (element: Element): boolean => (
+      visuallyRendered(element)
+      && !element.closest('[inert], [aria-hidden="true"], .slick-cloned:not(.slick-active), .swiper-slide-duplicate:not(.swiper-slide-active)')
+    );
+
+    const identities = [...document.querySelectorAll(selector)]
+      .filter(activeControl)
+      .slice(0, limit)
+      .map((element) => ({
+        selector: cssPath(element),
+        name: accessibleName(element),
+        tagName: element.tagName.toLowerCase(),
+        role: element.getAttribute('role') ?? (element.tagName === 'BUTTON' ? 'button' : element.tagName.toLowerCase()),
+        id: element.id,
+        controls: element.getAttribute('aria-controls')
+      }));
+    return identities.filter((identity, index) => identities.findIndex((item) => (
+      item.selector === identity.selector
+      && item.name === identity.name
+      && item.role === identity.role
+      && item.controls === identity.controls
+    )) === index);
+  }, { selector: disclosureSelector, limit: 30 });
+}
+
+async function readDisclosureSnapshot(page: Page, identity: DisclosureIdentity): Promise<DisclosureSnapshotRead> {
+  return page.evaluate(({ identity: expected, selector }) => {
+    const cssPath = (element: Element): string => {
+      if (element.id) return `#${CSS.escape(element.id)}`;
+      const parts: string[] = [];
+      let current: Element | null = element;
+      while (current && current !== document.documentElement && parts.length < 6) {
+        let part = current.tagName.toLowerCase();
+        const stableClasses = [...current.classList].filter((value) => !/\d{3,}/.test(value)).slice(0, 2);
+        if (stableClasses.length) part += `.${stableClasses.map((value) => CSS.escape(value)).join('.')}`;
+        if (current.parentElement) {
+          const siblings = [...current.parentElement.children].filter((sibling) => sibling.tagName === current?.tagName);
+          if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+        }
+        parts.unshift(part);
+        current = current.parentElement;
+      }
+      return parts.join(' > ');
+    };
+    const accessibleName = (element: Element): string => {
+      const labelledBy = element.getAttribute('aria-labelledby');
+      const labelledText = labelledBy
+        ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent?.trim() ?? '').filter(Boolean).join(' ')
+        : '';
+      return (
+        labelledText
+        || element.getAttribute('aria-label')?.trim()
+        || element.textContent?.trim()
+        || element.getAttribute('title')?.trim()
+        || ''
+      ).replace(/\s+/g, ' ').trim();
+    };
+    const visuallyRendered = (element: Element): boolean => {
+      if (element.closest('[hidden]')) return false;
+      let current: Element | null = element;
+      while (current) {
+        const style = getComputedStyle(current);
+        if (
+          style.display === 'none'
+          || style.visibility === 'hidden'
+          || style.visibility === 'collapse'
+          || style.contentVisibility === 'hidden'
+          || Number.parseFloat(style.opacity || '1') === 0
+        ) return false;
+        current = current.parentElement;
+      }
+      const rect = element.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) return true;
+      return [...element.querySelectorAll('*')].some((child) => {
+        const childRect = child.getBoundingClientRect();
+        return childRect.width > 0 && childRect.height > 0;
+      });
+    };
+    const activeControl = (element: Element): boolean => (
+      visuallyRendered(element)
+      && !element.closest('[inert], [aria-hidden="true"], .slick-cloned:not(.slick-active), .swiper-slide-duplicate:not(.swiper-slide-active)')
+    );
+    const role = (element: Element): string => element.getAttribute('role')
+      ?? (element.tagName === 'BUTTON' ? 'button' : element.tagName.toLowerCase());
+    const fingerprintMatches = (element: Element): boolean => (
+      element.tagName.toLowerCase() === expected.tagName
+      && role(element) === expected.role
+      && accessibleName(element) === expected.name
+      && (!expected.id || element.id === expected.id)
+    );
+
+    const allControls = [...document.querySelectorAll(selector)];
+    let selectorMatches: Element[] = [];
+    try {
+      selectorMatches = [...document.querySelectorAll(expected.selector)].filter(fingerprintMatches);
+    } catch {
+      selectorMatches = [];
+    }
+    let matches = selectorMatches;
+    if (matches.length !== 1) {
+      matches = allControls.filter(fingerprintMatches);
+      if (matches.length > 1 && expected.controls) {
+        const sameRelationship = matches.filter((element) => element.getAttribute('aria-controls') === expected.controls);
+        if (sameRelationship.length === 1) matches = sameRelationship;
+      }
+    }
+    if (matches.length !== 1) {
+      return {
+        error: matches.length === 0
+          ? `The disclosure control could not be re-queried after the DOM changed: ${expected.selector}`
+          : `The disclosure identity resolved to ${matches.length} controls after the DOM changed: ${expected.selector}`
+      };
+    }
+
+    const control = matches[0]!;
+    const rect = control.getBoundingClientRect();
+    const intersectsViewport = rect.width > 0
+      && rect.height > 0
+      && rect.right > 0
+      && rect.bottom > 0
+      && rect.left < innerWidth
+      && rect.top < innerHeight;
+    const points = intersectsViewport ? [
+      [Math.max(0, Math.min(innerWidth - 1, rect.left + rect.width / 2)), Math.max(0, Math.min(innerHeight - 1, rect.top + rect.height / 2))],
+      [Math.max(0, Math.min(innerWidth - 1, rect.left + Math.min(4, rect.width / 4))), Math.max(0, Math.min(innerHeight - 1, rect.top + Math.min(4, rect.height / 4)))]
+    ] : [];
+    const topmost = points.some(([x, y]) => {
+      const hit = document.elementFromPoint(x!, y!);
+      return Boolean(hit && (hit === control || control.contains(hit)));
+    });
+    const controls = control.getAttribute('aria-controls');
+    const controlledIds = controls?.split(/\s+/).filter(Boolean) ?? [];
+    const allIds = [...document.querySelectorAll('[id]')];
+    const panels = controlledIds.flatMap((id) => allIds.filter((element) => element.id === id));
+    const controlledMatchCount = panels.length;
+    const controlledVisible = controlledIds.length > 0 && controlledMatchCount === controlledIds.length
+      ? panels.some(visuallyRendered)
+      : null;
+    const controlledExposed = controlledIds.length > 0 && controlledMatchCount === controlledIds.length
+      ? panels.some((panel) => visuallyRendered(panel) && !panel.closest('[inert], [aria-hidden="true"]'))
+      : null;
+    const animations = new Set<Animation>();
+    for (const element of [control, ...panels]) {
+      for (const animation of element.getAnimations({ subtree: true })) animations.add(animation);
+    }
+    const runningAnimations = [...animations].filter((animation) => animation.playState === 'running' || animation.pending).length;
+    return {
+      state: {
+        selector: cssPath(control),
+        name: accessibleName(control),
+        tagName: control.tagName.toLowerCase(),
+        role: role(control),
+        expanded: control.getAttribute('aria-expanded'),
+        controls,
+        controlMatchCount: matches.length,
+        controlledMatchCount,
+        controlledVisible,
+        controlledExposed,
+        rendered: activeControl(control),
+        topmost,
+        focused: document.activeElement === control,
+        runningAnimations
+      }
+    };
+  }, { identity, selector: disclosureSelector });
+}
+
+function disclosureStateSignature(state: DisclosureStateSnapshot): string {
+  return JSON.stringify([
+    state.selector,
+    state.expanded,
+    state.controls,
+    state.controlledMatchCount,
+    state.controlledVisible
+  ]);
+}
+
+async function waitForDisclosureSettled(
+  page: Page,
+  identity: DisclosureIdentity,
+  before: DisclosureStateSnapshot
+): Promise<DisclosureActivationResult> {
+  const started = Date.now();
+  const beforeSignature = disclosureStateSignature(before);
+  let latestRead = await readDisclosureSnapshot(page, identity);
+  if (!latestRead.state) {
+    return {
+      targetVerified: true,
+      settled: false,
+      elapsedMs: Date.now() - started,
+      error: latestRead.error ?? 'The disclosure final state could not be read.'
+    };
+  }
+  let latest = latestRead.state;
+  let latestSignature = disclosureStateSignature(latest);
+  let stableSince = Date.now();
+  let observedChange = latestSignature !== beforeSignature;
+
+  while (Date.now() - started < 1_800) {
+    await page.waitForTimeout(50);
+    latestRead = await readDisclosureSnapshot(page, identity);
+    if (!latestRead.state) {
+      return {
+        targetVerified: true,
+        settled: false,
+        elapsedMs: Date.now() - started,
+        error: latestRead.error ?? 'The disclosure final state could not be read.'
+      };
+    }
+    latest = latestRead.state;
+    const signature = disclosureStateSignature(latest);
+    const now = Date.now();
+    if (signature !== latestSignature) {
+      latestSignature = signature;
+      stableSince = now;
+    }
+    if (signature !== beforeSignature) observedChange = true;
+    const elapsedMs = now - started;
+    const stateStable = now - stableSince >= 200;
+    const minimumObservationComplete = elapsedMs >= 300;
+    const unchangedObservationComplete = observedChange || elapsedMs >= 1_200;
+    if (minimumObservationComplete && unchangedObservationComplete && stateStable && latest.runningAnimations === 0) {
+      return { state: latest, targetVerified: true, settled: true, elapsedMs };
+    }
+  }
+  return {
+    state: latest,
+    targetVerified: true,
+    settled: false,
+    elapsedMs: Date.now() - started,
+    error: 'The disclosure state did not settle within 1800ms after activation.'
+  };
+}
+
+async function activateDisclosure(
+  page: Page,
+  identity: DisclosureIdentity,
+  key: 'Enter' | 'Space',
+  before: DisclosureStateSnapshot
+): Promise<DisclosureActivationResult> {
+  const currentRead = await readDisclosureSnapshot(page, identity);
+  if (!currentRead.state) {
+    return {
+      targetVerified: false,
+      settled: false,
+      elapsedMs: 0,
+      error: currentRead.error ?? 'The disclosure control could not be re-queried before activation.'
+    };
+  }
+  let current = currentRead.state;
+  const currentLocator = page.locator(current.selector);
+  const currentCount = await currentLocator.count();
+  if (currentCount !== 1) {
+    return {
+      targetVerified: false,
+      settled: false,
+      elapsedMs: 0,
+      error: `The re-queried disclosure selector resolved to ${currentCount} elements before activation.`
+    };
+  }
+  await currentLocator.scrollIntoViewIfNeeded();
+  await currentLocator.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  const positionedRead = await readDisclosureSnapshot(page, identity);
+  if (!positionedRead.state) {
+    return {
+      targetVerified: false,
+      settled: false,
+      elapsedMs: 0,
+      error: positionedRead.error ?? 'The disclosure control detached while it was positioned for activation.'
+    };
+  }
+  current = positionedRead.state;
+  if (!current.rendered || !current.topmost) {
+    return {
+      state: current,
+      targetVerified: false,
+      settled: false,
+      elapsedMs: 0,
+      error: 'The disclosure control is hidden, inactive, off-screen, or obscured; keyboard activation was not treated as valid evidence.'
+    };
+  }
+
+  disclosureActivationSerial += 1;
+  const marker = `disclosure-${disclosureActivationSerial}`;
+  const activationLocator = page.locator(current.selector);
+  await activationLocator.evaluate((element, { attribute, value }) => element.setAttribute(attribute, value), {
+    attribute: disclosureMarkerAttribute,
+    value: marker
+  });
+  const marked = page.locator(`[${disclosureMarkerAttribute}="${marker}"]`);
+  try {
+    if ((await marked.count()) !== 1) {
+      return {
+        targetVerified: false,
+        settled: false,
+        elapsedMs: 0,
+        error: 'The disclosure activation marker did not resolve to exactly one live control.'
+      };
+    }
+    const markerMatchesIdentity = await marked.evaluate((element, expected) => {
+      const labelledBy = element.getAttribute('aria-labelledby');
+      const labelledText = labelledBy
+        ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent?.trim() ?? '').filter(Boolean).join(' ')
+        : '';
+      const name = (
+        labelledText
+        || element.getAttribute('aria-label')?.trim()
+        || element.textContent?.trim()
+        || element.getAttribute('title')?.trim()
+        || ''
+      ).replace(/\s+/g, ' ').trim();
+      const role = element.getAttribute('role') ?? (element.tagName === 'BUTTON' ? 'button' : element.tagName.toLowerCase());
+      return element.tagName.toLowerCase() === expected.tagName
+        && role === expected.role
+        && name === expected.name
+        && (!expected.id || element.id === expected.id);
+    }, identity);
+    if (!markerMatchesIdentity) {
+      return {
+        targetVerified: false,
+        settled: false,
+        elapsedMs: 0,
+        error: 'The marked disclosure no longer matched the intended control identity before activation.'
+      };
+    }
+    await marked.focus();
+    const focused = await marked.evaluate((element) => document.activeElement === element);
+    if (!focused) {
+      return {
+        targetVerified: false,
+        settled: false,
+        elapsedMs: 0,
+        error: 'Focus did not reach the intended disclosure control before activation.'
+      };
+    }
+    await marked.press(key);
+  } finally {
+    await page.locator(`[${disclosureMarkerAttribute}="${marker}"]`).evaluateAll((elements, attribute) => {
+      elements.forEach((element) => element.removeAttribute(attribute));
+    }, disclosureMarkerAttribute).catch(() => undefined);
+  }
+  return waitForDisclosureSettled(page, identity, before);
+}
+
+function incompleteDisclosureResult(
+  identity: DisclosureIdentity,
+  error: string,
+  partial: Partial<DisclosureCheckResult> = {}
+): DisclosureCheckResult {
+  return {
+    selector: identity.selector,
+    name: identity.name,
+    controls: identity.controls,
+    baselinePrepared: false,
+    activationTargetVerified: false,
+    enterTargetVerified: false,
+    enterTestCompleted: false,
+    beforeExpanded: null,
+    afterExpanded: null,
+    controlledVisibleBefore: null,
+    controlledVisibleAfterOpen: null,
+    spaceAfterExpanded: null,
+    controlledVisibleAfterSpace: null,
+    spaceTestCompleted: false,
+    firstTabSelector: null,
+    tabEnteredControlledRegion: null,
+    ...partial,
+    error
+  };
+}
+
+export async function runDisclosureChecks(page: Page): Promise<DisclosureCheckResult[]> {
+  const results: DisclosureCheckResult[] = [];
+  const identities = await collectDisclosureIdentities(page);
+
+  for (const identity of identities) {
+    try {
+      let initialRead = await readDisclosureSnapshot(page, identity);
+      if (!initialRead.state) {
+        results.push(incompleteDisclosureResult(identity, initialRead.error ?? 'The initial disclosure state could not be read.'));
         continue;
       }
-      let controlled: Locator | null = null;
-      let controlledVisibleBefore: boolean | null = null;
-      if (controlsId) {
-        controlled = page.locator(`#${controlsId.replaceAll(/([ !"#$%&'()*+,./:;<=>?@[\\\]^`{|}~])/g, '\\$1')}`);
-        if ((await controlled.count()) > 0) {
-          controlledVisibleBefore = await controlled.isVisible().catch(() => false);
-        }
+      let initialState = initialRead.state;
+      const initialLocator = page.locator(initialState.selector);
+      if ((await initialLocator.count()) !== 1) {
+        results.push(incompleteDisclosureResult(identity, 'The initial disclosure selector did not resolve to exactly one live control.', { initialState }));
+        continue;
       }
-      await toggle.focus();
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(200);
-      const afterExpanded = await toggle.getAttribute('aria-expanded');
-      let controlledVisibleAfterOpen: boolean | null = null;
-      let spaceAfterExpanded: string | null = null;
-      let controlledVisibleAfterSpace: boolean | null = null;
-      let spaceTestCompleted = false;
-      let tabEnteredControlledRegion: boolean | null = null;
-      let firstTabSelector: string | null = null;
-      if (controlsId && controlled && (await controlled.count()) > 0) {
-          controlledVisibleAfterOpen = await controlled.isVisible().catch(() => false);
-          const focusable = controlled.locator(focusableSelector);
-          if ((await focusable.count()) > 0) {
-            await page.keyboard.press('Tab');
-            const active = page.locator(':focus');
-            firstTabSelector = (await active.count()) ? (await locatorDescription(active)).selector : null;
-            tabEnteredControlledRegion = await active.evaluate((element, id) => Boolean(document.getElementById(id)?.contains(element)), controlsId);
-          }
+      await initialLocator.scrollIntoViewIfNeeded();
+      await initialLocator.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+      initialRead = await readDisclosureSnapshot(page, identity);
+      if (!initialRead.state || !initialRead.state.rendered || !initialRead.state.topmost) {
+        results.push(incompleteDisclosureResult(
+          identity,
+          initialRead.error ?? 'The initial disclosure control is hidden, inactive, off-screen, or obscured.',
+          { ...(initialRead.state ? { initialState: initialRead.state } : {}) }
+        ));
+        continue;
+      }
+      initialState = initialRead.state;
+      if (initialState.expanded !== 'true' && initialState.expanded !== 'false') {
+        results.push(incompleteDisclosureResult(identity, 'aria-expanded did not expose a valid true or false state in the final rendered DOM.', { initialState }));
+        continue;
       }
 
-      await toggle.focus();
-      if ((await toggle.getAttribute('aria-expanded')) === 'true') {
-        await page.keyboard.press('Enter');
-        await page.waitForTimeout(100);
+      let beforeState = initialState;
+      let baselineTargetVerified = true;
+      if (initialState.expanded === 'true') {
+        const collapsed = await activateDisclosure(page, identity, 'Enter', initialState);
+        baselineTargetVerified = baselineTargetVerified && collapsed.targetVerified;
+        if (!collapsed.state || !collapsed.settled || collapsed.state.expanded !== 'false' || collapsed.state.controlledVisible === true) {
+          results.push(incompleteDisclosureResult(
+            identity,
+            collapsed.error ?? 'The disclosure started expanded and could not be returned to a settled collapsed baseline with Enter.',
+            {
+              initialExpanded: initialState.expanded,
+              initialState,
+              ...(collapsed.state ? {
+                beforeState: collapsed.state,
+                beforeExpanded: collapsed.state.expanded,
+                controlledVisibleBefore: collapsed.state.controlledVisible
+              } : {}),
+              activationTargetVerified: baselineTargetVerified
+            }
+          ));
+          continue;
+        }
+        beforeState = collapsed.state;
       }
-      if ((await toggle.getAttribute('aria-expanded')) === 'false') {
-        await toggle.focus();
-        await page.keyboard.press('Space');
-        await page.waitForTimeout(200);
-        spaceAfterExpanded = await toggle.getAttribute('aria-expanded');
-        controlledVisibleAfterSpace = controlled && (await controlled.count()) > 0
-          ? await controlled.isVisible().catch(() => false)
-          : null;
-        spaceTestCompleted = true;
+
+      const entered = await activateDisclosure(page, identity, 'Enter', beforeState);
+      const enterTargetVerified = baselineTargetVerified && entered.targetVerified;
+      if (!entered.state || !entered.settled) {
+        results.push(incompleteDisclosureResult(
+          identity,
+          entered.error ?? 'The disclosure did not reach a settled final state after Enter.',
+          {
+            initialExpanded: initialState.expanded,
+            baselinePrepared: true,
+            activationTargetVerified: enterTargetVerified,
+            enterTargetVerified,
+            initialState,
+            beforeState,
+            beforeExpanded: beforeState.expanded,
+            controlledVisibleBefore: beforeState.controlledVisible,
+            ...(entered.state ? {
+              afterEnterState: entered.state,
+              afterExpanded: entered.state.expanded,
+              controlledVisibleAfterOpen: entered.state.controlledVisible
+            } : {}),
+            enterSettled: entered.settled,
+            enterSettleMs: entered.elapsedMs
+          }
+        ));
+        continue;
       }
+      const afterEnterState = entered.state;
+
+      let tabEnteredControlledRegion: boolean | null = null;
+      let firstTabSelector: string | null = null;
+      if (
+        afterEnterState.focused
+        && afterEnterState.expanded === 'true'
+        && afterEnterState.controlledVisible === true
+        && afterEnterState.controls
+      ) {
+        const controlledIds = afterEnterState.controls.split(/\s+/).filter(Boolean);
+        const panelSelectors = controlledIds.map((id) => `#${id.replaceAll(/([ !"#$%&'()*+,./:;<=>?@[\\\]^`{|}~])/g, '\\$1')}`);
+        const focusable = page.locator(panelSelectors.map((selector) => `${selector} ${focusableSelector}`).join(', '));
+        if ((await focusable.count()) > 0) {
+          await page.keyboard.press('Tab');
+          const active = page.locator(':focus');
+          firstTabSelector = (await active.count()) ? (await locatorDescription(active)).selector : null;
+          tabEnteredControlledRegion = await active.evaluate((element, ids) => ids.some((id) => document.getElementById(id)?.contains(element)), controlledIds);
+        }
+      }
+
+      let restorationError: string | undefined;
+      let collapsedForSpace = afterEnterState;
+      if (afterEnterState.expanded === 'true' || afterEnterState.controlledVisible === true) {
+        const collapsed = await activateDisclosure(page, identity, 'Enter', afterEnterState);
+        if (!collapsed.state || !collapsed.settled || collapsed.state.expanded !== 'false' || collapsed.state.controlledVisible === true) {
+          restorationError = collapsed.error ?? 'The disclosure could not be restored to a collapsed baseline before the Space test.';
+        } else {
+          collapsedForSpace = collapsed.state;
+        }
+      }
+
+      let afterSpaceState: DisclosureStateSnapshot | undefined;
+      let spaceSettled: boolean | undefined;
+      let spaceSettleMs: number | undefined;
+      let spaceTargetVerified: boolean | undefined;
+      if (!restorationError && collapsedForSpace.expanded === 'false' && collapsedForSpace.controlledVisible !== true) {
+        const spaced = await activateDisclosure(page, identity, 'Space', collapsedForSpace);
+        spaceTargetVerified = spaced.targetVerified;
+        spaceSettled = spaced.settled;
+        spaceSettleMs = spaced.elapsedMs;
+        if (spaced.state && spaced.settled) afterSpaceState = spaced.state;
+        else restorationError = spaced.error ?? 'The disclosure did not reach a settled final state after Space.';
+      }
+
+      const latestRead = await readDisclosureSnapshot(page, identity);
+      if (latestRead.state) {
+        const shouldBeExpanded = initialState.expanded === 'true';
+        const isExpanded = latestRead.state.expanded === 'true';
+        if (shouldBeExpanded !== isExpanded) {
+          const restored = await activateDisclosure(page, identity, 'Enter', latestRead.state);
+          if (!restored.state || !restored.settled || (restored.state.expanded === 'true') !== shouldBeExpanded) {
+            restorationError = restorationError ?? restored.error ?? 'The original disclosure state could not be restored after testing.';
+          }
+        }
+      } else {
+        restorationError = restorationError ?? latestRead.error ?? 'The disclosure could not be re-queried for state restoration.';
+      }
+
       results.push({
-        selector: description.selector,
-        name: description.name,
-        controls: controlsId,
-        initialExpanded: originalExpanded,
-        baselinePrepared,
-        beforeExpanded,
-        afterExpanded,
-        controlledVisibleBefore,
-        controlledVisibleAfterOpen,
-        spaceAfterExpanded,
-        controlledVisibleAfterSpace,
-        spaceTestCompleted,
+        selector: identity.selector,
+        name: identity.name,
+        controls: beforeState.controls,
+        initialExpanded: initialState.expanded,
+        baselinePrepared: true,
+        activationTargetVerified: enterTargetVerified,
+        enterTargetVerified,
+        enterTestCompleted: true,
+        enterSettled: true,
+        enterSettleMs: entered.elapsedMs,
+        beforeExpanded: beforeState.expanded,
+        afterExpanded: afterEnterState.expanded,
+        controlledVisibleBefore: beforeState.controlledVisible,
+        controlledVisibleAfterOpen: afterEnterState.controlledVisible,
+        spaceAfterExpanded: afterSpaceState?.expanded ?? null,
+        controlledVisibleAfterSpace: afterSpaceState?.controlledVisible ?? null,
+        spaceTestCompleted: Boolean(afterSpaceState),
+        ...(spaceTargetVerified === undefined ? {} : { spaceTargetVerified }),
+        ...(spaceSettled === undefined ? {} : { spaceSettled }),
+        ...(spaceSettleMs === undefined ? {} : { spaceSettleMs }),
+        initialState,
+        beforeState,
+        afterEnterState,
+        ...(afterSpaceState ? { afterSpaceState } : {}),
         firstTabSelector,
-        tabEnteredControlledRegion
+        tabEnteredControlledRegion,
+        ...(restorationError ? { restorationError } : {})
       });
-      if ((await toggle.getAttribute('aria-expanded')) === 'true') {
-        await toggle.focus();
-        await page.keyboard.press('Enter');
-        await page.waitForTimeout(100);
-      }
-      if (originalExpanded === 'true' && (await toggle.getAttribute('aria-expanded')) !== 'true') {
-        await toggle.focus();
-        await page.keyboard.press('Enter');
-      }
     } catch (error) {
-      results.push({
-        selector: description.selector,
-        name: description.name,
-        controls: null,
-        baselinePrepared: false,
-        beforeExpanded: null,
-        afterExpanded: null,
-        controlledVisibleBefore: null,
-        controlledVisibleAfterOpen: null,
-        spaceAfterExpanded: null,
-        controlledVisibleAfterSpace: null,
-        spaceTestCompleted: false,
-        firstTabSelector: null,
-        tabEnteredControlledRegion: null,
-        error: error instanceof Error ? error.message : String(error)
-      });
+      results.push(incompleteDisclosureResult(identity, error instanceof Error ? error.message : String(error)));
     }
   }
   return results;

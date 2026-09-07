@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.6 - 2026-09-06
+
+- Replaced index-based disclosure activation and fixed post-key delays with stable live-control identity checks, focus-target verification, and bounded state settling.
+- Re-query disclosure controls and every referenced panel after Enter and Space so delayed JavaScript updates and DOM replacement are measured from the final rendered DOM rather than a pre-interaction instance.
+- Record ARIA state and controlled-panel visibility together in each snapshot, wait for relevant animations to finish, and retain settle timing and before/after snapshots in JSON.
+- Keep visual panel visibility separate from accessibility-tree exposure so `aria-hidden` cannot be mistaken for CSS-hidden content or generate a false `aria-expanded` mismatch.
+- Exclude hidden and inactive carousel clones and reject ambiguous, obscured, detached, or unsettled disclosure evidence instead of promoting it to a workbook finding.
+- Require verified activation and settled post-interaction evidence before finding generation can confirm an `aria-expanded` mismatch; missing `aria-controls` remains non-failing by itself.
+- Added real-Chromium regressions for delayed re-rendering, late hydration, hidden clones, initially open non-collapsible controls, missing relationships, and a genuine delayed state mismatch.
+
 ## 0.9.5 - 2026-09-04
 
 - Added a retained per-page/per-viewport coverage matrix that distinguishes confirmed pass/fail evidence from inconclusive, manual-review-required, not-tested, and not-applicable areas.

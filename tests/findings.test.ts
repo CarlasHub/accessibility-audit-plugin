@@ -114,6 +114,9 @@ describe('evidence-gated link and tab findings', () => {
       selector: `#${name}-toggle`,
       name: name[0]!.toUpperCase() + name.slice(1),
       controls: null,
+      activationTargetVerified: true,
+      enterTestCompleted: true,
+      enterSettled: true,
       beforeExpanded: 'false',
       afterExpanded: 'true',
       controlledVisibleBefore: null,
@@ -145,6 +148,9 @@ describe('evidence-gated link and tab findings', () => {
         selector: '#filters-toggle',
         name: 'Filters',
         controls: null,
+        activationTargetVerified: true,
+        enterTestCompleted: true,
+        enterSettled: true,
         beforeExpanded: 'false',
         afterExpanded: 'false',
         controlledVisibleBefore: false,
@@ -168,6 +174,9 @@ describe('evidence-gated link and tab findings', () => {
         selector: '#accordion-toggle',
         name: 'More information',
         controls: null,
+        activationTargetVerified: true,
+        enterTestCompleted: true,
+        enterSettled: true,
         beforeExpanded: 'false',
         afterExpanded: 'false',
         controlledVisibleBefore: null,
@@ -185,6 +194,9 @@ describe('evidence-gated link and tab findings', () => {
         selector: '#initially-open',
         name: 'Details',
         controls: 'details-panel',
+        activationTargetVerified: true,
+        enterTestCompleted: true,
+        enterSettled: true,
         beforeExpanded: 'true',
         afterExpanded: 'true',
         controlledVisibleBefore: true,
@@ -194,6 +206,76 @@ describe('evidence-gated link and tab findings', () => {
       }]
     })));
     expect(findings.filter((finding) => finding.ruleId.startsWith('disclosure-'))).toEqual([]);
+  });
+
+  it('does not promote a state mismatch when the live target or settled final state was not verified', () => {
+    const baseDisclosure = {
+      selector: '#menu-toggle',
+      name: 'Menu',
+      controls: 'menu-panel',
+      enterTestCompleted: true,
+      beforeExpanded: 'false',
+      afterExpanded: 'false',
+      controlledVisibleBefore: false,
+      controlledVisibleAfterOpen: true,
+      firstTabSelector: null,
+      tabEnteredControlledRegion: null
+    };
+    const findings = findingsFromPage(page(viewport({
+      disclosures: [
+        { ...baseDisclosure, activationTargetVerified: false, enterSettled: true },
+        { ...baseDisclosure, selector: '#slow-menu-toggle', activationTargetVerified: true, enterSettled: false }
+      ]
+    })));
+    expect(findings.filter((finding) => finding.ruleId.startsWith('disclosure-'))).toEqual([]);
+  });
+
+  it('does not use an unsettled Space result as failure evidence', () => {
+    const findings = findingsFromPage(page(viewport({
+      disclosures: [{
+        selector: '#menu-toggle',
+        name: 'Menu',
+        controls: 'menu-panel',
+        activationTargetVerified: true,
+        enterTestCompleted: true,
+        enterSettled: true,
+        beforeExpanded: 'false',
+        afterExpanded: 'true',
+        controlledVisibleBefore: false,
+        controlledVisibleAfterOpen: true,
+        spaceTestCompleted: true,
+        spaceSettled: false,
+        spaceAfterExpanded: 'false',
+        controlledVisibleAfterSpace: true,
+        firstTabSelector: null,
+        tabEnteredControlledRegion: null
+      }]
+    })));
+    expect(findings.filter((finding) => finding.ruleId.startsWith('disclosure-'))).toEqual([]);
+  });
+
+  it('keeps valid Enter mismatch evidence when the later Space target cannot be verified', () => {
+    const findings = findingsFromPage(page(viewport({
+      disclosures: [{
+        selector: '#menu-toggle',
+        name: 'Menu',
+        controls: 'menu-panel',
+        activationTargetVerified: true,
+        enterTargetVerified: true,
+        enterTestCompleted: true,
+        enterSettled: true,
+        beforeExpanded: 'false',
+        afterExpanded: 'false',
+        controlledVisibleBefore: false,
+        controlledVisibleAfterOpen: true,
+        spaceTestCompleted: false,
+        spaceTargetVerified: false,
+        firstTabSelector: null,
+        tabEnteredControlledRegion: null,
+        restorationError: 'The control detached before the Space test.'
+      }]
+    })));
+    expect(findings.filter((finding) => finding.ruleId === 'disclosure-state-not-updated')).toHaveLength(1);
   });
 
   it('retains an incomplete disclosure interaction in raw evidence without creating a finding', () => {

@@ -934,7 +934,12 @@ function domFindings(audit: ViewportAudit): Finding[] {
     // Interaction errors are retained in ViewportAudit.disclosures and reflected
     // as tested-inconclusive coverage. An incomplete test is not an accessibility
     // defect and therefore must not create an Accessibility Report row.
-    const completed = disclosures.filter((item) => !item.error);
+    const completed = disclosures.filter((item) => (
+      !item.error
+      && (item.enterTargetVerified ?? item.activationTargetVerified) === true
+      && item.enterTestCompleted === true
+      && item.enterSettled === true
+    ));
     const stateMatchesVisibility = (expanded: string | null, visible: boolean | null): boolean | null => {
       if ((expanded !== 'true' && expanded !== 'false') || (visible !== true && visible !== false)) return null;
       return (expanded === 'true') === visible;
@@ -942,7 +947,8 @@ function domFindings(audit: ViewportAudit): Finding[] {
     const stateFailures = completed.filter((item) => {
       const beforeMatches = stateMatchesVisibility(item.beforeExpanded, item.controlledVisibleBefore);
       const afterMatches = stateMatchesVisibility(item.afterExpanded, item.controlledVisibleAfterOpen);
-      const spaceMatches = item.spaceTestCompleted
+      const spaceEvidenceVerified = (item.spaceTargetVerified ?? item.activationTargetVerified) === true;
+      const spaceMatches = item.spaceTestCompleted && spaceEvidenceVerified && item.spaceSettled === true
         ? stateMatchesVisibility(item.spaceAfterExpanded ?? null, item.controlledVisibleAfterSpace ?? null)
         : null;
       const enterVisibleChanged = (item.controlledVisibleBefore === true || item.controlledVisibleBefore === false)
@@ -952,10 +958,14 @@ function domFindings(audit: ViewportAudit): Finding[] {
         && item.afterExpanded !== null
         && item.beforeExpanded === item.afterExpanded;
       const spaceVisibleChanged = item.spaceTestCompleted
+        && spaceEvidenceVerified
+        && item.spaceSettled === true
         && (item.controlledVisibleBefore === true || item.controlledVisibleBefore === false)
         && (item.controlledVisibleAfterSpace === true || item.controlledVisibleAfterSpace === false)
         && item.controlledVisibleBefore !== item.controlledVisibleAfterSpace;
       const spaceStateDidNotChange = item.spaceTestCompleted
+        && spaceEvidenceVerified
+        && item.spaceSettled === true
         && item.beforeExpanded !== null
         && item.spaceAfterExpanded !== null
         && item.beforeExpanded === item.spaceAfterExpanded;
@@ -973,9 +983,9 @@ function domFindings(audit: ViewportAudit): Finding[] {
         severity: 'Serious',
         wcag: ['4.1.2'],
         summary: 'Disclosure state does not match the visible controlled content',
-        issue: 'The recorded controlled content visibility contradicted aria-expanded before or after keyboard activation, or the content visibility changed without a corresponding state update.',
+        issue: 'After the intended live control was keyboard-activated and the component settled, a fresh DOM query found that controlled-content visibility contradicted aria-expanded, or visibility changed without the state changing.',
         impact: 'Screen-reader users receive an incorrect expanded or collapsed state and cannot reliably determine whether the controlled content is available.',
-        testing: 'Record controlled-content visibility and aria-expanded before activation, activate the control with Enter and Space, then compare both values again. Confirm a failure only when the visible and exposed states contradict one another.',
+        testing: 'Resolve one rendered, topmost control; record its ARIA state and controlled-content visibility in the same snapshot; activate it with Enter and Space; wait for JavaScript and animations to settle; re-query the control and panel; then compare the final values. A missing aria-controls value alone is not a failure.',
         remediation: 'Use a native button and synchronize aria-expanded with the actual controlled-content visibility whenever the component opens or closes.',
         component,
         sharedComponentKey,

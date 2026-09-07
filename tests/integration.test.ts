@@ -119,6 +119,139 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
     }
   }, 120_000);
 
+  it('re-queries delayed re-rendered disclosures and excludes hidden clones from state evidence', async () => {
+    const fixture = `<!doctype html>
+      <html lang="en">
+        <head>
+          <title>Disclosure re-render fixture</title>
+          <style>
+            button { display: block; margin: 16px; }
+            [hidden] { display: none !important; }
+          </style>
+        </head>
+        <body>
+          <main>
+            <h1>Disclosure checks</h1>
+            <div class="slick-cloned">
+              <button id="hidden-clone" aria-expanded="false" aria-controls="hidden-panel">Slow menu</button>
+              <div id="hidden-panel" hidden>Hidden clone content</div>
+            </div>
+            <button id="slow-toggle" aria-expanded="false" aria-controls="slow-panel">Slow menu</button>
+            <div id="slow-panel" aria-hidden="true" hidden><a href="#slow-content">Slow content</a></div>
+            <button id="broken-toggle" aria-expanded="false" aria-controls="broken-panel">Broken menu</button>
+            <div id="broken-panel" hidden>Broken content</div>
+            <button id="relationship-only" aria-expanded="false">Relationship-free disclosure</button>
+            <button id="locked-open" aria-expanded="true" aria-controls="locked-panel">Always open</button>
+            <div id="locked-panel">Always visible content</div>
+            <div id="late-mount"></div>
+          </main>
+          <script>
+            const replaceAfterDelay = (id, update) => {
+              const current = document.getElementById(id);
+              setTimeout(() => {
+                const live = document.getElementById(id);
+                const replacement = live.cloneNode(true);
+                update(replacement);
+                live.replaceWith(replacement);
+              }, 450);
+            };
+            document.addEventListener('click', (event) => {
+              const target = event.target.closest('button');
+              if (!target) return;
+              if (target.id === 'slow-toggle') {
+                const nextExpanded = target.getAttribute('aria-expanded') !== 'true';
+                replaceAfterDelay('slow-toggle', (replacement) => {
+                  replacement.setAttribute('aria-expanded', String(nextExpanded));
+                  document.getElementById('slow-panel').hidden = !nextExpanded;
+                });
+              }
+              if (target.id === 'broken-toggle') {
+                replaceAfterDelay('broken-toggle', () => {
+                  document.getElementById('broken-panel').hidden = false;
+                });
+              }
+              if (target.id === 'relationship-only') {
+                const nextExpanded = target.getAttribute('aria-expanded') !== 'true';
+                replaceAfterDelay('relationship-only', (replacement) => {
+                  replacement.setAttribute('aria-expanded', String(nextExpanded));
+                });
+              }
+              if (target.id === 'late-toggle') {
+                const nextExpanded = target.getAttribute('aria-expanded') !== 'true';
+                replaceAfterDelay('late-toggle', (replacement) => {
+                  replacement.setAttribute('aria-expanded', String(nextExpanded));
+                  document.getElementById('late-panel').hidden = !nextExpanded;
+                });
+              }
+            });
+            setTimeout(() => {
+              document.getElementById('late-mount').innerHTML =
+                '<button id="late-toggle" aria-expanded="false" aria-controls="late-panel">Hydrated menu</button>' +
+                '<div id="late-panel" hidden>Hydrated content</div>';
+            }, 350);
+          </script>
+        </body>
+      </html>`;
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(fixture);
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Fixture server did not expose a TCP port.');
+      const url = `http://127.0.0.1:${address.port}/`;
+      const outputDir = await mkdtemp(join(tmpdir(), 'a11y-disclosure-rerender-'));
+      const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+      const result = await runAudit([url], 'disclosure fixture', [], resolveOptions({
+        auditor: 'Test Auditor',
+        outputDir,
+        allowedHosts: ['127.0.0.1'],
+        stagingOnly: false,
+        concurrency: 1,
+        captureScreenshots: false,
+        viewports: [{ name: 'desktop', width: 1200, height: 800 }],
+        ...(channel ? { channel } : {})
+      }));
+      const viewport = result.pages[0]!.viewports[0]!;
+      const slow = viewport.disclosures.find((item) => item.selector === '#slow-toggle');
+      expect(slow).toEqual(expect.objectContaining({
+        activationTargetVerified: true,
+        enterTargetVerified: true,
+        enterTestCompleted: true,
+        enterSettled: true,
+        beforeExpanded: 'false',
+        afterExpanded: 'true',
+        controlledVisibleBefore: false,
+        controlledVisibleAfterOpen: true,
+        spaceTestCompleted: true,
+        spaceTargetVerified: true,
+        spaceSettled: true
+      }));
+      expect(slow?.enterSettleMs).toBeGreaterThanOrEqual(400);
+      expect(slow?.afterEnterState).toEqual(expect.objectContaining({
+        selector: '#slow-toggle',
+        expanded: 'true',
+        controlledVisible: true,
+        controlledExposed: false
+      }));
+      expect(viewport.disclosures.some((item) => item.selector === '#hidden-clone')).toBe(false);
+      expect(viewport.disclosures.find((item) => item.selector === '#late-toggle')).toEqual(expect.objectContaining({
+        enterTestCompleted: true,
+        enterSettled: true,
+        afterExpanded: 'true',
+        controlledVisibleAfterOpen: true
+      }));
+      expect(viewport.disclosures.find((item) => item.selector === '#locked-open')?.error).toContain('collapsed baseline');
+      expect(result.findings.some((finding) => finding.ruleId === 'disclosure-state-not-updated' && finding.selectors.includes('#slow-toggle'))).toBe(false);
+      expect(result.findings.some((finding) => finding.ruleId === 'disclosure-state-not-updated' && finding.selectors.includes('#relationship-only'))).toBe(false);
+      expect(result.findings.some((finding) => finding.ruleId === 'disclosure-state-not-updated' && finding.selectors.includes('#locked-open'))).toBe(false);
+      expect(result.findings.some((finding) => finding.ruleId === 'disclosure-state-not-updated' && finding.selectors.includes('#broken-toggle'))).toBe(true);
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()));
+    }
+  }, 120_000);
+
   it('runs the professional service entry point and validates its workbook', async () => {
     const fixture = await readFile(resolve('tests/fixtures/site/index.html'));
     const server = createServer((request, response) => {

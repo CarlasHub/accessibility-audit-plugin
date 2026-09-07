@@ -196,6 +196,11 @@ export interface DisclosureCheckResult {
   controls: string | null;
   initialExpanded?: string | null;
   baselinePrepared?: boolean;
+  activationTargetVerified?: boolean;
+  enterTargetVerified?: boolean;
+  enterTestCompleted?: boolean;
+  enterSettled?: boolean;
+  enterSettleMs?: number;
   beforeExpanded: string | null;
   afterExpanded: string | null;
   controlledVisibleBefore: boolean | null;
@@ -203,9 +208,34 @@ export interface DisclosureCheckResult {
   spaceAfterExpanded?: string | null;
   controlledVisibleAfterSpace?: boolean | null;
   spaceTestCompleted?: boolean;
+  spaceTargetVerified?: boolean;
+  spaceSettled?: boolean;
+  spaceSettleMs?: number;
+  initialState?: DisclosureStateSnapshot;
+  beforeState?: DisclosureStateSnapshot;
+  afterEnterState?: DisclosureStateSnapshot;
+  afterSpaceState?: DisclosureStateSnapshot;
   firstTabSelector: string | null;
   tabEnteredControlledRegion: boolean | null;
+  restorationError?: string;
   error?: string;
+}
+
+export interface DisclosureStateSnapshot {
+  selector: string;
+  name: string;
+  tagName: string;
+  role: string;
+  expanded: string | null;
+  controls: string | null;
+  controlMatchCount: number;
+  controlledMatchCount: number;
+  controlledVisible: boolean | null;
+  controlledExposed: boolean | null;
+  rendered: boolean;
+  topmost: boolean;
+  focused: boolean;
+  runningAnimations: number;
 }
 
 export interface InteractionBlocker {
