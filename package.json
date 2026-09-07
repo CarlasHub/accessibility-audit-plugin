@@ -1,6 +1,6 @@
 {
   "name": "accessibility-audit-plugin",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "private": true,
   "description": "Cross-platform Codex, Claude Code, Claude Desktop, Cursor, and GitHub Copilot plugin for structured WCAG 2.2 accessibility audits.",
   "author": {
@@ -54,7 +54,7 @@
     "audit.config.example.json"
   ],
   "scripts": {
-    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/verify-site-neutrality.mjs --require-dist",
     "build:marketplace": "npm run build && node scripts/build-marketplace-payload.mjs",
     "package:claude-desktop": "npm run build:marketplace && node scripts/package-claude-desktop.mjs",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
@@ -68,7 +68,8 @@
     "validate:marketplace": "node scripts/validate-marketplace-payload.mjs",
     "test:marketplace": "node scripts/smoke-marketplace-payload.mjs",
     "test:rai-marketplace": "node scripts/test-rai-ops-compatibility.mjs",
-    "audit:dependencies": "npm audit --omit=dev --audit-level=high"
+    "audit:dependencies": "npm audit --omit=dev --audit-level=high",
+    "verify:site-neutrality": "node scripts/verify-site-neutrality.mjs"
   },
   "engines": {
     "node": ">=22"

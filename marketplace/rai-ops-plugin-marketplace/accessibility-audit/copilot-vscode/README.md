@@ -1,6 +1,6 @@
 # Accessibility Audit for GitHub Copilot in VS Code
 
-Accessibility Audit runs evidence-backed WCAG 2.2 A/AA checks against explicit authorized page URLs and writes a validated Excel report, JSON evidence, linked component screenshots, and a portable ZIP. It does not crawl a site or certify conformance.
+Accessibility Audit runs evidence-backed WCAG 2.2 A/AA checks against explicit authorized page URLs and writes a validated Excel report, JSON evidence, linked component screenshots, and a portable ZIP. The engine is site-independent: it contains no customer-specific hostnames, page assumptions, selectors, rules, or defaults. It does not crawl a site or certify conformance.
 
 ## Use
 

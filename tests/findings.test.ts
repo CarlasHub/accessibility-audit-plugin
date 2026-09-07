@@ -415,8 +415,8 @@ describe('evidence-gated link and tab findings', () => {
         ...base.dom,
         linkedImagesForReview: [{
           selector: '#brand-home',
-          name: 'BAT Logo',
-          alt: 'BAT Logo',
+          name: 'Example Company Logo',
+          alt: 'Example Company Logo',
           href: 'https://test.example/',
           reason: 'The linked image points home but its name does not contain the word home.'
         }]

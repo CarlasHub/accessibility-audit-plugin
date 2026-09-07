@@ -12,20 +12,20 @@ describe('collectUrls', () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Pages');
     sheet.addRow(['Page name', 'QA page', 'Production page']);
-    sheet.addRow(['Home', 'https://example.runmytests.com/en', 'https://example.com/en']);
-    sheet.addRow(['Jobs', 'https://example.runmytests.com/jobs', 'https://example.com/jobs']);
+    sheet.addRow(['Home', 'https://careers.qa.example.org/en', 'https://careers.example.org/en']);
+    sheet.addRow(['Jobs', 'https://careers.qa.example.org/jobs', 'https://careers.example.org/jobs']);
     await workbook.xlsx.writeFile(path);
 
-    const result = await collectUrls([path], { stagingOnly: true, allowedHosts: ['runmytests.com'] });
+    const result = await collectUrls([path], { stagingOnly: true, allowedHosts: ['qa.example.org'] });
     expect(result.urls).toEqual([
-      'https://example.runmytests.com/en',
-      'https://example.runmytests.com/jobs'
+      'https://careers.qa.example.org/en',
+      'https://careers.qa.example.org/jobs'
     ]);
     expect(result.skipped).toEqual([]);
   });
 
   it('rejects all URLs outside the allowed-host list', async () => {
-    await expect(collectUrls(['https://example.com/'], { allowedHosts: ['runmytests.com'] })).rejects.toThrow(
+    await expect(collectUrls(['https://example.com/'], { allowedHosts: ['qa.example.org'] })).rejects.toThrow(
       'All discovered URLs were excluded'
     );
   });

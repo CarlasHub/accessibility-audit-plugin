@@ -14,7 +14,7 @@ export interface EmbeddedAuditInstructionOptions {
   stagingOnly?: boolean;
 }
 
-export const EMBEDDED_AUDIT_WORKFLOW = `Run the accessibility-audit plugin against the supplied project pages. This workflow is generic: never assume the site is Unilever or reuse URLs, evidence, findings, or wording from an earlier audit.
+export const EMBEDDED_AUDIT_WORKFLOW = `Run the accessibility-audit plugin against the supplied project pages. This workflow is site-independent: never assume the target belongs to a previous audit or reuse URLs, evidence, findings, wording, customer names, or site-specific rules from an earlier run.
 
 Isolation and target rules:
 1. Operate only through the accessibility-audit plugin. Do not install dependencies in, edit, format, lint, build, or test the target project's source code.

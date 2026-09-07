@@ -8,6 +8,8 @@ An isolated Codex, Claude Code, Cursor, GitHub Copilot CLI, and GitHub Copilot i
 
 Maintained by Radancy and released under the MIT License.
 
+The audit engine is site-independent. It contains no customer-specific hostnames, page assumptions, selectors, rules, or defaults. Every target URL is supplied at run time, and evidence from one audit is never reused in another. Customer sites used during development are external validation targets only and are not part of the plugin package.
+
 You do not need to know WCAG terminology to run the plugin. Start with the workflow below, use the [installation guide](docs/installation.md) for your client, then use the [plain-language user guide](docs/user-guide.md) and [WCAG basics](docs/wcag-basics.md) to understand the results.
 
 > **Important:** this plugin is an automated testing aid, not a WCAG certification. A report with no automated findings does not prove that a page is accessible. Screen-reader, physical-device, content-meaning, visual-judgment, and other guided checks remain manual. W3C likewise states that no evaluation tool alone can determine whether a site meets accessibility standards.

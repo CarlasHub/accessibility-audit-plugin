@@ -33,7 +33,8 @@ describe('embedded audit instructions', () => {
     expect(instructions).not.toContain('Screen Reader Failures with');
     expect(instructions).toContain('Do not install dependencies in');
     expect(instructions).toContain('Do not mention Jira');
-    expect(instructions).toContain('never assume the site is Unilever');
+    expect(instructions).toContain('never assume the target belongs to a previous audit');
+    expect(instructions).toContain('customer names, or site-specific rules from an earlier run');
     expect(instructions).toContain('Use one row for the same reusable component implementation and root cause');
     expect(instructions).toContain('same reusable component implementation and root cause');
     expect(instructions).toContain('set every populated Accessibility Report row to Fail');

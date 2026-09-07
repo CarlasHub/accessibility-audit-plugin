@@ -89,7 +89,7 @@ export async function collectUrls(
       skipped.push({ url, reason: `Host ${host} is not in the allowed-host list.` });
       return false;
     }
-    if (options.stagingOnly && !/(staging|stage|preview|qa|test|runmytests|localhost|127\.0\.0\.1)/i.test(host)) {
+    if (options.stagingOnly && !/(staging|stage|preview|qa|test|localhost|127\.0\.0\.1)/i.test(host)) {
       skipped.push({ url, reason: `Host ${host} does not look like a staging host.` });
       return false;
     }

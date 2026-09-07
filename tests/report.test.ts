@@ -13,11 +13,11 @@ function summaryWithScreenshot(screenshot: string): AuditSummary {
     generatedAt: '2026-09-02T10:00:00.000Z',
     auditor: 'Test Auditor',
     source: 'test',
-    landingPageUrl: 'https://example.runmytests.com/en',
-    requestedUrls: ['https://example.runmytests.com/en'],
-    auditedUrls: ['https://example.runmytests.com/en'],
+    landingPageUrl: 'https://careers.qa.example.org/en',
+    requestedUrls: ['https://careers.qa.example.org/en'],
+    auditedUrls: ['https://careers.qa.example.org/en'],
     skippedUrls: [],
-    pages: [{ url: 'https://example.runmytests.com/en', viewports: [] }],
+    pages: [{ url: 'https://careers.qa.example.org/en', viewports: [] }],
     coverage: [],
     findings: [{
       key: 'image-missing-alt:header-logo',
@@ -31,14 +31,14 @@ function summaryWithScreenshot(screenshot: string): AuditSummary {
       testing: 'Rendered DOM and accessible name inspection.',
       remediation: 'Give the home link an accessible name that identifies the organisation home page and use appropriate image alt text.',
       component: 'site logo link',
-      componentName: '“Unilever” home link',
+      componentName: '“Example Company” home link',
       componentLocation: 'Within the “Primary” navigation landmark',
-      urls: ['https://example.runmytests.com/en', 'https://example.runmytests.com/jobs'],
+      urls: ['https://careers.qa.example.org/en', 'https://careers.qa.example.org/jobs'],
       viewports: ['desktop', 'mobile'],
       selectors: ['header a.logo'],
       evidence: [{
         kind: 'dom',
-        pageUrl: 'https://example.runmytests.com/en',
+        pageUrl: 'https://careers.qa.example.org/en',
         viewport: 'desktop',
         selector: 'header a.logo',
         detail: '<img src="logo.png">',
@@ -84,8 +84,8 @@ describe('Excel report', () => {
     expect(pageInventory?.actualColumnCount).toBe(1);
     expect(pageInventory?.actualRowCount).toBe(1);
     expect(pageInventory?.getCell('A1').value).toEqual({
-      text: 'https://example.runmytests.com/en',
-      hyperlink: 'https://example.runmytests.com/en'
+      text: 'https://careers.qa.example.org/en',
+      hyperlink: 'https://careers.qa.example.org/en'
     });
     expect(pageInventory?.properties.tabColor?.argb).toBe('FF0000FF');
     const inventory = workbook.getWorksheet('Image Inventory');
@@ -99,11 +99,11 @@ describe('Excel report', () => {
     }));
     const report = workbook.getWorksheet('Accessibility Report');
     expect(report?.getCell('N2').value).toBe(
-      'https://example.runmytests.com/en\nhttps://example.runmytests.com/jobs'
+      'https://careers.qa.example.org/en\nhttps://careers.qa.example.org/jobs'
     );
-    expect(report?.getCell('O2').value).toBe('Desktop and mobile: “Unilever” home link — Linked logo has no meaningful alternative');
+    expect(report?.getCell('O2').value).toBe('Desktop and mobile: “Example Company” home link — Linked logo has no meaningful alternative');
     expect(report?.getCell('P2').value).toBe('Headless Chromium; Desktop (1440×1000), Mobile (390×844)');
-    expect(report?.getCell('Q2').value).toContain('Component: “Unilever” home link');
+    expect(report?.getCell('Q2').value).toContain('Component: “Example Company” home link');
     expect(report?.getCell('Q2').value).toContain('Location: Within the “Primary” navigation landmark');
     expect(report?.getCell('Q2').value).toContain('Affected viewport(s): Desktop (1440×1000), Mobile (390×844)');
     expect(report?.getCell('Q2').value).toContain('User impact: The home destination is not identifiable.');
@@ -119,8 +119,8 @@ describe('Excel report', () => {
     expect(report?.getCell('AF2').dataValidation.formulae).toEqual(['=OR(AF2=0,MOD(AF2,0.25)=0)']);
     const overview = workbook.getWorksheet('Accessibility Overview');
     expect(overview?.getCell('B5').value).toEqual(expect.objectContaining({
-      text: 'https://example.runmytests.com/en',
-      hyperlink: 'https://example.runmytests.com/en'
+      text: 'https://careers.qa.example.org/en',
+      hyperlink: 'https://careers.qa.example.org/en'
     }));
     expect(overview?.getCell('B9').value).toContain('linked contextual evidence for confirmed, blocker, and review findings');
   });

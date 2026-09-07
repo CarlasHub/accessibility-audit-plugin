@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.7 - 2026-09-07
+
+- Removed customer and validation-site names from runtime instructions, URL tests, finding fixtures, report fixtures, and staging-host detection.
+- Documented that audit targets are supplied at run time and that no customer-specific hostname, selector, rule, default, or prior-run evidence belongs in the plugin package.
+- Added a build-time site-neutrality verification that rejects known validation-customer names in runtime and user-facing package content.
+
 ## 0.9.6 - 2026-09-06
 
 - Replaced index-based disclosure activation and fixed post-key delays with stable live-control identity checks, focus-target verification, and bounded state settling.
