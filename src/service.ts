@@ -42,6 +42,10 @@ function cleanReportName(value: string): string {
   return name.toLowerCase().endsWith('.xlsx') ? name : `${name}.xlsx`;
 }
 
+function outputArtifactPath(directory: string, filename: string): string {
+  return resolve(directory, filename);
+}
+
 async function emitProgress(execution: AuditExecutionContext, event: AuditProgressEvent): Promise<void> {
   try {
     await execution.onProgress?.(event);
@@ -69,8 +73,8 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
   });
   const summary = await runAudit(collected.urls, collected.source, collected.skipped, options, execution);
   const reportName = cleanReportName(request.reportName ?? DEFAULT_REPORT_NAME);
-  const reportPath = resolve(options.outputDir, reportName);
-  const jsonPath = resolve(options.outputDir, 'audit-results.json');
+  const reportPath = outputArtifactPath(options.outputDir, reportName);
+  const jsonPath = outputArtifactPath(options.outputDir, 'audit-results.json');
   const applyLateCancellation = async (): Promise<boolean> => {
     if (!execution.signal?.aborted || summary.status === 'cancelled') return false;
     const cancelledAt = new Date().toISOString();

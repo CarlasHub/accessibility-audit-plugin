@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 - 2026-09-09
+
+- Added the `wcag-level` GitHub Action and CLI option so audits can include supported WCAG 2.2 AAA automation in addition to the default A/AA rules.
+- Made browser-side axe execution reliable in the distributed Action bundle by preserving callback source and packaging `axe-core` explicitly.
+- Preserved completed axe and heuristic evidence when a later interaction check is inconclusive or fails unexpectedly.
+- Fixed bundled report-path resolution and label AAA reports accurately in the workbook summary.
+- Expanded Action-bundle smoke coverage for packaged axe availability and AAA configuration.
+
 ## 1.0.0 - 2026-09-09
 
 - Rebranded the public package, manifests, generated marketplaces, documentation, policies, and support paths for CarlasHub ownership.

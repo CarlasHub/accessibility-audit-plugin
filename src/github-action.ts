@@ -66,6 +66,14 @@ export function parseFailurePolicy(value: string): FailurePolicy {
   return normalized;
 }
 
+export function parseWcagLevel(value: string): 'AA' | 'AAA' {
+  const normalized = value.trim().toUpperCase() || 'AA';
+  if (normalized !== 'AA' && normalized !== 'AAA') {
+    throw new Error('wcag-level must be AA or AAA.');
+  }
+  return normalized;
+}
+
 function parsePositiveInteger(value: string, fallback: number, name: string): number {
   if (!value.trim()) return fallback;
   const parsed = Number(value);
@@ -229,6 +237,7 @@ export async function runGitHubAction(environment: ActionEnvironment = process.e
     ...(getInput(environment, 'REPORT-NAME') ? { reportName: getInput(environment, 'REPORT-NAME') } : {}),
     options: {
       auditor: getInput(environment, 'AUDITOR') || 'GitHub Actions',
+      wcagLevel: parseWcagLevel(getInput(environment, 'WCAG-LEVEL')),
       outputDir,
       ...(getInput(environment, 'LANDING-PAGE-URL') ? { landingPageUrl: getInput(environment, 'LANDING-PAGE-URL') } : {}),
       allowedHosts,

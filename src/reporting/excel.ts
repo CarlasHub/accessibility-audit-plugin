@@ -260,7 +260,9 @@ function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
   worksheet.getCell('B4').value = summary.status === 'completed' ? 'Completed' : 'Cancelled';
   worksheet.getCell('B5').value = new Date(summary.generatedAt);
   worksheet.getCell('B6').value = summary.auditor;
-  worksheet.getCell('B7').value = 'WCAG 2.2 Level A and AA';
+  worksheet.getCell('B7').value = summary.wcagLevel === 'AAA'
+    ? 'WCAG 2.2 Level A, AA, and AAA'
+    : 'WCAG 2.2 Level A and AA';
   const landingUrl = summary.landingPageUrl || summary.requestedUrls[0] || '';
   worksheet.getCell('B8').value = /^https?:\/\//i.test(landingUrl) ? { text: landingUrl, hyperlink: landingUrl } : landingUrl;
   worksheet.getCell('B9').value = summary.requestedUrls.length;

@@ -8,12 +8,12 @@ const relocatedWorkspace = resolve(actionDist, 'Accessibility-audit-plugin');
 // and local release artifacts are not Action dependencies and must not ship.
 await rm(relocatedWorkspace, { recursive: true, force: true });
 
-// Playwright loads its package metadata and browser registry dynamically, so
-// ncc cannot safely inline it. Ship those two runtime packages beside the
-// bundle so the committed Action is self-contained.
+// Playwright loads its package metadata and browser registry dynamically, and
+// axe-core's browser source must remain byte-for-byte executable. Ship these
+// runtime packages beside the bundle so the committed Action is self-contained.
 const actionNodeModules = resolve(actionDist, 'node_modules');
 await rm(actionNodeModules, { recursive: true, force: true });
-for (const packageName of ['playwright', 'playwright-core']) {
+for (const packageName of ['axe-core', 'playwright', 'playwright-core']) {
   await cp(
     resolve(process.cwd(), 'node_modules', packageName),
     resolve(actionNodeModules, packageName),

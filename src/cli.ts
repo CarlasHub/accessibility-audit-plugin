@@ -15,6 +15,7 @@ import { isDirectInvocation } from './invocation.js';
 interface AuditCliOptions {
   config?: string;
   auditor?: string;
+  wcagLevel?: string;
   landingPage?: string;
   output?: string;
   allowHost?: string[];
@@ -53,7 +54,7 @@ function terminalText(value: string): string {
 }
 
 const program = new Command();
-program.name('accessibility-audit').description('Run structured WCAG 2.2 A/AA audits and generate the standard Excel report.').version(PLUGIN_VERSION);
+program.name('accessibility-audit').description('Run structured WCAG 2.2 audits and generate the standard Excel report.').version(PLUGIN_VERSION);
 
 program
   .command('audit')
@@ -61,6 +62,7 @@ program
   .argument('<inputs...>', 'URLs or input files')
   .option('-c, --config <path>', 'JSON configuration file')
   .option('--auditor <name>', 'Auditor name')
+  .option('--wcag-level <level>', 'WCAG conformance level: AA or AAA')
   .option('--landing-page <url>', 'Landing-page QA URL written to Audit Summary')
   .option('-o, --output <directory>', 'Output directory')
   .option('--allow-host <host>', 'Allowed hostname; repeat for more than one', collect, [])
@@ -106,6 +108,7 @@ program
     const options: Partial<AuditConfigInput> = {
       ...fileConfig,
       auditor,
+      ...(cli.wcagLevel ? { wcagLevel: cli.wcagLevel.toUpperCase() as 'AA' | 'AAA' } : {}),
       ...(landingPageUrl ? { landingPageUrl } : {}),
       ...(cli.output ? { outputDir: cli.output } : {}),
       ...(cli.allowHost?.length ? { allowedHosts: cli.allowHost } : {}),

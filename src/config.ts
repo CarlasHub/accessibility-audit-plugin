@@ -19,6 +19,7 @@ const viewportSchema = z.object({
 
 const configSchema = z.object({
   auditor: z.string().min(1).default(DEFAULT_AUDITOR),
+  wcagLevel: z.enum(['AA', 'AAA']).default('AA'),
   outputDir: z.string().min(1).default(DEFAULT_OUTPUT_DIR),
   landingPageUrl: z.string().url().optional(),
   allowedHosts: z.array(z.string().min(1)).default([]),
@@ -41,6 +42,7 @@ export function resolveOptions(input: Partial<AuditConfigInput> = {}): AuditOpti
   const parsed = configSchema.parse(input);
   return {
     auditor: parsed.auditor,
+    wcagLevel: parsed.wcagLevel,
     outputDir: resolve(parsed.outputDir),
     ...(parsed.landingPageUrl ? { landingPageUrl: parsed.landingPageUrl } : {}),
     allowedHosts: parsed.allowedHosts.map((host) => host.toLowerCase()),

@@ -1,6 +1,6 @@
 {
   "name": "accessibility-audit",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Isolated evidence-backed WCAG 2.2 auditing with desktop, mobile, reflow, link and tab checks, element screenshots, and validated Excel reporting.",
   "author": {
     "name": "CarlasHub",

@@ -14,6 +14,10 @@ inputs:
     description: Name recorded as the auditor in the report.
     required: false
     default: GitHub Actions
+  wcag-level:
+    description: 'Conformance rules to include: AA (Levels A and AA) or AAA (Levels A, AA, and AAA).'
+    required: false
+    default: AA
   output-dir:
     description: Report directory, relative to the workflow workspace unless absolute.
     required: false

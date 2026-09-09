@@ -11,6 +11,7 @@ const actionEntry = resolve(actionDist, 'index.js');
 
 for (const requiredPath of [
   actionEntry,
+  resolve(actionDist, 'node_modules', 'axe-core', 'package.json'),
   resolve(actionDist, 'node_modules', 'playwright', 'package.json'),
   resolve(actionDist, 'node_modules', 'playwright-core', 'package.json'),
   resolve(root, 'assets', 'accessibility-report-template.xlsx')
@@ -80,6 +81,7 @@ try {
     INPUT_URLS: `http://127.0.0.1:${address.port}/`,
     'INPUT_ALLOWED-HOSTS': '127.0.0.1',
     'INPUT_OUTPUT-DIR': 'results',
+    'INPUT_WCAG-LEVEL': 'AAA',
     'INPUT_CAPTURE-SCREENSHOTS': 'false',
     'INPUT_AUTO-INSTALL-BROWSER': 'false',
     'INPUT_COMMENT-ON-PR': 'false',

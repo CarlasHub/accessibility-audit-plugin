@@ -11,6 +11,7 @@ import type { AuditSummary } from '../src/types.js';
 function summaryWithEvidence(screenshot: string): AuditSummary {
   return {
     status: 'completed',
+    wcagLevel: 'AA',
     generatedAt: '2026-09-04T12:00:00.000Z',
     auditor: 'Automated',
     source: 'test',

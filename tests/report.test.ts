@@ -9,7 +9,7 @@ import type { AuditSummary } from '../src/types.js';
 
 function summaryWithScreenshot(screenshot: string): AuditSummary {
   return {
-    status: 'completed', generatedAt: '2026-09-02T10:00:00.000Z', auditor: 'Test Auditor', source: 'test',
+    status: 'completed', generatedAt: '2026-09-02T10:00:00.000Z', auditor: 'Test Auditor', source: 'test', wcagLevel: 'AA',
     landingPageUrl: 'https://careers.qa.example.org/en', requestedUrls: ['https://careers.qa.example.org/en'],
     auditedUrls: ['https://careers.qa.example.org/en'], skippedUrls: [],
     pages: [{ url: 'https://careers.qa.example.org/en', viewports: [] }], coverage: [],

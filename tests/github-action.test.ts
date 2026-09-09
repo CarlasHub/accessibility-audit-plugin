@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateGate, parseBooleanInput, parseFailurePolicy, parseListInput } from '../src/github-action.js';
+import { evaluateGate, parseBooleanInput, parseFailurePolicy, parseListInput, parseWcagLevel } from '../src/github-action.js';
 
 describe('GitHub Action inputs', () => {
   it('reads one URL per line and JSON arrays without treating URL commas as separators', () => {
@@ -18,6 +18,8 @@ describe('GitHub Action inputs', () => {
     expect(parseBooleanInput('0', true)).toBe(false);
     expect(parseFailurePolicy('SERIOUS')).toBe('serious');
     expect(() => parseFailurePolicy('review')).toThrow(/fail-on must be one of/);
+    expect(parseWcagLevel('aaa')).toBe('AAA');
+    expect(() => parseWcagLevel('A')).toThrow(/AA or AAA/);
   });
 });
 

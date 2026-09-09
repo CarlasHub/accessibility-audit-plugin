@@ -1,6 +1,7 @@
 export type FindingClassification = 'confirmed' | 'review' | 'manual' | 'blocker';
 export type Severity = 'Critical' | 'Serious' | 'Moderate' | 'Minor' | 'Advisory';
 export type AuditStatus = 'completed' | 'cancelled';
+export type WcagConformanceLevel = 'AA' | 'AAA';
 export type AuditProgressPhase =
   | 'preparing'
   | 'targets'
@@ -371,6 +372,7 @@ export interface AuditSummary {
   generatedAt: string;
   auditor: string;
   source: string;
+  wcagLevel: WcagConformanceLevel;
   landingPageUrl: string;
   requestedUrls: string[];
   auditedUrls: string[];
@@ -384,6 +386,7 @@ export interface AuditSummary {
 
 export interface AuditOptions {
   auditor: string;
+  wcagLevel: WcagConformanceLevel;
   outputDir: string;
   landingPageUrl?: string;
   allowedHosts: string[];

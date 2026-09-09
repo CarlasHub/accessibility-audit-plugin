@@ -59,6 +59,7 @@ The Action uses the GitHub REST API only to list, create, or update its marked p
 | --- | --- | --- |
 | `urls` | Required | One explicit HTTP(S) URL per line, or a JSON string array. The Action does not crawl. |
 | `auditor` | `GitHub Actions` | Auditor name written into the workbook. |
+| `wcag-level` | `AA` | `AA` runs WCAG 2.2 A/AA rules; `AAA` also enables supported AAA automation and labels the report accordingly. |
 | `output-dir` | `accessibility-audit-results` | Output directory, relative to the workspace unless absolute. |
 | `landing-page-url` | First URL | Report metadata and same-origin link context; it does not expand scope. |
 | `allowed-hosts` | Empty | Comma- or newline-separated hostname allowlist. Strongly recommended. |

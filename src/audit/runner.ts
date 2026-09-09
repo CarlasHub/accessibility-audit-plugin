@@ -161,9 +161,17 @@ async function launchAuditBrowser(
   return chromium.launch(createBrowserLaunchOptions({}, options.headless));
 }
 
-async function runAxe(page: Page): Promise<{ results: AxeViolationResult[]; metadata: AxeRunMetadata }> {
+async function runAxe(
+  page: Page,
+  wcagLevel: AuditOptions['wcagLevel']
+): Promise<{ results: AxeViolationResult[]; metadata: AxeRunMetadata }> {
   await page.addScriptTag({ content: axe.source });
-  const output = await page.evaluate(async () => {
+  const tags = [
+    'wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa',
+    ...(wcagLevel === 'AAA' ? ['wcag2aaa', 'wcag21aaa', 'wcag22aaa'] : []),
+    'best-practice'
+  ];
+  const output = await page.evaluate(async (runOnlyTags) => {
     const engine = (window as unknown as {
       axe: {
         run: (context: Document, options: unknown) => Promise<{
@@ -176,11 +184,11 @@ async function runAxe(page: Page): Promise<{ results: AxeViolationResult[]; meta
     return engine.run(document, {
       runOnly: {
         type: 'tag',
-        values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice']
+        values: runOnlyTags
       },
       resultTypes: ['violations', 'incomplete', 'passes']
     });
-  });
+  }, tags);
   return {
     results: [
       ...output.violations.map((result) => ({ ...result, resultType: 'violation' as const })),
@@ -416,6 +424,17 @@ async function auditViewport(
     scope: viewport.name === 'desktop' ? 'blocked' : 'not-applicable',
     ...(viewport.name === 'desktop' ? { error: 'Link checks did not start.' } : {})
   };
+  let axeResults: AxeViolationResult[] = [];
+  let dom = emptyDom();
+  let keyboard: ViewportAudit['keyboard'] = {
+    sequence: [], completedCycle: false, truncated: false, scope: 'unknown'
+  };
+  let responsive: ViewportAudit['responsive'] = {
+    horizontalOverflow: 0, overflowElements: [], textSpacingOverflow: 0
+  };
+  let disclosures: ViewportAudit['disclosures'] = [];
+  let tabs: ViewportAudit['tabs'] = [];
+  let links: ViewportAudit['links'] = [];
   const screenshot = resolve(options.outputDir, 'screenshots', `${safeSlug(url)}-${viewport.name}.png`);
   let context: Awaited<ReturnType<Browser['newContext']>> | undefined;
   const closeOnAbort = (): void => { void context?.close().catch(() => undefined); };
@@ -449,9 +468,8 @@ async function auditViewport(
     }
     interactionBlocker = await detectInteractionBlocker(page);
     if (interactionBlocker) errors.push(`${interactionBlocker.reason} ${interactionBlocker.selector}`);
-    let axeResults: AxeViolationResult[] = [];
     try {
-      const axeOutput = await runAxe(page);
+      const axeOutput = await runAxe(page, options.wcagLevel);
       axeResults = axeOutput.results;
       axeRun = axeOutput.metadata;
     } catch (error) {
@@ -469,8 +487,16 @@ async function auditViewport(
     const axeTargetSizeSelectors = axeResults
       .filter((result) => result.id === 'target-size')
       .flatMap((result) => result.nodes.flatMap((node) => node.target));
-    const dom = await runDomChecks(page, axeTargetSizeSelectors);
-    const keyboard = await runKeyboardChecks(page, options.maxTabStops);
+    try {
+      dom = await runDomChecks(page, axeTargetSizeSelectors);
+    } catch (error) {
+      errors.push(`DOM checks error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    try {
+      keyboard = await runKeyboardChecks(page, options.maxTabStops);
+    } catch (error) {
+      errors.push(`Keyboard checks error: ${error instanceof Error ? error.message : String(error)}`);
+    }
     if (!interactionBlocker && keyboard.scope === 'modal-only') {
       interactionBlocker = {
         selector: keyboard.modalSelector ?? 'modal surface',
@@ -480,17 +506,45 @@ async function auditViewport(
       };
       errors.push(`${interactionBlocker.reason} ${interactionBlocker.selector}`);
     }
-    const disclosures = interactionBlocker ? [] : await runDisclosureChecks(page);
+    if (!interactionBlocker) {
+      try {
+        disclosures = await runDisclosureChecks(page);
+      } catch (error) {
+        errors.push(`Disclosure checks error: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     for (const disclosure of disclosures.filter((item) => item.error)) {
       errors.push(`Disclosure interaction check incomplete for “${disclosure.name || disclosure.selector}”: ${disclosure.error}`);
     }
-    const tabs = interactionBlocker ? [] : await runTabChecks(page);
-    const responsive = await runResponsiveChecks(page);
-    let links: ViewportAudit['links'] = [];
+    if (!interactionBlocker) {
+      try {
+        tabs = await runTabChecks(page);
+      } catch (error) {
+        errors.push(`Tab checks error: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    try {
+      responsive = await runResponsiveChecks(page);
+    } catch (error) {
+      errors.push(`Responsive checks error: ${error instanceof Error ? error.message : String(error)}`);
+    }
     if (!interactionBlocker && viewport.name === 'desktop') {
-      const linkOutput = await runLinkChecks(page, options.maxLinksPerPage);
-      links = linkOutput.results;
-      linkRun = linkOutput.metadata;
+      try {
+        const linkOutput = await runLinkChecks(page, options.maxLinksPerPage);
+        links = linkOutput.results;
+        linkRun = linkOutput.metadata;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`Link checks error: ${message}`);
+        linkRun = {
+          completed: false,
+          candidateCount: 0,
+          checkedCount: 0,
+          truncated: false,
+          scope: 'desktop-same-origin',
+          error: message
+        };
+      }
     } else if (interactionBlocker && viewport.name === 'desktop') {
       linkRun = {
         completed: false,
@@ -569,14 +623,14 @@ async function auditViewport(
       finalUrl,
       status,
       title,
-      axe: [],
+      axe: axeResults,
       axeRun,
-      dom: emptyDom(),
-      keyboard: { sequence: [], completedCycle: false, truncated: false, scope: 'unknown' },
-      responsive: { horizontalOverflow: 0, overflowElements: [], textSpacingOverflow: 0 },
-      disclosures: [],
-      tabs: [],
-      links: [],
+      dom,
+      keyboard,
+      responsive,
+      disclosures,
+      tabs,
+      links,
       linkRun,
       consent,
       interactionBlocker,
@@ -724,6 +778,7 @@ export async function runAudit(
     generatedAt,
     auditor: options.auditor,
     source,
+    wcagLevel: options.wcagLevel,
     landingPageUrl: options.landingPageUrl ?? urls[0] ?? '',
     requestedUrls: urls,
     auditedUrls: pages.filter((page) => page.viewports.some((viewport) =>
