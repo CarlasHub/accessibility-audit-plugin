@@ -14,11 +14,15 @@ You do not need to know WCAG terminology to run the plugin. Start with the workf
 
 > **Important:** this plugin is an automated testing aid, not a WCAG certification. A report with no automated findings does not prove that a page is accessible. Screen-reader, physical-device, content-meaning, visual-judgment, and other guided checks remain manual. W3C likewise states that no evaluation tool alone can determine whether a site meets accessibility standards.
 
-## Demonstration
+## Live BuggyLand demonstration
 
-[![Accessibility Audit Plugin demonstration: run an audit from Cursor, Claude, Codex, or Copilot](https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/accessibility-audit-demo-poster.png)](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4)
+[![Captioned walkthrough of the CarlasHub Action auditing BuggyLand](https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/buggyland-github-action-tutorial-poster.png)](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.1.0/BuggyLand_GitHub_Action_Tutorial.mp4)
 
-[Watch the 75-second sanitised demonstration](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4) or read the [video transcript](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/accessibility-audit-demo-transcript.md). The recording has no audio. Customer content, URLs, paths, and audit results are deliberately obscured; the captions demonstrate the workflow rather than asserting an accessibility result.
+[Watch or download the 80-second captioned walkthrough](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.1.0/BuggyLand_GitHub_Action_Tutorial.mp4), inspect the [successful public run](https://github.com/CarlasHub/buggyland/actions/runs/34384488369), or read the [video transcript](docs/buggyland-github-action-tutorial-transcript.md). The recording has no audio.
+
+The two [BuggyLand](https://carlashub.github.io/buggyland/) pages declare 172 intentional failure fixtures across all 86 active WCAG 2.2 success criteria. The Action produced 70 consolidated machine results: 52 confirmed failures and 18 items for review, with zero execution errors. Those numbers should not match: automated rules inspect rendered behaviour, consolidate repeated evidence, and cannot decide every WCAG requirement. The [benchmark evidence guide](docs/buggyland-benchmark.md) provides the complete criteria matrix, fixture inventory, downloadable enhanced workbook, raw JSON, and manual verification plan.
+
+For a client-neutral example, [watch the sanitised plugin demonstration](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4) or read its [transcript](docs/accessibility-audit-demo-transcript.md).
 
 ## Use the free GitHub Action
 

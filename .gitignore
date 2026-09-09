@@ -6,6 +6,8 @@ artifacts/
 Accessibility Audit Results/
 accessibility-audit-results/
 coverage/
+evidence/
+outputs/
 .DS_Store
 *.log
 *.tgz
