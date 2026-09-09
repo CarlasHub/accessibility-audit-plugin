@@ -154358,6 +154358,151 @@ function singleLineText(value, maxLength = Number.POSITIVE_INFINITY) {
     return visible.replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 //# sourceMappingURL=text.js.map
+// EXTERNAL MODULE: ./node_modules/exceljs/excel.js
+var excel = __nccwpck_require__(59203);
+;// CONCATENATED MODULE: ./dist/urls.js
+
+
+
+const urlPattern = /https?:\/\/[^\s<>'"\])}]+/gi;
+const stagingHostPattern = /(?:^|[.-])(?:dev|development|local|localhost|preview|qa|stage|staging|test|testing|uat)(?:[.\d-]|$)/i;
+function normalizeUrl(value) {
+    try {
+        const parsed = new URL(value.trim());
+        if (!['http:', 'https:'].includes(parsed.protocol))
+            return null;
+        if (parsed.username || parsed.password) {
+            throw new Error('URLs containing embedded usernames or passwords are not supported.');
+        }
+        parsed.hash = '';
+        return parsed.toString();
+    }
+    catch (error) {
+        if (error instanceof Error && error.message.includes('embedded usernames or passwords'))
+            throw error;
+        return null;
+    }
+}
+function unique(values) {
+    return [...new Set(values.map(normalizeUrl).filter((value) => Boolean(value)))];
+}
+async function urlsFromWorkbook(path) {
+    const workbook = new excel.Workbook();
+    await workbook.xlsx.readFile(path);
+    const preferred = [];
+    const fallback = [];
+    for (const sheet of workbook.worksheets) {
+        const headerByColumn = new Map();
+        const firstRow = sheet.getRow(1);
+        firstRow.eachCell((cell, column) => {
+            headerByColumn.set(column, String(cell.text ?? '').trim().toLowerCase());
+        });
+        const preferredColumns = new Set([...headerByColumn.entries()]
+            .filter(([, header]) => ['qa page', 'staging url', 'url', 'page url'].includes(header))
+            .map(([column]) => column));
+        sheet.eachRow((row, rowNumber) => {
+            row.eachCell((cell, column) => {
+                const text = cell.text || String(cell.value ?? '');
+                const matches = text.match(urlPattern) ?? [];
+                fallback.push(...matches);
+                if (rowNumber > 1 && preferredColumns.has(column))
+                    preferred.push(...matches);
+            });
+        });
+    }
+    return unique(preferred.length > 0 ? preferred : fallback);
+}
+function normalizeHostname(value) {
+    return value.trim().toLowerCase().replace(/\.+$/, '');
+}
+function normalizeAllowedHost(value) {
+    const trimmed = value.trim();
+    try {
+        const parsed = new URL(trimmed.includes('://') ? trimmed : `http://${trimmed}`);
+        if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password)
+            throw new Error();
+        if (trimmed.includes('://') && (parsed.pathname !== '/' || parsed.search || parsed.hash))
+            throw new Error();
+        const hostname = normalizeHostname(parsed.hostname);
+        if (!hostname || hostname.includes('*'))
+            throw new Error();
+        return hostname;
+    }
+    catch {
+        throw new Error(`Invalid allowed host "${trimmed}". Use a hostname such as example.com, without a path or wildcard.`);
+    }
+}
+function looksLikeStagingHost(hostname) {
+    const host = normalizeHostname(hostname);
+    return host === '127.0.0.1'
+        || host === '[::1]'
+        || stagingHostPattern.test(host);
+}
+function urlRestrictionReason(value, options = {}) {
+    let parsed;
+    try {
+        parsed = new URL(value);
+    }
+    catch {
+        return 'Navigation resolved to an invalid URL.';
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+        return `Navigation resolved to the unsupported ${parsed.protocol || 'unknown'} protocol.`;
+    }
+    if (parsed.username || parsed.password) {
+        return 'Navigation resolved to a URL containing embedded credentials.';
+    }
+    const host = normalizeHostname(parsed.hostname);
+    const allowedHosts = (options.allowedHosts ?? []).map(normalizeAllowedHost);
+    if (allowedHosts.length > 0 && !allowedHosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) {
+        return `Host ${host} is not in the allowed-host list.`;
+    }
+    if (options.stagingOnly && !looksLikeStagingHost(host)) {
+        return `Host ${host} does not look like a staging host.`;
+    }
+    return null;
+}
+async function collectUrls(inputs, options = {}) {
+    const found = [];
+    const sources = [];
+    for (const input of inputs) {
+        const direct = normalizeUrl(input);
+        if (direct) {
+            found.push(direct);
+            sources.push('command line');
+            continue;
+        }
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input.trim())) {
+            throw new Error('Unsupported or invalid target URL. Supply an HTTP(S) URL without embedded credentials.');
+        }
+        const filePath = (0,external_node_path_.resolve)(input);
+        const extension = (0,external_node_path_.extname)(filePath).toLowerCase();
+        sources.push(filePath);
+        if (extension === '.xlsx') {
+            found.push(...(await urlsFromWorkbook(filePath)));
+            continue;
+        }
+        const text = await (0,promises_.readFile)(filePath, 'utf8');
+        found.push(...(text.match(urlPattern) ?? []));
+    }
+    // Validate the allowlist even when the supplied page list contains no matching URL.
+    (options.allowedHosts ?? []).map(normalizeAllowedHost);
+    const skipped = [];
+    const urls = unique(found).filter((url) => {
+        const reason = urlRestrictionReason(url, options);
+        if (reason) {
+            skipped.push({ url, reason });
+            return false;
+        }
+        return true;
+    });
+    if (found.length === 0)
+        throw new Error('No HTTP(S) URLs were found in the supplied input.');
+    if (urls.length === 0)
+        throw new Error('All discovered URLs were excluded by the host restrictions.');
+    return { source: sources.join(', '), urls, skipped };
+}
+//# sourceMappingURL=urls.js.map
 ;// CONCATENATED MODULE: ./dist/audit/runner.js
 
 
@@ -154373,7 +154518,9 @@ function singleLineText(value, maxLength = Number.POSITIVE_INFINITY) {
 
 
 
+
 const CANCELLED_REASON = 'The audit was stopped by the user. Results include only work completed before cancellation.';
+const MAX_CAPTURED_RUNTIME_ERRORS = 50;
 const runner_require = (0,external_node_module_namespaceObject.createRequire)(import.meta.url);
 function emptyDom() {
     return {
@@ -154733,21 +154880,68 @@ async function auditViewport(browser, url, options, viewport, signal) {
             isMobile: viewport.isMobile ?? false,
             deviceScaleFactor: 1,
             reducedMotion: 'reduce',
-            colorScheme: 'light'
+            colorScheme: 'light',
+            bypassCSP: true
         });
         signal?.addEventListener('abort', closeOnAbort, { once: true });
         const page = await context.newPage();
         page.setDefaultTimeout(options.timeoutMs);
         page.setDefaultNavigationTimeout(options.timeoutMs);
-        page.on('pageerror', (error) => errors.push(`Page error: ${error.message}`));
+        let runtimeErrorCount = 0;
+        const captureRuntimeError = (message) => {
+            runtimeErrorCount += 1;
+            if (runtimeErrorCount <= MAX_CAPTURED_RUNTIME_ERRORS)
+                errors.push(message);
+            if (runtimeErrorCount === MAX_CAPTURED_RUNTIME_ERRORS + 1) {
+                errors.push(`Additional page and console errors were omitted after ${MAX_CAPTURED_RUNTIME_ERRORS} entries.`);
+            }
+        };
+        page.on('pageerror', (error) => captureRuntimeError(`Page error: ${error.message}`));
         page.on('console', (message) => {
             if (message.type() === 'error')
-                errors.push(`Console error: ${message.text()}`);
+                captureRuntimeError(`Console error: ${message.text()}`);
         });
-        const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+        let blockedNavigationReason = null;
+        await page.route('**/*', async (route) => {
+            const request = route.request();
+            const requestFrame = request.frame();
+            const isMainFrameNavigation = request.isNavigationRequest()
+                && (requestFrame === page.mainFrame() || requestFrame.parentFrame() === null);
+            if (isMainFrameNavigation) {
+                const isSupportedLocalFixture = /^(file|data):/i.test(url) && request.url() === url;
+                const reason = isSupportedLocalFixture ? null : urlRestrictionReason(request.url(), options);
+                if (reason) {
+                    blockedNavigationReason = `Navigation blocked: ${reason}`;
+                    await route.abort('blockedbyclient');
+                    return;
+                }
+            }
+            await route.continue();
+        });
+        let response;
+        try {
+            response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+        }
+        catch (error) {
+            if (blockedNavigationReason)
+                throw new Error(blockedNavigationReason);
+            throw error;
+        }
+        // Chromium can resolve page.goto() with the preceding redirect response even
+        // when a routed redirect destination was aborted, so check the route signal
+        // explicitly before treating the page as successfully loaded.
+        if (blockedNavigationReason)
+            throw new Error(blockedNavigationReason);
         status = response?.status() ?? null;
         await page.waitForLoadState('networkidle', { timeout: Math.min(options.timeoutMs, 5_000) }).catch(() => undefined);
         finalUrl = page.url();
+        const finalUrlRestriction = /^(file|data):/i.test(url) && finalUrl === url
+            ? null
+            : urlRestrictionReason(finalUrl, options);
+        if (finalUrlRestriction) {
+            status = null;
+            throw new Error(`Navigation blocked: ${finalUrlRestriction}`);
+        }
         title = await page.title();
         consent = await dismissConsentBanner(page);
         if (consent.error)
@@ -155047,8 +155241,8 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}) {
         wcagLevel: options.wcagLevel,
         landingPageUrl: options.landingPageUrl ?? urls[0] ?? '',
         requestedUrls: urls,
-        auditedUrls: pages.filter((page) => page.viewports.some((viewport) => !viewport.cancelled && ((viewport.status !== null && viewport.status < 400) ||
-            (/^(file|data):/i.test(viewport.finalUrl) && viewport.errors.length === 0)))).map((page) => page.url),
+        auditedUrls: pages.filter((page) => page.viewports.some((viewport) => !viewport.cancelled && viewport.axeRun.completed && ((viewport.status !== null && viewport.status < 400) ||
+            /^(file|data):/i.test(viewport.finalUrl)))).map((page) => page.url),
         skippedUrls: [...skippedUrls, ...cancellationSkips],
         pages,
         findings,
@@ -155075,8 +155269,6 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}) {
 //# sourceMappingURL=runner.js.map
 // EXTERNAL MODULE: external "node:url"
 var external_node_url_ = __nccwpck_require__(73136);
-// EXTERNAL MODULE: ./node_modules/exceljs/excel.js
-var excel = __nccwpck_require__(59203);
 ;// CONCATENATED MODULE: ./dist/reporting/excel.js
 
 
@@ -155402,93 +155594,6 @@ async function writeExcelReport(summary, options) {
     return options.outputPath;
 }
 //# sourceMappingURL=excel.js.map
-;// CONCATENATED MODULE: ./dist/urls.js
-
-
-
-const urlPattern = /https?:\/\/[^\s<>'"\])}]+/gi;
-function normalizeUrl(value) {
-    try {
-        const parsed = new URL(value.trim());
-        if (!['http:', 'https:'].includes(parsed.protocol))
-            return null;
-        parsed.hash = '';
-        return parsed.toString();
-    }
-    catch {
-        return null;
-    }
-}
-function unique(values) {
-    return [...new Set(values.map(normalizeUrl).filter((value) => Boolean(value)))];
-}
-async function urlsFromWorkbook(path) {
-    const workbook = new excel.Workbook();
-    await workbook.xlsx.readFile(path);
-    const preferred = [];
-    const fallback = [];
-    for (const sheet of workbook.worksheets) {
-        const headerByColumn = new Map();
-        const firstRow = sheet.getRow(1);
-        firstRow.eachCell((cell, column) => {
-            headerByColumn.set(column, String(cell.text ?? '').trim().toLowerCase());
-        });
-        const preferredColumns = new Set([...headerByColumn.entries()]
-            .filter(([, header]) => ['qa page', 'staging url', 'url', 'page url'].includes(header))
-            .map(([column]) => column));
-        sheet.eachRow((row, rowNumber) => {
-            row.eachCell((cell, column) => {
-                const text = cell.text || String(cell.value ?? '');
-                const matches = text.match(urlPattern) ?? [];
-                fallback.push(...matches);
-                if (rowNumber > 1 && preferredColumns.has(column))
-                    preferred.push(...matches);
-            });
-        });
-    }
-    return unique(preferred.length > 0 ? preferred : fallback);
-}
-async function collectUrls(inputs, options = {}) {
-    const found = [];
-    const sources = [];
-    for (const input of inputs) {
-        const direct = normalizeUrl(input);
-        if (direct) {
-            found.push(direct);
-            sources.push('command line');
-            continue;
-        }
-        const filePath = (0,external_node_path_.resolve)(input);
-        const extension = (0,external_node_path_.extname)(filePath).toLowerCase();
-        sources.push(filePath);
-        if (extension === '.xlsx') {
-            found.push(...(await urlsFromWorkbook(filePath)));
-            continue;
-        }
-        const text = await (0,promises_.readFile)(filePath, 'utf8');
-        found.push(...(text.match(urlPattern) ?? []));
-    }
-    const allowedHosts = (options.allowedHosts ?? []).map((host) => host.toLowerCase());
-    const skipped = [];
-    const urls = unique(found).filter((url) => {
-        const host = new URL(url).hostname.toLowerCase();
-        if (allowedHosts.length > 0 && !allowedHosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) {
-            skipped.push({ url, reason: `Host ${host} is not in the allowed-host list.` });
-            return false;
-        }
-        if (options.stagingOnly && !/(staging|stage|preview|qa|test|localhost|127\.0\.0\.1)/i.test(host)) {
-            skipped.push({ url, reason: `Host ${host} does not look like a staging host.` });
-            return false;
-        }
-        return true;
-    });
-    if (found.length === 0)
-        throw new Error('No HTTP(S) URLs were found in the supplied input.');
-    if (urls.length === 0)
-        throw new Error('All discovered URLs were excluded by the host restrictions.');
-    return { source: sources.join(', '), urls, skipped };
-}
-//# sourceMappingURL=urls.js.map
 ;// CONCATENATED MODULE: ./dist/reporting/cell-text.js
 function scalarText(value) {
     if (value === null || value === undefined)
@@ -155945,7 +156050,15 @@ async function writeHtmlReport(summary, outputPath) {
 
 
 function cleanReportName(value) {
-    const name = value.trim().replace(/[\\/:*?"<>|]/g, '-');
+    const printable = [...value].map((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return codePoint <= 31 || codePoint === 127 ? '-' : character;
+    }).join('');
+    const cleaned = printable.trim()
+        .replace(/[\\/:*?"<>|]/g, '-')
+        .replace(/^[.-]+|\.+$/g, '')
+        .trim();
+    const name = cleaned || DEFAULT_REPORT_NAME;
     return name.toLowerCase().endsWith('.xlsx') ? name : `${name}.xlsx`;
 }
 function outputArtifactPath(directory, filename) {
@@ -156029,7 +156142,9 @@ async function executeAudit(request) {
     const completedPageCount = summary.pages.filter((page) => page.viewports.length === options.viewports.length &&
         page.viewports.every((viewport) => (!viewport.cancelled
             && !viewport.interactionBlocker
-            && viewport.axeRun.completed))).length;
+            && viewport.axeRun.completed
+            && ((viewport.status !== null && viewport.status < 400)
+                || /^(file|data):/i.test(viewport.finalUrl))))).length;
     const notStartedPageCount = Math.max(0, collected.urls.length - summary.pages.length);
     const partialPageCount = Math.max(0, collected.urls.length - completedPageCount - notStartedPageCount);
     const result = {
@@ -156181,7 +156296,11 @@ function reportMarkdown(result, gate, environment) {
         '',
         '| Result | Count |',
         '| --- | ---: |',
-        `| Pages completed | ${result.completedPageCount} |`,
+        `| Pages requested | ${result.requestedPageCount} |`,
+        `| Pages audited | ${result.auditedPageCount} |`,
+        `| Pages fully completed | ${result.completedPageCount} |`,
+        `| Pages partial | ${result.partialPageCount} |`,
+        `| Pages not started | ${result.notStartedPageCount} |`,
         `| Confirmed findings | ${result.confirmedCount} |`,
         `| Review findings | ${result.reviewCount} |`,
         `| Audit blockers | ${result.blockerCount} |`,
@@ -156291,6 +156410,12 @@ async function runGitHubAction(environment = process.env) {
         ['confirmed-findings', result.confirmedCount],
         ['review-findings', result.reviewCount],
         ['blockers', result.blockerCount],
+        ['requested-pages', result.requestedPageCount],
+        ['audited-pages', result.auditedPageCount],
+        ['completed-pages', result.completedPageCount],
+        ['partial-pages', result.partialPageCount],
+        ['not-started-pages', result.notStartedPageCount],
+        ['skipped-pages', result.skippedPageCount],
         ['gate-result', failurePolicy === 'none' ? 'not-evaluated' : gate.failed ? 'failed' : 'passed']
     ]) {
         await setOutput(environment, name, value);

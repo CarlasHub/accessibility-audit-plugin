@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.1 - 2026-09-09
+
+- Made axe-core execution reliable on pages with strict Content Security Policy headers.
+- Hardened target handling by rejecting embedded credentials, validating allowlists, and stopping audits after redirects outside the authorized host or staging scope.
+- Corrected completed-page accounting so HTTP failures and incomplete axe runs are reported as partial instead of successful audits.
+- Added requested, audited, completed, partial, not-started, and skipped page counts to GitHub Action outputs and job summaries.
+- Sanitized report filenames, bounded noisy runtime errors, expanded regression coverage, and updated public workflow examples to current pinned action releases.
+
 ## 1.2.0 - 2026-09-09
 
 - Added a polished, self-contained, responsive HTML report with accessible navigation, summary metrics, searchable and filterable findings, complete manual checks, coverage details, and print styling.

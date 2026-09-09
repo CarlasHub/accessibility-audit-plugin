@@ -29,8 +29,10 @@ import { findingsFromPage } from './findings.js';
 import { buildCoverageMatrix } from './coverage.js';
 import { assertRemediationOnlyNotes, consolidateFindings } from '../reporting/consolidate.js';
 import { singleLineText } from '../text.js';
+import { urlRestrictionReason } from '../urls.js';
 
 const CANCELLED_REASON = 'The audit was stopped by the user. Results include only work completed before cancellation.';
+const MAX_CAPTURED_RUNTIME_ERRORS = 50;
 const require = createRequire(import.meta.url);
 
 function emptyDom(): DomCheckResult {
@@ -446,20 +448,63 @@ async function auditViewport(
       isMobile: viewport.isMobile ?? false,
       deviceScaleFactor: 1,
       reducedMotion: 'reduce',
-      colorScheme: 'light'
+      colorScheme: 'light',
+      bypassCSP: true
     });
     signal?.addEventListener('abort', closeOnAbort, { once: true });
     const page = await context.newPage();
     page.setDefaultTimeout(options.timeoutMs);
     page.setDefaultNavigationTimeout(options.timeoutMs);
-    page.on('pageerror', (error) => errors.push(`Page error: ${error.message}`));
+    let runtimeErrorCount = 0;
+    const captureRuntimeError = (message: string): void => {
+      runtimeErrorCount += 1;
+      if (runtimeErrorCount <= MAX_CAPTURED_RUNTIME_ERRORS) errors.push(message);
+      if (runtimeErrorCount === MAX_CAPTURED_RUNTIME_ERRORS + 1) {
+        errors.push(`Additional page and console errors were omitted after ${MAX_CAPTURED_RUNTIME_ERRORS} entries.`);
+      }
+    };
+    page.on('pageerror', (error) => captureRuntimeError(`Page error: ${error.message}`));
     page.on('console', (message) => {
-      if (message.type() === 'error') errors.push(`Console error: ${message.text()}`);
+      if (message.type() === 'error') captureRuntimeError(`Console error: ${message.text()}`);
     });
-    const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+    let blockedNavigationReason: string | null = null;
+    await page.route('**/*', async (route) => {
+      const request = route.request();
+      const requestFrame = request.frame();
+      const isMainFrameNavigation = request.isNavigationRequest()
+        && (requestFrame === page.mainFrame() || requestFrame.parentFrame() === null);
+      if (isMainFrameNavigation) {
+        const isSupportedLocalFixture = /^(file|data):/i.test(url) && request.url() === url;
+        const reason = isSupportedLocalFixture ? null : urlRestrictionReason(request.url(), options);
+        if (reason) {
+          blockedNavigationReason = `Navigation blocked: ${reason}`;
+          await route.abort('blockedbyclient');
+          return;
+        }
+      }
+      await route.continue();
+    });
+    let response: Awaited<ReturnType<Page['goto']>>;
+    try {
+      response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+    } catch (error) {
+      if (blockedNavigationReason) throw new Error(blockedNavigationReason);
+      throw error;
+    }
+    // Chromium can resolve page.goto() with the preceding redirect response even
+    // when a routed redirect destination was aborted, so check the route signal
+    // explicitly before treating the page as successfully loaded.
+    if (blockedNavigationReason) throw new Error(blockedNavigationReason);
     status = response?.status() ?? null;
     await page.waitForLoadState('networkidle', { timeout: Math.min(options.timeoutMs, 5_000) }).catch(() => undefined);
     finalUrl = page.url();
+    const finalUrlRestriction = /^(file|data):/i.test(url) && finalUrl === url
+      ? null
+      : urlRestrictionReason(finalUrl, options);
+    if (finalUrlRestriction) {
+      status = null;
+      throw new Error(`Navigation blocked: ${finalUrlRestriction}`);
+    }
     title = await page.title();
     consent = await dismissConsentBanner(page);
     if (consent.error) errors.push(`Consent handling error: ${consent.error}`);
@@ -782,9 +827,9 @@ export async function runAudit(
     landingPageUrl: options.landingPageUrl ?? urls[0] ?? '',
     requestedUrls: urls,
     auditedUrls: pages.filter((page) => page.viewports.some((viewport) =>
-      !viewport.cancelled && (
+      !viewport.cancelled && viewport.axeRun.completed && (
         (viewport.status !== null && viewport.status < 400) ||
-        (/^(file|data):/i.test(viewport.finalUrl) && viewport.errors.length === 0)
+        /^(file|data):/i.test(viewport.finalUrl)
       )
     )).map((page) => page.url),
     skippedUrls: [...skippedUrls, ...cancellationSkips],

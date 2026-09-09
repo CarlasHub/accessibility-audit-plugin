@@ -145,7 +145,11 @@ function reportMarkdown(result: AuditRunResult, gate: GateEvaluation, environmen
     '',
     '| Result | Count |',
     '| --- | ---: |',
-    `| Pages completed | ${result.completedPageCount} |`,
+    `| Pages requested | ${result.requestedPageCount} |`,
+    `| Pages audited | ${result.auditedPageCount} |`,
+    `| Pages fully completed | ${result.completedPageCount} |`,
+    `| Pages partial | ${result.partialPageCount} |`,
+    `| Pages not started | ${result.notStartedPageCount} |`,
     `| Confirmed findings | ${result.confirmedCount} |`,
     `| Review findings | ${result.reviewCount} |`,
     `| Audit blockers | ${result.blockerCount} |`,
@@ -267,6 +271,12 @@ export async function runGitHubAction(environment: ActionEnvironment = process.e
     ['confirmed-findings', result.confirmedCount],
     ['review-findings', result.reviewCount],
     ['blockers', result.blockerCount],
+    ['requested-pages', result.requestedPageCount],
+    ['audited-pages', result.auditedPageCount],
+    ['completed-pages', result.completedPageCount],
+    ['partial-pages', result.partialPageCount],
+    ['not-started-pages', result.notStartedPageCount],
+    ['skipped-pages', result.skippedPageCount],
     ['gate-result', failurePolicy === 'none' ? 'not-evaluated' : gate.failed ? 'failed' : 'passed']
   ] as const) {
     await setOutput(environment, name, value);

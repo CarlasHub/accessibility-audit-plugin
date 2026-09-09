@@ -26,7 +26,7 @@ jobs:
           allowed-hosts: preview.example.test
       - name: Upload evidence
         if: always() && steps.audit.outputs.output-dir != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: accessibility-audit
           path: ${{ steps.audit.outputs.output-dir }}
@@ -82,15 +82,18 @@ Start with `none` while establishing a baseline. Move to a severity policy after
 
 ## Outputs
 
-The Action exposes `output-dir`, `html-path`, `report-path`, `json-path`, `archive-path`, `confirmed-findings`, `review-findings`, `blockers`, and `gate-result`. An `if: always()` upload step preserves evidence even when the configured gate fails. Download the workflow artifact, extract it, and open `Accessibility_Audit_Report.html` first; the workbook and raw JSON remain beside it for deeper analysis.
+The Action exposes `output-dir`, `html-path`, `report-path`, `json-path`, `archive-path`, `confirmed-findings`, `review-findings`, `blockers`, `requested-pages`, `audited-pages`, `completed-pages`, `partial-pages`, `not-started-pages`, `skipped-pages`, and `gate-result`. An `if: always()` upload step preserves evidence even when the configured gate fails. Download the workflow artifact, extract it, and open `Accessibility_Audit_Report.html` first; the workbook and raw JSON remain beside it for deeper analysis.
 
 ## Security and privacy
 
 - Pin third-party Actions to complete commit SHAs and grant the workflow only the permissions it needs.
 - Use `allowed-hosts`; use `staging-only: 'true'` where naming conventions make it reliable.
+- Main-page redirects are checked against the same host and staging restrictions; out-of-scope destinations are rejected and are not accepted as audit results.
 - Do not put credentials, session tokens, private URLs, or secrets in `urls` or workflow logs.
 - Treat reports and screenshots as potentially sensitive. Set an appropriate artifact retention period and restrict repository access.
 - Do not run untrusted pull-request changes with production credentials or network access to private targets.
 - Keep manual review in the release process; no automated result proves complete WCAG conformance.
 
 The bundled Action code and Playwright runtime are committed under `action/dist` so a consumer does not run `npm install`. Maintainers reproduce and verify that bundle with `npm run build:action` and `npm run test:action`.
+
+The Action is designed for publicly reachable HTTP(S) pages. Sites that require authentication, CAPTCHA completion, private-network access, or anti-bot exceptions need an explicitly authorized, site-specific workflow and manual review.

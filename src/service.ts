@@ -39,8 +39,16 @@ export interface AuditRunResult {
   validation: WorkbookValidation;
 }
 
-function cleanReportName(value: string): string {
-  const name = value.trim().replace(/[\\/:*?"<>|]/g, '-');
+export function cleanReportName(value: string): string {
+  const printable = [...value].map((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 31 || codePoint === 127 ? '-' : character;
+  }).join('');
+  const cleaned = printable.trim()
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/^[.-]+|\.+$/g, '')
+    .trim();
+  const name = cleaned || DEFAULT_REPORT_NAME;
   return name.toLowerCase().endsWith('.xlsx') ? name : `${name}.xlsx`;
 }
 
@@ -127,6 +135,10 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
       !viewport.cancelled
       && !viewport.interactionBlocker
       && viewport.axeRun.completed
+      && (
+        (viewport.status !== null && viewport.status < 400)
+        || /^(file|data):/i.test(viewport.finalUrl)
+      )
     ))
   ).length;
   const notStartedPageCount = Math.max(0, collected.urls.length - summary.pages.length);

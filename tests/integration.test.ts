@@ -62,6 +62,59 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
     expect(result.pages[0]?.viewports[0]?.dom.emptyNamedControls.some((control) => control.selector === '#labelled-input')).toBe(false);
   });
 
+  it('runs axe under a strict CSP and blocks redirects outside the authorized hosts', async () => {
+    const fixture = '<!doctype html><html lang="en"><head><title>Strict CSP</title></head><body><main><h1>Audit me</h1><img src="missing.png"></main></body></html>';
+    const server = createServer((request, response) => {
+      if (request.url === '/redirect') {
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Fixture server did not expose a TCP port.');
+        response.writeHead(302, { location: `http://localhost:${address.port}/strict` });
+        response.end();
+        return;
+      }
+      response.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-security-policy': "default-src 'self'; script-src 'none'"
+      });
+      response.end(fixture);
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Fixture server did not expose a TCP port.');
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+      const baseOptions = {
+        auditor: 'Test Auditor',
+        allowedHosts: ['127.0.0.1'],
+        stagingOnly: false,
+        concurrency: 1,
+        captureScreenshots: false,
+        viewports: [{ name: 'desktop', width: 1200, height: 800 }],
+        ...(channel ? { channel } : {})
+      };
+      const strictUrl = `${baseUrl}/strict`;
+      const strictResult = await runAudit([strictUrl], 'strict CSP fixture', [], resolveOptions({
+        ...baseOptions,
+        outputDir: await mkdtemp(join(tmpdir(), 'a11y-csp-'))
+      }));
+      expect(strictResult.auditedUrls).toEqual([strictUrl]);
+      expect(strictResult.pages[0]?.viewports[0]?.axeRun.completed).toBe(true);
+
+      const redirectUrl = `${baseUrl}/redirect`;
+      const redirectResult = await runAudit([redirectUrl], 'redirect fixture', [], resolveOptions({
+        ...baseOptions,
+        outputDir: await mkdtemp(join(tmpdir(), 'a11y-redirect-'))
+      }));
+      expect(redirectResult.auditedUrls).toEqual([]);
+      expect(redirectResult.pages[0]?.viewports[0]?.axeRun.completed).toBe(false);
+      expect(redirectResult.pages[0]?.viewports[0]?.errors.join(' ')).toContain('Navigation blocked');
+      expect(redirectResult.findings.some((finding) => finding.classification === 'blocker')).toBe(true);
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()));
+    }
+  }, 120_000);
+
   it('dismisses an iAlert consent modal before testing the page keyboard sequence', async () => {
     const fixture = `<!doctype html>
       <html lang="en">
@@ -271,7 +324,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       const outputDir = await mkdtemp(join(tmpdir(), 'a11y-service-'));
       const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
       const result = await executeAudit({
-        inputs: [url],
+        inputs: [url, `${url}missing`],
         options: {
           auditor: 'Test Auditor',
           outputDir,
@@ -282,7 +335,11 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
           ...(channel ? { channel } : {})
         }
       });
+      expect(result.requestedPageCount).toBe(2);
       expect(result.auditedPageCount).toBe(1);
+      expect(result.completedPageCount).toBe(1);
+      expect(result.partialPageCount).toBe(1);
+      expect(result.notStartedPageCount).toBe(0);
       expect(result.validation.valid).toBe(true);
       expect(result.validation.auditor).toBe('Test Auditor');
       expect(result.imageInventoryCount).toBeGreaterThan(0);

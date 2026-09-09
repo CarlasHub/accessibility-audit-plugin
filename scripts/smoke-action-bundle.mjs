@@ -102,7 +102,17 @@ try {
     readFile(summaryFile, 'utf8')
   ]);
   if (archive.subarray(0, 2).toString() !== 'PK') throw new Error('The bundled Action produced an invalid ZIP archive.');
-  if (!outputs.includes(`archive-path=${archivePath}`) || !outputs.includes('gate-result=not-evaluated')) {
+  const expectedOutputs = [
+    `archive-path=${archivePath}`,
+    'requested-pages=1',
+    'audited-pages=1',
+    'completed-pages=1',
+    'partial-pages=0',
+    'not-started-pages=0',
+    'skipped-pages=0',
+    'gate-result=not-evaluated'
+  ];
+  if (!expectedOutputs.every((output) => outputs.includes(output))) {
     throw new Error(`The bundled Action did not publish its expected outputs.\n${outputs}`);
   }
   if (!summary.includes('CarlasHub WCAG accessibility audit')) {

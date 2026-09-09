@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "accessibility-audit",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Run evidence-backed WCAG 2.2 A/AA audits and export a validated Excel report with linked evidence and guided manual checks.",
   "author": {
     "name": "CarlasHub",

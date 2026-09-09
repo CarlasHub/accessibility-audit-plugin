@@ -84,6 +84,18 @@ outputs:
     description: Number of findings requiring human review.
   blockers:
     description: Number of audit blockers.
+  requested-pages:
+    description: Number of accepted page targets requested for the audit.
+  audited-pages:
+    description: Number of pages with successful automated axe evidence.
+  completed-pages:
+    description: Number of pages that completed every configured viewport without blockers.
+  partial-pages:
+    description: Number of pages with incomplete, failed, or blocked viewport coverage.
+  not-started-pages:
+    description: Number of accepted pages not started, normally after cancellation.
+  skipped-pages:
+    description: Number of excluded or cancelled page targets recorded in the evidence.
   gate-result:
     description: passed, failed, or not-evaluated according to fail-on.
 

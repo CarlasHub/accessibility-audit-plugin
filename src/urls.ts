@@ -9,14 +9,19 @@ export interface UrlCollection {
 }
 
 const urlPattern = /https?:\/\/[^\s<>'"\])}]+/gi;
+const stagingHostPattern = /(?:^|[.-])(?:dev|development|local|localhost|preview|qa|stage|staging|test|testing|uat)(?:[.\d-]|$)/i;
 
 function normalizeUrl(value: string): string | null {
   try {
     const parsed = new URL(value.trim());
     if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    if (parsed.username || parsed.password) {
+      throw new Error('URLs containing embedded usernames or passwords are not supported.');
+    }
     parsed.hash = '';
     return parsed.toString();
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('embedded usernames or passwords')) throw error;
     return null;
   }
 }
@@ -55,6 +60,58 @@ async function urlsFromWorkbook(path: string): Promise<string[]> {
   return unique(preferred.length > 0 ? preferred : fallback);
 }
 
+function normalizeHostname(value: string): string {
+  return value.trim().toLowerCase().replace(/\.+$/, '');
+}
+
+function normalizeAllowedHost(value: string): string {
+  const trimmed = value.trim();
+  try {
+    const parsed = new URL(trimmed.includes('://') ? trimmed : `http://${trimmed}`);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error();
+    if (trimmed.includes('://') && (parsed.pathname !== '/' || parsed.search || parsed.hash)) throw new Error();
+    const hostname = normalizeHostname(parsed.hostname);
+    if (!hostname || hostname.includes('*')) throw new Error();
+    return hostname;
+  } catch {
+    throw new Error(`Invalid allowed host "${trimmed}". Use a hostname such as example.com, without a path or wildcard.`);
+  }
+}
+
+function looksLikeStagingHost(hostname: string): boolean {
+  const host = normalizeHostname(hostname);
+  return host === '127.0.0.1'
+    || host === '[::1]'
+    || stagingHostPattern.test(host);
+}
+
+export function urlRestrictionReason(
+  value: string,
+  options: { allowedHosts?: string[]; stagingOnly?: boolean } = {}
+): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return 'Navigation resolved to an invalid URL.';
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return `Navigation resolved to the unsupported ${parsed.protocol || 'unknown'} protocol.`;
+  }
+  if (parsed.username || parsed.password) {
+    return 'Navigation resolved to a URL containing embedded credentials.';
+  }
+  const host = normalizeHostname(parsed.hostname);
+  const allowedHosts = (options.allowedHosts ?? []).map(normalizeAllowedHost);
+  if (allowedHosts.length > 0 && !allowedHosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) {
+    return `Host ${host} is not in the allowed-host list.`;
+  }
+  if (options.stagingOnly && !looksLikeStagingHost(host)) {
+    return `Host ${host} does not look like a staging host.`;
+  }
+  return null;
+}
+
 export async function collectUrls(
   inputs: string[],
   options: { allowedHosts?: string[]; stagingOnly?: boolean } = {}
@@ -70,6 +127,10 @@ export async function collectUrls(
       continue;
     }
 
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input.trim())) {
+      throw new Error('Unsupported or invalid target URL. Supply an HTTP(S) URL without embedded credentials.');
+    }
+
     const filePath = resolve(input);
     const extension = extname(filePath).toLowerCase();
     sources.push(filePath);
@@ -81,16 +142,13 @@ export async function collectUrls(
     found.push(...(text.match(urlPattern) ?? []));
   }
 
-  const allowedHosts = (options.allowedHosts ?? []).map((host) => host.toLowerCase());
+  // Validate the allowlist even when the supplied page list contains no matching URL.
+  (options.allowedHosts ?? []).map(normalizeAllowedHost);
   const skipped: Array<{ url: string; reason: string }> = [];
   const urls = unique(found).filter((url) => {
-    const host = new URL(url).hostname.toLowerCase();
-    if (allowedHosts.length > 0 && !allowedHosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) {
-      skipped.push({ url, reason: `Host ${host} is not in the allowed-host list.` });
-      return false;
-    }
-    if (options.stagingOnly && !/(staging|stage|preview|qa|test|localhost|127\.0\.0\.1)/i.test(host)) {
-      skipped.push({ url, reason: `Host ${host} does not look like a staging host.` });
+    const reason = urlRestrictionReason(url, options);
+    if (reason) {
+      skipped.push({ url, reason });
       return false;
     }
     return true;
