@@ -29,14 +29,14 @@ describe('user documentation', () => {
 
     expect(readme).toContain('## Start here');
     expect(readme).toContain('does not discover or crawl');
-    expect(readme).toContain('Status = Fail');
+    expect(readme).toContain('Status = Open');
     expect(userGuide).toContain('## Step 1: choose the scope');
     expect(userGuide).toContain('Changing it does not add pages to the audit');
     expect(userGuide).toContain('## Step 7: decide what happens next');
     expect(wcagBasics).toContain('## Why automation is incomplete');
     expect(wcagBasics).toContain('no automated finding does not mean “pass”');
-    expect(reporting).toContain('## Accessibility Report field guide');
-    expect(reporting).toContain('workflow Status `Fail`');
+    expect(reporting).toContain('## Findings field guide');
+    expect(reporting).toContain('workflow status `Open`');
     expect(manual).toContain('Do not report an unperformed check as passed');
     expect(manual).toContain('## Test supported screen-reader and browser combinations');
   });
@@ -47,7 +47,7 @@ describe('user documentation', () => {
       readFile('docs/installation.md', 'utf8')
     ]);
 
-    expect(readme).toContain('Maintained by Radancy');
+    expect(readme).toContain('Maintained by CarlasHub');
     expect(readme).toContain('/.github/media/accessibility-audit-demo.mp4');
     expect(readme).toContain('/docs/accessibility-audit-demo-transcript.md');
     expect(readme).toContain('--auditor "Auditor Name"');

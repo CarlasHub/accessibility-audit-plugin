@@ -1,0 +1,37 @@
+name: Try the accessibility Action
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      target-url:
+        description: Public, non-sensitive page to audit
+        required: true
+        default: https://example.com/
+      target-host:
+        description: Expected hostname for the target URL
+        required: true
+        default: example.com
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: audit
+        uses: ./
+        with:
+          urls: ${{ inputs.target-url }}
+          allowed-hosts: ${{ inputs.target-host }}
+          fail-on: none
+          comment-on-pr: 'false'
+      - name: Upload accessibility evidence
+        if: always() && steps.audit.outputs.output-dir != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: accessibility-audit
+          path: ${{ steps.audit.outputs.output-dir }}
+          retention-days: 14

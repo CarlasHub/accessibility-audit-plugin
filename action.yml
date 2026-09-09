@@ -1,0 +1,86 @@
+name: CarlasHub WCAG Accessibility Audit
+description: Audit web pages against WCAG 2.2 and publish Excel, JSON, screenshot, and pull-request evidence.
+author: CarlasHub
+
+branding:
+  icon: check-square
+  color: blue
+
+inputs:
+  urls:
+    description: One explicit http(s) URL per line, or a JSON array of URLs.
+    required: true
+  auditor:
+    description: Name recorded as the auditor in the report.
+    required: false
+    default: GitHub Actions
+  output-dir:
+    description: Report directory, relative to the workflow workspace unless absolute.
+    required: false
+    default: accessibility-audit-results
+  landing-page-url:
+    description: Optional landing page used for same-origin link context.
+    required: false
+  allowed-hosts:
+    description: Optional comma-separated or newline-separated allowlist of hostnames.
+    required: false
+  staging-only:
+    description: Reject targets that do not look like staging, QA, preview, test, or local hosts.
+    required: false
+    default: 'false'
+  capture-screenshots:
+    description: Capture element-level and viewport evidence screenshots.
+    required: false
+    default: 'true'
+  browser-channel:
+    description: Optional installed Playwright browser channel, such as chrome.
+    required: false
+  auto-install-browser:
+    description: Install Playwright Chromium if no bundled or system Chromium browser is available.
+    required: false
+    default: 'true'
+  concurrency:
+    description: Number of pages audited concurrently, from 1 to 8.
+    required: false
+    default: '2'
+  timeout-ms:
+    description: Per-operation browser timeout in milliseconds.
+    required: false
+    default: '30000'
+  report-name:
+    description: Optional Excel report filename.
+    required: false
+    default: Accessibility_Audit_Report.xlsx
+  fail-on:
+    description: 'Gate policy: none, blockers, confirmed, critical, serious, moderate, or minor.'
+    required: false
+    default: none
+  comment-on-pr:
+    description: Create or update one audit summary comment when running for a pull request.
+    required: false
+    default: 'true'
+  github-token:
+    description: GitHub token used only to create or update the pull-request summary comment.
+    required: false
+
+outputs:
+  output-dir:
+    description: Absolute directory containing all generated audit evidence.
+  report-path:
+    description: Absolute path to the validated Excel workbook.
+  json-path:
+    description: Absolute path to the JSON evidence.
+  archive-path:
+    description: Absolute path to the portable ZIP archive.
+  confirmed-findings:
+    description: Number of confirmed automated findings.
+  review-findings:
+    description: Number of findings requiring human review.
+  blockers:
+    description: Number of audit blockers.
+  gate-result:
+    description: passed, failed, or not-evaluated according to fail-on.
+
+runs:
+  using: node24
+  main: action/dist/index.js

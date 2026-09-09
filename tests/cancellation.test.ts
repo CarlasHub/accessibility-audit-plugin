@@ -52,8 +52,9 @@ describe('graceful audit cancellation', () => {
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(result.reportPath);
-    const inventory = workbook.getWorksheet('Page Inventroy');
-    expect(inventory?.actualRowCount).toBe(0);
-    expect(inventory?.actualColumnCount).toBe(0);
+    const inventory = workbook.getWorksheet('Page Inventory');
+    expect(inventory?.getCell('A5').text).toBe('https://preview.example.test/jobs');
+    expect(inventory?.getCell('A5').hyperlink).toBe('https://preview.example.test/jobs');
+    expect(inventory?.getCell('B5').value).toBe('Not started');
   });
 });

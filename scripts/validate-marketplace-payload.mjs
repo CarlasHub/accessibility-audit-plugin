@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, '..');
-const outputRoot = join(root, 'marketplace', 'rai-ops-plugin-marketplace');
+const outputRoot = join(root, 'marketplace', 'carlashub-plugin-marketplace');
 const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
 const harnesses = [
   { directory: 'claude', name: 'accessibility-audit', manifest: '.claude-plugin/plugin.json' },
@@ -81,7 +81,7 @@ check(Array.isArray(vscodeHooks?.hooks?.SessionStart), 'copilot-vscode: SessionS
 
 const claudeCatalog = await jsonFile(join(outputRoot, 'catalog-fragments', 'claude.json'));
 check(claudeCatalog?.name === 'accessibility-audit', 'Claude catalog fragment has the wrong name.');
-check(claudeCatalog?.source?.path === 'accessibility-audit/claude', 'Claude catalog fragment has the wrong source path.');
+check(claudeCatalog?.source?.path === 'marketplace/carlashub-plugin-marketplace/accessibility-audit/claude', 'Claude catalog fragment has the wrong source path.');
 const copilotCatalog = await jsonFile(join(outputRoot, 'catalog-fragments', 'copilot.json'));
 check(Array.isArray(copilotCatalog) && copilotCatalog.length === 2, 'Copilot catalog fragment must contain CLI and VS Code entries.');
 if (Array.isArray(copilotCatalog)) {

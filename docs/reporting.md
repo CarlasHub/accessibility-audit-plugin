@@ -1,80 +1,65 @@
 # Workbook reporting
 
-The reporter uses an exact bundled copy of `Accessibility Testing Boilerplate v.4 (4)`, removes placeholder finding values, preserves the worksheet order, tab colours, 32 Accessibility Report columns, WCAG lookup formulas, validations, and existing colour scheme, and populates only the template's existing report fields. It does not add worksheets or inventory columns.
+The reporter uses the bundled CarlasHub WCAG 2.2 audit workbook. It combines the practical structure expected from a WCAG audit with structured scope, evidence, ownership, and manual-check fields that make remediation and follow-up easier.
 
 ## Read the workbook in this order
 
-1. **Accessibility Overview:** confirm the landing-page QA URL, audit date, auditor, scope, methods, totals, limitations, and outstanding guided checks.
-2. **Page Inventroy:** confirm the headerless column-A list contains the unique URLs whose browser testing started. Use JSON for completed, partial, not-started, redirect, consent, status, and runtime-error detail.
-3. **Accessibility Report:** triage confirmed findings, then perform the Testing procedure for review findings.
-4. **Image Inventory:** open the linked relative screenshot references in column A and match them to the Screengrab links and evidence records in the report and JSON.
-
-`Lookup WCAG 2.2` is hidden reference data for formulas. It is not an audit-results worksheet.
+1. **Audit Summary:** confirm the audit metadata, scope, result totals, severity totals, and limitations.
+2. **Page Inventory:** review every requested URL, its audit state, completed viewports, consent handling, runtime errors, and notes.
+3. **Findings:** triage confirmed findings, investigate review items, and resolve blockers.
+4. **Evidence:** trace screenshots and other evidence back to a finding, page, viewport, rule, component, and technical locator.
+5. **Manual Checks:** assign and record the guided checks that automation cannot complete.
+6. **WCAG 2.2 Reference:** use the criterion, level, title, and Understanding link as a reporting aid.
 
 ## Understand evidence confidence
 
-The workbook uses `confirmed`, `review`, `blocker`, and `manual` labels:
+The workbook uses `confirmed`, `review`, `blocker`, and `manual` evidence types:
 
 - `confirmed` means deterministic evidence was reproduced.
-- `review` means a credible signal still requires the decision described in Testing.
-- `blocker` means a requested page could not be tested.
+- `review` means a credible signal still requires the stated human decision.
+- `blocker` means requested scope could not be tested.
 - `manual` means automation cannot determine the result.
 
-Every populated row starts with workflow Status `Fail`. This template default ensures the item enters remediation, but it does not change its evidence category. In particular, a `review` row is not a confirmed WCAG failure until a qualified reviewer completes the stated procedure.
+Every generated finding starts with workflow status `Open`. Status tracks remediation; it does not change evidence confidence. A `review` item is not a confirmed WCAG failure until a qualified reviewer completes its test method.
 
-Impact severity is also separate. It estimates the likely effect on users; it is not the WCAG A/AA level, evidence confidence, implementation effort, or delivery priority.
+Severity estimates the likely effect on users. It is separate from the WCAG conformance level, confidence, effort, and delivery priority.
 
-## Accessibility Report field guide
+## Findings field guide
 
 | Field | Purpose |
 |---|---|
-| ID | Stable row identifier generated for the workbook. |
-| SC1–SC3 and adjacent lookup fields | Up to three mapped criteria with level, synopsis, and W3C Understanding reference. |
-| Links | Every affected page. Consolidated component findings list one URL per line. |
-| Summary | Short finding title beginning with the affected Desktop/Mobile scope and rendered component name. |
-| Environment | Browser and affected Desktop, Mobile, or Mobile reflow viewport. |
-| Issue | Labelled component name, page location, affected viewports, accessibility barrier, user impact, and technical locator. |
-| Testing | Reproduction evidence and any decision still required from a person. |
-| Screengrab | Relative link to the first available evidence image. |
-| ProductNote and Labels | Evidence category, rule identifier, and WCAG mapping. |
-| Impact | Initial user-impact severity. |
-| Status | Starts as `Fail` for implementation tracking. |
-| Assignment | Suggested implementation, content, design, or accessibility ownership queue. |
-| Effort | Initial broad remediation-size indication. |
-| Specialist and Implementation | Initial review/workflow values from the report template. |
-| Notes | Concrete remediation only. It must not contain ticket-system or audit-process commentary. |
-| Estimate | Starts at numeric `0` and accepts non-negative quarter increments. |
+| Finding ID | Stable workbook identifier. |
+| Evidence type | `confirmed`, `review`, `blocker`, or `manual`. |
+| Status | Remediation state, initially `Open`. |
+| Severity | Critical, Serious, Moderate, Minor, or Review. |
+| WCAG criterion, Level, WCAG title | Success criterion mapping enriched from the reference sheet. |
+| Affected URL(s), Viewport(s) | Exact affected scope. |
+| Component, Location | Human-readable UI context. |
+| Summary, Issue, User impact | Concise barrier and impact description. |
+| Technical locator | Selector or other reproducible locator. |
+| Test method, Actual result, Expected result | Reproduction and decision evidence. |
+| Recommendation | Concrete remediation advice. |
+| Owner, Effort | Suggested responsibility and sizing. |
+| Screenshot | Relative link to representative evidence, or `Not captured`. |
+| Rule ID, Labels | Tool rule and searchable metadata. |
+| Translation review | Whether translated content needs separate review. |
 
-The same reusable component implementation and root cause produce one row across all affected pages. Translated or responsive names do not split a component when its stable implementation evidence matches. Repeated instances inside one component—such as one filter family or one same-name landmark implementation—may be rolled into the same root-cause row while retaining every selector and page. Different implementations, behaviours, success criteria, remediation requirements, or measured colour treatments remain separate. A colour finding is shared only when its exact rendered foreground/background treatment and failure evidence match; several failures on one host do not automatically become “site-wide.” Generic unnamed controls must also share the same rendered location before they are consolidated. A page-specific implementation or distinct root cause remains on its own row. The Links cell lists every confirmed affected page on its own line. JSON preserves URL, viewport, selector, screenshot, raw evidence, and related axe nodes.
+The same reusable component implementation and root cause produce one finding across affected pages. Different implementations, behaviours, criteria, colour treatments, or remedies stay separate. JSON retains detailed URL, viewport, selector, related-node, and raw tool evidence.
 
-Missing `aria-controls` alone is not treated as a WCAG failure or a standalone review for an ordinary disclosure or accordion because that relationship is optional in those patterns. Disclosure automation waits for the rendered control inventory to stabilize, rejects hidden/inactive clones and ambiguous identities, establishes a collapsed baseline, verifies focus on the intended live control, and tests Enter and Space. It then waits for JavaScript and animations, re-queries the control and referenced panels, and records `aria-expanded`, visual visibility, and accessibility-tree exposure in one settled DOM snapshot. CSS/rendered visibility is evaluated separately from `aria-hidden` or `inert`; exposure metadata cannot by itself be used as proof that visible content is collapsed. A state finding is confirmed only when settled visual evidence proves a mismatch. A failed setup, detached/replaced identity that cannot be resolved uniquely, unsettled result, or absent relationship remains raw JSON and tested-inconclusive coverage evidence; it does not create a workbook finding, failure, or pass. Generic disclosure automation does not require Escape to close the component.
+Missing `aria-controls` alone is not a WCAG failure for an ordinary disclosure or accordion. Interaction evidence must identify the live control, settle updates, re-query state, and demonstrate a visible mismatch. Ambiguous or incomplete interactions remain inconclusive JSON coverage.
 
-Summary states the affected Desktop/Mobile scope and uses the rendered component name rather than a CSS selector alone. Issue uses labelled lines for Component, Location, Affected viewport(s), Accessibility issue, User impact, and Technical locator. Every generated finding provides reproducible steps with explicit Actual and Expected results. The workbook validator rejects rows that omit the viewport-first Summary, required Issue context, or structured Testing evidence.
+Target-size findings require rendered, hit-testable evidence and consideration of WCAG exceptions; a raw measurement below 24 CSS pixels alone is insufficient.
 
-Target-size evidence is gated before it becomes a row. A target must be visible, inside the tested viewport, and pass hit testing, or be independently identified by axe. A raw dimension below 24 CSS pixels does not by itself create a finding. Inline text links and isolated undersized targets that satisfy the spacing geometry are omitted. A workbook review requires a detected clearance collision or an axe target-size signal, related targets are grouped by rendered component, and no confirmed WCAG 2.5.8 failure is claimed until the applicable exceptions have been assessed.
+## Evidence and portability
 
-Notes contains remediation only. The validator rejects empty Notes or ticket-system references in Notes.
+Images are not embedded. The Evidence sheet stores portable relative links and enough context to identify the related finding and test state. Extract the ZIP and keep `Accessibility_Audit_Report.xlsx` beside the `screenshots` directory so links continue to work.
 
-Every populated report row starts with Status `Fail`. Development and QA findings default to `Implementation Queue`; Content, Design, and Mixed findings retain the corresponding specialist queue when that ownership is justified. Estimate starts at numeric `0`; workbook validation permits only non-negative quarter increments such as `0.25`, `0.50`, and `0.75`.
+The Page Inventory represents requested scope, including skipped and not-started pages, so missing coverage is visible in the workbook. The JSON coverage matrix remains the authoritative record for each page, viewport, and test area.
 
-Accessibility Overview contains one landing-page QA URL, supplied explicitly or defaulted to the first resolved URL.
-
-`Page Inventroy` and `Image Inventory` follow the supplied blank-sheet layout exactly: neither has a header or metadata columns. Page Inventroy column A contains one hyperlink per unique URL whose browser testing started. Image Inventory column A contains one hyperlink per unique screenshot, displaying the same relative path used by the link. If no browser page started or no screenshot evidence exists, the corresponding sheet remains blank.
-
-Images are not embedded. The final report retains at most one representative contextual screenshot for each confirmed, blocker, or review reporting unit when the relevant state and locator are reproducible; the affected element is outlined inside an appropriate rendered component boundary. Other occurrences remain traceable through their JSON evidence records. Full-page evidence is permitted only for page-level failures or unresolved blocking surfaces. The portable ZIP preserves the workbook and `screenshots` tree so links remain valid after transfer. Page, viewport, rule, component, location, selector, classification, and result detail remain in Accessibility Report and JSON rather than being duplicated into invented inventory columns.
-
-The generated workbook has no screen-reader worksheet. Assistive-technology testing remains in guided manual checks.
-
-Graceful cancellation still writes and validates JSON and XLSX output. Page Inventroy lists only URLs whose browser testing started; JSON identifies completed, partial, not-started, and skipped work plus consent handling. Interrupted viewport work is excluded from findings.
+Graceful cancellation still writes and validates partial JSON and XLSX output. Interrupted or unperformed work is never presented as passed.
 
 ## Coverage and pass claims
 
-The workbook remains the authoritative finding register, while `audit-results.json` is the authoritative execution and coverage record. Its `coverage` section records every started page, viewport, and test area as `confirmed-passed`, `confirmed-failed`, `tested-inconclusive`, `manual-review-required`, `not-tested`, or `not-applicable`.
+Coverage states include `confirmed-passed`, `confirmed-failed`, `tested-inconclusive`, `manual-review-required`, `not-tested`, and `not-applicable`.
 
-`confirmed-passed` is deliberately narrow: it applies only to the exact automated rule and state whose retained evidence proves a pass. A non-empty title does not prove that the title is descriptive. An empty finding list does not prove accessibility. axe incomplete results, keyboard samples, link-limit truncation, blocked interactions, untested component states, and manual procedures are never converted into passes. Accessibility Overview states the number of incomplete coverage results and any viewport blockers.
-
-## Evidence links
-
-The workbook stores relative links, not embedded images. Extract and keep the workbook with its `screenshots` directory. If only the workbook is moved or emailed, the evidence links will stop working. The generated ZIP is the correct portable artifact to share.
-
-An evidence image supports reproduction; it does not replace the Testing text or JSON. A component screenshot should show the named component in context with the target outlined. Full-page screenshots are reserved for page-level failures and blockers.
+`confirmed-passed` applies only to the exact automated rule and state supported by retained evidence. An empty finding list, axe incomplete result, sampled keyboard path, truncated link check, blocked interaction, or unperformed manual procedure is not proof of accessibility or complete WCAG conformance.

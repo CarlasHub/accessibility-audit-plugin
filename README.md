@@ -1,12 +1,12 @@
 # Accessibility Audit Plugin
 
-[![Verify plugin](https://github.com/carla-goncalves_radancy/accessibility-audit-plugin/actions/workflows/verify.yml/badge.svg)](https://github.com/carla-goncalves_radancy/accessibility-audit-plugin/actions/workflows/verify.yml)
+[![Verify plugin](https://github.com/CarlasHub/accessibility-audit-plugin/actions/workflows/verify.yml/badge.svg)](https://github.com/CarlasHub/accessibility-audit-plugin/actions/workflows/verify.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933.svg)](package.json)
 
-An isolated Codex, Claude Code, Cursor, GitHub Copilot CLI, and GitHub Copilot in VS Code plugin that helps teams find and document web accessibility barriers. Give it one or more page URLs—or a file containing URLs—and it runs repeatable checks in a headless browser, then produces an Excel report, detailed JSON evidence, and a portable ZIP.
+A free GitHub Action and isolated Codex, Claude Code, Cursor, GitHub Copilot CLI, and GitHub Copilot in VS Code plugin that helps teams find and document web accessibility barriers. Give it one or more page URLs—or a file containing URLs—and it runs repeatable checks in a headless browser, then produces an Excel report, detailed JSON evidence, and a portable ZIP.
 
-Maintained by Radancy and released under the MIT License.
+Maintained by CarlasHub and released under the MIT License.
 
 The audit engine is site-independent. It contains no customer-specific hostnames, page assumptions, selectors, rules, or defaults. Every target URL is supplied at run time, and evidence from one audit is never reused in another. Customer sites used during development are external validation targets only and are not part of the plugin package.
 
@@ -16,9 +16,48 @@ You do not need to know WCAG terminology to run the plugin. Start with the workf
 
 ## Demonstration
 
-[![Accessibility Audit Plugin demonstration: run an audit from Cursor, Claude, Codex, or Copilot](https://raw.githubusercontent.com/carla-goncalves_radancy/accessibility-audit-plugin/main/.github/media/accessibility-audit-demo-poster.png)](https://github.com/carla-goncalves_radancy/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4)
+[![Accessibility Audit Plugin demonstration: run an audit from Cursor, Claude, Codex, or Copilot](https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/accessibility-audit-demo-poster.png)](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4)
 
-[Watch the 75-second sanitised demonstration](https://github.com/carla-goncalves_radancy/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4) or read the [video transcript](https://github.com/carla-goncalves_radancy/accessibility-audit-plugin/blob/main/docs/accessibility-audit-demo-transcript.md). The recording has no audio. Customer content, URLs, paths, and audit results are deliberately obscured; the captions demonstrate the workflow rather than asserting an accessibility result.
+[Watch the 75-second sanitised demonstration](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4) or read the [video transcript](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/accessibility-audit-demo-transcript.md). The recording has no audio. Customer content, URLs, paths, and audit results are deliberately obscured; the captions demonstrate the workflow rather than asserting an accessibility result.
+
+## Use the free GitHub Action
+
+Add WCAG 2.2 evidence to a workflow without installing this repository as an editor plugin:
+
+```yaml
+name: Accessibility audit
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  accessibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: audit
+        uses: CarlasHub/accessibility-audit-plugin@v1
+        with:
+          urls: |
+            https://preview.example.test/
+            https://preview.example.test/contact
+          allowed-hosts: preview.example.test
+          fail-on: serious
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload audit evidence
+        if: always() && steps.audit.outputs.output-dir != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: accessibility-audit
+          path: ${{ steps.audit.outputs.output-dir }}
+```
+
+The Action tests only the URLs you list. It posts or updates one pull-request summary when permitted and retains Excel, JSON, screenshots, and a portable ZIP for upload. `fail-on: none` is the informational default; severity gates count confirmed findings only, never items awaiting human review. See [GitHub Action usage](docs/github-action.md) for every input, output, permission, and security recommendation.
 
 ## Start here
 
@@ -86,11 +125,11 @@ The report separates four evidence categories:
 | Category | Meaning | What to do |
 |---|---|---|
 | `confirmed` | The plugin reproduced deterministic evidence of a failure. | Fix it, then retest. A person should still confirm high-impact or context-sensitive cases. |
-| `review` | The plugin found a credible signal, but context or a WCAG exception requires human judgment. | Perform the procedure in the Testing column before deciding whether it fails. |
+| `review` | The plugin found a credible signal, but context or a WCAG exception requires human judgment. | Perform the documented Test method before deciding whether it fails. |
 | `blocker` | The page could not be tested, for example because it returned an unavailable response. | Restore access or correct the URL, then rerun it. Never count it as a pass. |
 | `manual` | Automation cannot determine the result. | Complete the stated guided check with an appropriate tester. |
 
-Every populated workbook row starts with `Status = Fail` because that is the implementation-workflow default requested by the report template. It does not convert a `review` signal into a confirmed WCAG failure. Use the Labels and ProductNote fields to identify the evidence category, and read Testing before triage.
+Every populated finding starts with `Status = Open` so teams can triage it without implying a final compliance verdict. Use `Evidence type` to distinguish confirmed, review, blocker, and manual records, then follow `Test method` before assigning work.
 
 Severity (`Critical`, `Serious`, `Moderate`, or `Minor`) describes expected user impact. It is different from WCAG level, evidence confidence, remediation effort, and delivery priority.
 
@@ -109,11 +148,12 @@ See [Understanding the report](docs/reporting.md) for a worksheet and column gui
 - Consent-banner detection and dismissal before interaction testing and evidence capture; reject or necessary-only actions are preferred.
 - At most one representative contextual component screenshot per final confirmed, blocker, or review reporting unit, with the affected element outlined inside its navigation, form, tablist, card, section, or other component boundary.
 - Full-page screenshots only for page-level failures or unresolved blocking surfaces; a failed component capture never falls back to unrelated full-page evidence.
-- Lightweight relative screenshot links in `Accessibility Report` and `Image Inventory`; images are not embedded in the workbook.
+- Lightweight relative screenshot links in `Findings` and `Evidence`; images are not embedded in the workbook.
 - Graceful cancellation that writes and validates partial JSON and XLSX output.
 - URL, XLSX, CSV, TXT, and JSON page-list inputs.
 - One row for the same reusable component implementation, rendered name, and root cause across affected pages; generic unnamed controls also require the same rendered location, and page-specific findings remain separate.
 - Embedded instructions, command, skill, rules, MCP server, workbook template, validation, CI checks, and generated marketplace payloads for Claude and GitHub Copilot.
+- A self-contained Node.js GitHub Action with job-summary, pull-request-comment, artifact, and conservative quality-gate support.
 - A per-page, per-viewport JSON coverage matrix that distinguishes confirmed pass/fail evidence from inconclusive, manual, not-tested, and not-applicable areas.
 
 ## Requirements
@@ -130,7 +170,7 @@ No screen-reader package or operating-system accessibility permission is require
 Clone the plugin into its own directory. Do not install its dependencies inside a repository being audited.
 
 ```sh
-git clone https://github.com/carla-goncalves_radancy/accessibility-audit-plugin.git accessibility-audit
+git clone https://github.com/CarlasHub/accessibility-audit-plugin.git accessibility-audit
 cd accessibility-audit
 npm ci
 npm run build
@@ -163,7 +203,7 @@ On Windows PowerShell, clone directly into Cursor's local plugin directory:
 ```powershell
 $Destination = Join-Path $env:USERPROFILE ".cursor\plugins\local\accessibility-audit"
 New-Item -ItemType Directory -Force (Split-Path $Destination) | Out-Null
-git clone https://github.com/carla-goncalves_radancy/accessibility-audit-plugin.git $Destination
+git clone https://github.com/CarlasHub/accessibility-audit-plugin.git $Destination
 Set-Location $Destination
 npm ci
 npx playwright install chromium
@@ -225,7 +265,7 @@ npm run test:marketplace
 For local Copilot CLI verification, install the generated CLI payload directly:
 
 ```sh
-copilot plugin install ./marketplace/rai-ops-plugin-marketplace/accessibility-audit/copilot-cli
+copilot plugin install ./marketplace/carlashub-plugin-marketplace/accessibility-audit/copilot-cli
 copilot plugin list
 ```
 
@@ -329,7 +369,7 @@ The default output directory is `Accessibility Audit Results` under the user’s
 
 Generated files:
 
-- `Accessibility_Audit_Report.xlsx` — validated 32-column accessibility workbook.
+- `Accessibility_Audit_Report.xlsx` — validated CarlasHub WCAG 2.2 audit workbook.
 - `audit-results.json` — complete evidence, classifications, requested/completed/skipped pages, axe incomplete/pass metadata, keyboard and link truncation, interaction blockers, the coverage matrix, and guided checks.
 - `screenshots/*.png` — full-page screenshots only for page-level failures or unresolved blocking surfaces.
 - `screenshots/elements/*.png` — one retained representative contextual image per final confirmed, blocker, or review reporting unit when the element and tested state are visible and stable; the affected element is outlined within surrounding component context.
@@ -337,15 +377,16 @@ Generated files:
 
 Workbook worksheets:
 
-- `Accessibility Overview` — the single landing-page QA URL, scope, auditor, methods, totals, limitations, and outstanding guided checks.
-- `Accessibility Report` — one row per reusable component/root cause across affected pages; page-specific findings remain separate. Summary begins with the affected Desktop/Mobile scope and names the rendered component. Issue states the component, page location, affected viewport, accessibility problem, user impact, and technical locator. Testing uses reproducible steps with explicit Actual and Expected results for every generated finding. All generated rows start as `Fail`, use an operational Assignment, and initialize Estimate to `0`.
-- `Page Inventroy` — a headerless, one-column list of the unique URLs whose browser testing started. Detailed viewport completion, redirects, status, consent handling, and errors remain in `audit-results.json`.
-- `Image Inventory` — a headerless, one-column list of unique relative screenshot paths. Each cell links to the referenced PNG beside the workbook; finding and component context remains in `Accessibility Report` and `audit-results.json`.
-- `Lookup WCAG 2.2` — hidden lookup data used by report formulas.
+- `Audit Summary` — landing-page QA URL, scope, auditor, methods, totals, severity distribution, limitations, and outstanding guided checks.
+- `Findings` — a 25-field remediation register covering evidence confidence, workflow status, severity, WCAG mapping, affected scope, user impact, reproducible results, recommendation, ownership, effort, and screenshot evidence.
+- `Page Inventory` — every requested URL with audit state, planned and completed viewports, consent handling, runtime errors, and notes.
+- `Evidence` — portable evidence paths linked to their finding, page, viewport, rule, component, locator, evidence type, and detail.
+- `Manual Checks` — guided procedures, applicability, status, and reviewer notes for checks automation cannot complete.
+- `WCAG 2.2 Reference` — visible criterion, level, title, and W3C Understanding links used to enrich findings.
 
 The report contains no screen-reader worksheet or screen-reader execution result.
 
-The bundled workbook is an exact copy of `Accessibility Testing Boilerplate v.4 (4)`. Its five worksheet names and order, 32 Accessibility Report fields, hidden lookup sheet, worksheet tab colours, existing report styling, formulas, and validations are preserved. The two inventory worksheets deliberately receive no invented headers, tables, filters, formatting, or metadata columns.
+The bundled workbook is an original CarlasHub template designed around WCAG 2.2 audit and remediation workflows. Its six sheets separate executive summary, findings, page coverage, evidence, guided manual checks, and standards reference while retaining portable links and validation controls.
 
 ## Finding confidence and false-positive controls
 
@@ -476,20 +517,22 @@ The plugin installs Playwright Chromium automatically when no bundled Chromium, 
 
 ### A page was skipped
 
-Check `allowedHosts`, `stagingOnly`, redirects, authentication, and `skippedUrls` in `audit-results.json`. `Page Inventroy` lists only URLs whose browser testing started. A skipped or interrupted page is never presented as passed.
+Check `allowedHosts`, `stagingOnly`, redirects, authentication, and `skippedUrls` in `audit-results.json`. `Page Inventory` shows each requested URL and its audit state. A skipped or interrupted page is never presented as passed.
 
 ### A broken link looks incorrect
 
 Inspect the JSON evidence, response status, final URL, authentication state, and page-specific routing. Only matching 404/410 checks are confirmed; placeholder destinations and 5xx responses remain review findings.
 
-### Images are missing from Image Inventory
+### Images are missing from Evidence
 
 Keep `captureScreenshots` enabled, confirm the output directory is writable, and inspect the JSON evidence path. The final report retains at most one representative screenshot for each confirmed, blocker, or review reporting unit when the state and element can be reproduced. A component whose selector cannot be resolved is left without a screenshot instead of receiving unrelated full-page evidence. Keep the workbook beside its `screenshots` directory or use the generated ZIP so the relative links continue to work.
 
 ## Support and contribution
 
 - Installation for Cursor, Claude Code, Codex, and GitHub Copilot: [docs/installation.md](docs/installation.md)
-- RAI Ops marketplace packaging and submission: [docs/marketplace-submission.md](docs/marketplace-submission.md)
+- Marketplace packaging and submission: [docs/marketplace-submission.md](docs/marketplace-submission.md)
+- GitHub Action usage: [docs/github-action.md](docs/github-action.md)
+- GitHub Developer Program application: [docs/github-developer-program.md](docs/github-developer-program.md)
 - Start-to-finish instructions: [docs/user-guide.md](docs/user-guide.md)
 - WCAG terminology for non-specialists: [docs/wcag-basics.md](docs/wcag-basics.md)
 - Usage and troubleshooting: [SUPPORT.md](SUPPORT.md)
@@ -499,6 +542,8 @@ Keep `captureScreenshots` enabled, confirm the output directory is writable, and
 - Detailed test matrix: [docs/testing-matrix.md](docs/testing-matrix.md)
 - Workbook behavior: [docs/reporting.md](docs/reporting.md)
 - Guided checks after automation: [docs/manual-verification.md](docs/manual-verification.md)
+- Privacy notice: [PRIVACY.md](PRIVACY.md)
+- Terms of use: [TERMS.md](TERMS.md)
 
 ## License
 

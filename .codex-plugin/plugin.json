@@ -1,16 +1,16 @@
 {
   "name": "accessibility-audit",
-  "version": "0.9.7",
+  "version": "1.0.0",
   "description": "Run evidence-backed WCAG 2.2 A/AA audits at desktop, mobile, and reflow viewports and export a validated Excel report.",
   "author": {
-    "name": "Radancy"
+    "name": "CarlasHub"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "Accessibility Audit",
     "shortDescription": "Audit pages and generate an evidence-backed Excel report.",
-    "longDescription": "Runs headless Playwright and axe checks at desktop, mobile, and reflow viewports, validates links and tab components conservatively, links focused element-level evidence without bloating the workbook, reports progress, writes validated partial output after graceful cancellation, and generates the Accessibility Testing Boilerplate report format.",
-    "developerName": "Radancy",
+    "longDescription": "Runs headless Playwright and axe checks at desktop, mobile, and reflow viewports, validates links and tab components conservatively, links focused element-level evidence without bloating the workbook, reports progress, writes validated partial output after graceful cancellation, and generates the CarlasHub WCAG 2.2 audit workbook.",
+    "developerName": "CarlasHub",
     "category": "Developer Tools",
     "capabilities": [
       "MCP tools",

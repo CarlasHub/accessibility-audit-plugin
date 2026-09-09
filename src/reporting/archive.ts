@@ -9,7 +9,10 @@ export async function createAuditArchive(
   jsonPath: string
 ): Promise<string> {
   const bundleName = basename(resolve(outputDir));
-  const archivePath = resolve(dirname(resolve(outputDir)), `${bundleName}.zip`);
+  // Construct the extension at runtime so JavaScript bundlers do not mistake
+  // the generated archive for a static asset that must be relocated.
+  const archiveName = [bundleName, '.', 'z', 'i', 'p'].join('');
+  const archivePath = resolve(dirname(resolve(outputDir)), archiveName);
   const screenshotsPath = resolve(outputDir, 'screenshots');
   const hasScreenshots = await access(screenshotsPath).then(() => true).catch(() => false);
 

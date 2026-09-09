@@ -1,17 +1,17 @@
 {
   "name": "accessibility-audit-marketplace",
   "owner": {
-    "name": "Radancy"
+    "name": "CarlasHub"
   },
   "metadata": {
-    "description": "Radancy distribution catalog for the Accessibility Audit plugin."
+    "description": "CarlasHub distribution catalog for the Accessibility Audit plugin."
   },
   "plugins": [
     {
       "name": "accessibility-audit",
       "source": "./",
       "description": "Evidence-backed WCAG 2.2 A/AA page audits with validated Excel and JSON evidence.",
-      "version": "0.9.7",
+      "version": "1.0.0",
       "category": "development",
       "tags": ["accessibility", "wcag", "testing"]
     }

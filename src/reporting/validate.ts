@@ -2,11 +2,12 @@ import { access } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import ExcelJS from 'exceljs';
 import { cellText } from './cell-text.js';
-import { IMAGE_INVENTORY_SHEET } from './image-inventory.js';
 
 export interface WorkbookValidation {
   valid: boolean;
   findingRows: number;
+  evidenceRows?: number;
+  /** Screenshot-link count retained under the previous API name for compatibility. */
   imageInventoryRows: number;
   errors: string[];
   warnings: string[];
@@ -14,32 +15,41 @@ export interface WorkbookValidation {
 }
 
 export const EXPECTED_REPORT_HEADERS = [
-  'ID', 'SC1', 'Level1', 'Synopsis1', 'Understanding1', 'SC2', 'Level2', 'Synopsis2', 'Understanding2',
-  'SC3', 'Level3', 'Synopsis3', 'Understanding3', 'Links', 'Summary', 'Environment', 'Issue', 'Testing',
-  'Screengrab', 'Translation?', 'ProductNote', 'Labels', 'Impact', 'Status', 'Assignment', 'Effort',
-  'JIRASeverity', 'Specialist', 'Implementation', 'Notes', 'JIRA', 'Estimate'
+  'Finding ID', 'Evidence type', 'Status', 'Severity', 'WCAG criterion', 'Level', 'WCAG title',
+  'Affected URL(s)', 'Viewport(s)', 'Component', 'Location', 'Summary', 'Issue', 'User impact',
+  'Technical locator', 'Test method', 'Actual result', 'Expected result', 'Recommendation', 'Owner',
+  'Effort', 'Screenshot', 'Rule ID', 'Labels', 'Translation review'
 ];
 
 export const EXPECTED_WORKSHEETS = [
-  'Accessibility Overview',
-  'Accessibility Report',
-  'Page Inventroy',
-  IMAGE_INVENTORY_SHEET,
-  'Lookup WCAG 2.2'
+  'Audit Summary',
+  'Findings',
+  'Page Inventory',
+  'Evidence',
+  'Manual Checks',
+  'WCAG 2.2 Reference'
 ] as const;
 
-const expectedTabColors = new Map<string, string>([
-  ['Accessibility Overview', 'FF6E00EF'],
-  ['Accessibility Report', 'FFCC0000'],
-  ['Page Inventroy', 'FF0000FF'],
-  [IMAGE_INVENTORY_SHEET, 'FF38761D']
+const expectedHeaders = new Map<string, { row: number; values: string[] }>([
+  ['Findings', { row: 6, values: EXPECTED_REPORT_HEADERS }],
+  ['Page Inventory', { row: 4, values: ['URL', 'Audit state', 'Viewports planned', 'Viewports completed', 'Consent handling', 'Runtime errors', 'Notes'] }],
+  ['Evidence', { row: 4, values: ['Evidence path', 'Finding ID', 'Page URL', 'Viewport', 'Rule ID', 'Component', 'Technical locator', 'Evidence type', 'Detail'] }],
+  ['Manual Checks', { row: 4, values: ['Check ID', 'Manual check', 'WCAG criterion', 'Applies to', 'Procedure', 'Status', 'Reviewer notes'] }],
+  ['WCAG 2.2 Reference', { row: 3, values: ['Success criterion', 'Level', 'Title', 'Understanding link'] }]
 ]);
 
-const requiredIssueLabels = [
-  'Component:', 'Location:', 'Affected viewport(s):', 'Accessibility issue:', 'User impact:', 'Technical locator:'
-];
+const expectedTabColors = new Map<string, string>([
+  ['Audit Summary', 'FF17365D'],
+  ['Findings', 'FFC00000'],
+  ['Page Inventory', 'FF4472C4'],
+  ['Evidence', 'FF548235'],
+  ['Manual Checks', 'FFBF9000'],
+  ['WCAG 2.2 Reference', 'FF7F7F7F']
+]);
 
-const requiredTestingMarkers = ['1.', 'Actual:', 'Expected:'];
+const allowedClassifications = new Set(['confirmed', 'review', 'blocker', 'manual']);
+const allowedStatuses = new Set(['Open', 'In progress', 'Resolved', 'Risk accepted', 'Not applicable']);
+const allowedSeverities = new Set(['Critical', 'Serious', 'Moderate', 'Minor', 'Advisory']);
 
 function cellHyperlink(value: unknown): string {
   return typeof value === 'object' && value !== null && 'hyperlink' in value
@@ -47,31 +57,21 @@ function cellHyperlink(value: unknown): string {
     : '';
 }
 
-function populatedCellsOutsideFirstColumn(worksheet: ExcelJS.Worksheet): string[] {
-  const populated: string[] = [];
-  worksheet.eachRow((row) => {
-    for (let column = 2; column <= worksheet.columnCount; column += 1) {
-      const cell = row.getCell(column);
-      if (cellText(cell)) populated.push(cell.address);
-    }
-  });
-  return populated;
-}
-
 function validateTemplateShape(workbook: ExcelJS.Workbook, errors: string[]): void {
-  const worksheetNames = workbook.worksheets.map((worksheet) => worksheet.name);
-  if (worksheetNames.join('|') !== EXPECTED_WORKSHEETS.join('|')) {
+  const names = workbook.worksheets.map((worksheet) => worksheet.name);
+  if (names.join('|') !== EXPECTED_WORKSHEETS.join('|')) {
     errors.push(`Worksheet names and order must be exactly: ${EXPECTED_WORKSHEETS.join(', ')}.`);
   }
-  for (const [worksheetName, expectedColor] of expectedTabColors) {
-    const worksheet = workbook.getWorksheet(worksheetName);
-    const actualColor = worksheet?.properties.tabColor?.argb;
-    if (actualColor !== expectedColor) {
-      errors.push(`${worksheetName} worksheet tab colour does not match the supplied template.`);
-    }
+  for (const [name, expected] of expectedHeaders) {
+    const worksheet = workbook.getWorksheet(name);
+    if (!worksheet) continue;
+    const actual = expected.values.map((_, index) => cellText(worksheet.getRow(expected.row).getCell(index + 1)));
+    if (actual.join('|') !== expected.values.join('|')) errors.push(`${name} header row does not match the CarlasHub template.`);
   }
-  if (workbook.getWorksheet('Lookup WCAG 2.2')?.state !== 'hidden') {
-    errors.push('Lookup WCAG 2.2 must remain hidden as defined by the supplied template.');
+  for (const [name, color] of expectedTabColors) {
+    if (workbook.getWorksheet(name)?.properties.tabColor?.argb !== color) {
+      errors.push(`${name} worksheet tab colour does not match the CarlasHub template.`);
+    }
   }
 }
 
@@ -85,19 +85,25 @@ async function validateRelativeEvidenceLink(
   try {
     decoded = decodeURIComponent(hyperlink);
   } catch {
-    errors.push(`${location} contains an invalid screenshot hyperlink.`);
+    errors.push(`${location} contains an invalid evidence hyperlink.`);
     return;
   }
   const segments = decoded.replaceAll('\\', '/').split('/');
   if (!decoded || segments.includes('..') || isAbsolute(decoded) || /^file:/i.test(decoded) || /^[a-z]:[\\/]/i.test(decoded)) {
-    errors.push(`${location} must use a relative screenshot hyperlink.`);
+    errors.push(`${location} must use a relative evidence hyperlink.`);
     return;
   }
   try {
     await access(resolve(dirname(workbookPath), decoded));
   } catch {
-    errors.push(`${location} points to a screenshot file that is not available beside the workbook.`);
+    errors.push(`${location} points to an evidence file that is not available beside the workbook.`);
   }
+}
+
+function validateHttpCell(cell: ExcelJS.Cell, label: string, errors: string[]): void {
+  const url = cellText(cell);
+  if (!/^https?:\/\/\S+$/i.test(url)) errors.push(`${label} must contain one HTTP(S) URL.`);
+  if (cellHyperlink(cell.value) !== url) errors.push(`${label} must link to the same URL displayed in the cell.`);
 }
 
 export async function validateExcelReport(path: string): Promise<WorkbookValidation> {
@@ -105,129 +111,75 @@ export async function validateExcelReport(path: string): Promise<WorkbookValidat
   await workbook.xlsx.readFile(path);
   const errors: string[] = [];
   const warnings: string[] = [];
-  const report = workbook.getWorksheet('Accessibility Report');
-  const overview = workbook.getWorksheet('Accessibility Overview');
-  const lookup = workbook.getWorksheet('Lookup WCAG 2.2');
-  const imageInventory = workbook.getWorksheet(IMAGE_INVENTORY_SHEET);
-  const pageInventory = workbook.getWorksheet('Page Inventroy');
   validateTemplateShape(workbook, errors);
-  if (!report) errors.push('Missing Accessibility Report worksheet.');
-  if (!overview) errors.push('Missing Accessibility Overview worksheet.');
-  if (!lookup) errors.push('Missing Lookup WCAG 2.2 worksheet.');
-  if (!pageInventory) errors.push('Missing Page Inventroy worksheet.');
-  if (!imageInventory) errors.push(`Missing ${IMAGE_INVENTORY_SHEET} worksheet.`);
-  if (workbook.getWorksheet('Screen Reader Failures')) errors.push('Obsolete Screen Reader Failures worksheet is present.');
+  for (const name of EXPECTED_WORKSHEETS) {
+    if (!workbook.getWorksheet(name)) errors.push(`Missing ${name} worksheet.`);
+  }
 
+  const findings = workbook.getWorksheet('Findings');
   let findingRows = 0;
-  if (report) {
-    const headers = Array.from({ length: 32 }, (_, index) => cellText(report.getRow(1).getCell(index + 1)));
-    if (headers.join('|') !== EXPECTED_REPORT_HEADERS.join('|')) errors.push('The 32-column Accessibility Report header does not match the template.');
-    const extraReportCells: string[] = [];
-    report.eachRow((row) => {
-      for (let column = 33; column <= report.columnCount; column += 1) {
-        if (cellText(row.getCell(column))) extraReportCells.push(row.getCell(column).address);
-      }
-    });
-    if (extraReportCells.length) errors.push(`Accessibility Report contains values outside the 32 template columns: ${extraReportCells.join(', ')}.`);
-    for (let rowNumber = 2; rowNumber <= report.rowCount; rowNumber += 1) {
-      const row = report.getRow(rowNumber);
+  if (findings) {
+    for (let rowNumber = 7; rowNumber <= findings.rowCount; rowNumber += 1) {
+      const row = findings.getRow(rowNumber);
       if (!cellText(row.getCell(1))) continue;
       findingRows += 1;
-      if (/^A11YEXP/i.test(cellText(row.getCell(1)))) errors.push(`Placeholder finding remains at row ${rowNumber}.`);
-      if (!cellText(row.getCell(30))) errors.push(`Notes is empty at row ${rowNumber}.`);
-      if (/jira/i.test(cellText(row.getCell(30)))) errors.push(`Notes contains a Jira reference at row ${rowNumber}.`);
-      if (cellText(row.getCell(24)) !== 'Fail') errors.push(`Status must default to Fail at row ${rowNumber}.`);
-      if (cellText(row.getCell(25)) === 'Development Support Traffic') {
-        errors.push(`Assignment uses the retired default queue at row ${rowNumber}.`);
+      if (!/^A11Y\d{3,}$/.test(cellText(row.getCell(1)))) errors.push(`Findings!A${rowNumber} must contain a generated finding ID.`);
+      if (!allowedClassifications.has(cellText(row.getCell(2)))) errors.push(`Findings!B${rowNumber} contains an unsupported evidence type.`);
+      if (!allowedStatuses.has(cellText(row.getCell(3)))) errors.push(`Findings!C${rowNumber} contains an unsupported status.`);
+      if (!allowedSeverities.has(cellText(row.getCell(4)))) errors.push(`Findings!D${rowNumber} contains an unsupported severity.`);
+      for (let column = 1; column <= EXPECTED_REPORT_HEADERS.length; column += 1) {
+        if (!cellText(row.getCell(column))) errors.push(`Required finding cell ${row.getCell(column).address} is empty.`);
       }
-      const estimateValue = Number(row.getCell(32).value);
-      if (!Number.isFinite(estimateValue) || estimateValue < 0 || Math.abs(estimateValue * 4 - Math.round(estimateValue * 4)) > 1e-8) {
-        errors.push(`Estimate must be 0 or a non-negative 0.25 increment at row ${rowNumber}.`);
-      }
-      const estimateValidation = row.getCell(32).dataValidation;
-      const expectedEstimateFormula = `=OR(AF${rowNumber}=0,MOD(AF${rowNumber},0.25)=0)`;
-      if (estimateValidation.type !== 'custom' || estimateValidation.formulae?.[0] !== expectedEstimateFormula) {
-        errors.push(`Estimate validation is missing or incorrect at row ${rowNumber}.`);
-      }
-      if (row.getCell(32).numFmt !== '0.00;-0.00;0') {
-        errors.push(`Estimate number format is incorrect at row ${rowNumber}.`);
-      }
-      const issue = cellText(row.getCell(17));
-      for (const label of requiredIssueLabels) {
-        if (!issue.includes(label)) errors.push(`Issue is missing “${label}” context at row ${rowNumber}.`);
-      }
-      const summary = cellText(row.getCell(15));
-      if (!/^(?:Desktop|Mobile|Desktop and mobile|Tested viewport):\s+\S/.test(summary)) {
-        errors.push(`Summary is missing the affected viewport scope at row ${rowNumber}.`);
-      }
-      const testing = cellText(row.getCell(18));
-      for (const marker of requiredTestingMarkers) {
-        if (!testing.includes(marker)) errors.push(`Testing is missing “${marker}” evidence at row ${rowNumber}.`);
-      }
-      const reportScreenshotLink = cellHyperlink(row.getCell(19).value);
-      if (reportScreenshotLink) {
-        await validateRelativeEvidenceLink(path, reportScreenshotLink, `Accessibility Report!${row.getCell(19).address}`, errors);
-      }
-      const requiredColumns = [1, 2, 6, 10, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
-      for (const column of requiredColumns) {
-        if (!cellText(row.getCell(column))) errors.push(`Required cell ${row.getCell(column).address} is empty.`);
+      const screenshot = cellText(row.getCell(22));
+      const screenshotLink = cellHyperlink(row.getCell(22).value);
+      if (screenshot !== 'Not captured') {
+        if (!screenshotLink) errors.push(`Findings!V${rowNumber} must contain a relative evidence hyperlink or “Not captured”.`);
+        else await validateRelativeEvidenceLink(path, screenshotLink, `Findings!V${rowNumber}`, errors);
       }
     }
   }
-  if (findingRows === 0) warnings.push('The report contains no finding rows.');
+  if (findingRows === 0) warnings.push('The workbook contains no finding rows.');
+
+  const pages = workbook.getWorksheet('Page Inventory');
+  if (pages) {
+    const seen = new Set<string>();
+    for (let rowNumber = 5; rowNumber <= pages.rowCount; rowNumber += 1) {
+      const cell = pages.getRow(rowNumber).getCell(1);
+      if (!cellText(cell)) continue;
+      validateHttpCell(cell, `Page Inventory!A${rowNumber}`, errors);
+      if (seen.has(cellText(cell))) errors.push(`Page Inventory!A${rowNumber} duplicates an earlier URL.`);
+      seen.add(cellText(cell));
+    }
+  }
+
+  const evidence = workbook.getWorksheet('Evidence');
+  let evidenceRows = 0;
   let imageInventoryRows = 0;
-  if (imageInventory) {
-    const extraCells = populatedCellsOutsideFirstColumn(imageInventory);
-    if (extraCells.length) {
-      errors.push(`${IMAGE_INVENTORY_SHEET} must contain only the column-A evidence reference list; extra values exist in ${extraCells.join(', ')}.`);
-    }
-    const seenReferences = new Set<string>();
-    for (let rowNumber = 1; rowNumber <= imageInventory.rowCount; rowNumber += 1) {
-      const row = imageInventory.getRow(rowNumber);
-      if (!cellText(row.getCell(1))) continue;
-      imageInventoryRows += 1;
+  if (evidence) {
+    for (let rowNumber = 5; rowNumber <= evidence.rowCount; rowNumber += 1) {
+      const row = evidence.getRow(rowNumber);
+      if (!Array.from({ length: 9 }, (_, index) => cellText(row.getCell(index + 1))).some(Boolean)) continue;
+      evidenceRows += 1;
+      for (let column = 1; column <= 9; column += 1) {
+        if (!cellText(row.getCell(column))) errors.push(`Required evidence cell ${row.getCell(column).address} is empty.`);
+      }
+      validateHttpCell(row.getCell(3), `Evidence!C${rowNumber}`, errors);
       const reference = cellText(row.getCell(1));
-      const screenshotLink = cellHyperlink(row.getCell(1).value);
-      if (!screenshotLink) {
-        errors.push(`${IMAGE_INVENTORY_SHEET}!${row.getCell(1).address} is not a screenshot hyperlink.`);
-      } else {
-        if (reference !== screenshotLink) {
-          errors.push(`${IMAGE_INVENTORY_SHEET}!${row.getCell(1).address} must display the same relative path used by its hyperlink.`);
-        }
-        await validateRelativeEvidenceLink(path, screenshotLink, `${IMAGE_INVENTORY_SHEET}!${row.getCell(1).address}`, errors);
+      const hyperlink = cellHyperlink(row.getCell(1).value);
+      if (reference !== 'Not captured') {
+        imageInventoryRows += 1;
+        if (!hyperlink) errors.push(`Evidence!A${rowNumber} must contain a relative evidence hyperlink or “Not captured”.`);
+        else await validateRelativeEvidenceLink(path, hyperlink, `Evidence!A${rowNumber}`, errors);
       }
-      if (seenReferences.has(reference)) {
-        errors.push(`${IMAGE_INVENTORY_SHEET}!${row.getCell(1).address} duplicates an earlier evidence reference.`);
-      }
-      seenReferences.add(reference);
-    }
-    const embeddedImageCount = imageInventory.getImages().length;
-    if (embeddedImageCount > 0) errors.push(`${IMAGE_INVENTORY_SHEET} contains ${embeddedImageCount} embedded image(s); screenshot evidence must remain linked to keep the workbook lightweight.`);
-  }
-  if (pageInventory) {
-    const extraCells = populatedCellsOutsideFirstColumn(pageInventory);
-    if (extraCells.length) {
-      errors.push(`Page Inventroy must contain only the column-A scanned URL list; extra values exist in ${extraCells.join(', ')}.`);
-    }
-    const seenUrls = new Set<string>();
-    for (let rowNumber = 1; rowNumber <= pageInventory.rowCount; rowNumber += 1) {
-      const cell = pageInventory.getRow(rowNumber).getCell(1);
-      const url = cellText(cell);
-      if (!url) continue;
-      const hyperlink = cellHyperlink(cell.value);
-      if (!/^https?:\/\/\S+$/i.test(url)) {
-        errors.push(`Page Inventroy!${cell.address} must contain one HTTP(S) scanned URL.`);
-      }
-      if (hyperlink !== url) {
-        errors.push(`Page Inventroy!${cell.address} must link to the same scanned URL displayed in the cell.`);
-      }
-      if (seenUrls.has(url)) errors.push(`Page Inventroy!${cell.address} duplicates an earlier scanned URL.`);
-      seenUrls.add(url);
     }
   }
-  const auditor = overview ? cellText(overview.getCell('B8')) : '';
-  if (!auditor) errors.push('Auditor is empty in Accessibility Overview!B8.');
-  const qaUrl = overview ? cellText(overview.getCell('B5')) : '';
-  if (!/^https?:\/\/\S+$/i.test(qaUrl)) errors.push('Accessibility Overview!B5 must contain one HTTP(S) landing-page QA URL.');
-  return { valid: errors.length === 0, findingRows, imageInventoryRows, errors, warnings, auditor };
+
+  const embeddedImages = workbook.worksheets.reduce((total, worksheet) => total + worksheet.getImages().length, 0);
+  if (embeddedImages) errors.push(`Workbook contains ${embeddedImages} embedded image(s); evidence must remain linked to keep it portable and lightweight.`);
+  const summary = workbook.getWorksheet('Audit Summary');
+  const auditor = summary ? cellText(summary.getCell('B6')) : '';
+  if (!auditor) errors.push('Auditor is empty in Audit Summary!B6.');
+  if (summary) validateHttpCell(summary.getCell('B8'), 'Audit Summary!B8', errors);
+
+  return { valid: errors.length === 0, findingRows, evidenceRows, imageInventoryRows, errors, warnings, auditor };
 }

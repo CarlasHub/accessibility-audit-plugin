@@ -95,8 +95,8 @@ export async function findSiteSpecificReferences(root, options = {}) {
   const entries = [...sourceEntries];
   if (options.includeDist) entries.push('dist');
   if (options.includeMarketplace) {
-    entries.push('marketplace/rai-ops-plugin-marketplace/accessibility-audit');
-    entries.push('marketplace/rai-ops-plugin-marketplace/catalog-fragments');
+    entries.push('marketplace/carlashub-plugin-marketplace/accessibility-audit');
+    entries.push('marketplace/carlashub-plugin-marketplace/catalog-fragments');
   }
   const files = (await Promise.all(entries.map((entry) => collectTextFiles(join(root, entry))))).flat();
   const failures = [];

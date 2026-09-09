@@ -16,7 +16,7 @@ const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'
 const source = join(
   root,
   'marketplace',
-  'rai-ops-plugin-marketplace',
+  'carlashub-plugin-marketplace',
   'accessibility-audit',
   'claude'
 );

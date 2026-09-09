@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "accessibility-audit",
+  "version": "1.0.0",
+  "description": "Run evidence-backed WCAG 2.2 A/AA audits and export a validated Excel report with linked evidence and guided manual checks.",
+  "author": {
+    "name": "CarlasHub",
+    "url": "https://github.com/CarlasHub"
+  },
+  "homepage": "https://github.com/CarlasHub/accessibility-audit-plugin",
+  "repository": "https://github.com/CarlasHub/accessibility-audit-plugin",
+  "license": "MIT",
+  "keywords": [
+    "accessibility",
+    "wcag",
+    "axe-core",
+    "playwright",
+    "testing"
+  ]
+}

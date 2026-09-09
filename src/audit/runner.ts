@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
-import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
+import { chromium, type Browser, type Locator, type Page } from 'playwright';
 import axe from 'axe-core';
 import type {
   AuditExecutionContext,
@@ -101,7 +101,7 @@ export function isMissingBrowserExecutableError(error: unknown): boolean {
 }
 
 export async function installPlaywrightChromium(signal?: AbortSignal): Promise<void> {
-  const cli = require.resolve('@playwright/test/cli');
+  const cli = require.resolve('playwright/cli');
   await new Promise<void>((resolveInstall, rejectInstall) => {
     const child = spawn(process.execPath, [cli, 'install', 'chromium'], {
       env: process.env,

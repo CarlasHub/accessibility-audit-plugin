@@ -2,27 +2,11 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import ExcelJS, { type Cell, type ConditionalFormattingOptions, type Worksheet } from 'exceljs';
+import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import { CANONICAL_TEMPLATE_SHA256, DEFAULT_TEMPLATE, writeExcelReport } from '../src/reporting/excel.js';
 import { EXPECTED_REPORT_HEADERS, EXPECTED_WORKSHEETS } from '../src/reporting/validate.js';
 import type { AuditSummary } from '../src/types.js';
-
-function visualStyle(cell: Cell): unknown {
-  return JSON.parse(JSON.stringify({
-    alignment: cell.alignment,
-    border: cell.border,
-    fill: cell.fill,
-    font: cell.font,
-    protection: cell.protection
-  }, (_key, value) => value === false ? undefined : value));
-}
-
-function conditionalFormattingRefs(worksheet: Worksheet): string[] {
-  return (worksheet as Worksheet & {
-    conditionalFormattings: ConditionalFormattingOptions[];
-  }).conditionalFormattings.map((entry) => entry.ref);
-}
 
 function summaryWithEvidence(screenshot: string): AuditSummary {
   return {
@@ -70,23 +54,29 @@ function summaryWithEvidence(screenshot: string): AuditSummary {
   };
 }
 
-describe('canonical workbook template fidelity', () => {
-  it('bundles Accessibility Testing Boilerplate v.4 (4) byte-for-byte', async () => {
+describe('CarlasHub WCAG workbook template fidelity', () => {
+  it('bundles the approved template byte-for-byte', async () => {
     const digest = createHash('sha256').update(await readFile(DEFAULT_TEMPLATE)).digest('hex');
-    expect(CANONICAL_TEMPLATE_SHA256).toBe('e2bad974cb5192fb4b64e81a60d9eabf6877e20593c7ed79c7e08314df36257f');
-    expect(digest).toBe('e2bad974cb5192fb4b64e81a60d9eabf6877e20593c7ed79c7e08314df36257f');
+    expect(CANONICAL_TEMPLATE_SHA256).toBe('0dc49529d49402eaad4c5511f6db1cc44f91afb1cbd804da6bc702081321a4ce');
+    expect(digest).toBe(CANONICAL_TEMPLATE_SHA256);
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(DEFAULT_TEMPLATE);
     expect(workbook.worksheets.map((worksheet) => worksheet.name)).toEqual(EXPECTED_WORKSHEETS);
-    expect(workbook.getWorksheet('Accessibility Report')?.getRow(1).values).toEqual([
-      undefined,
-      ...EXPECTED_REPORT_HEADERS
+    expect(workbook.getWorksheet('Findings')?.getRow(6).values).toEqual([undefined, ...EXPECTED_REPORT_HEADERS]);
+    expect(workbook.getWorksheet('Page Inventory')?.getRow(4).values).toEqual([
+      undefined, 'URL', 'Audit state', 'Viewports planned', 'Viewports completed', 'Consent handling', 'Runtime errors', 'Notes'
     ]);
-    expect(workbook.getWorksheet('Page Inventroy')?.actualRowCount).toBe(0);
-    expect(workbook.getWorksheet('Page Inventroy')?.actualColumnCount).toBe(0);
-    expect(workbook.getWorksheet('Image Inventory')?.actualRowCount).toBe(0);
-    expect(workbook.getWorksheet('Image Inventory')?.actualColumnCount).toBe(0);
+    expect(workbook.getWorksheet('Evidence')?.getRow(4).values).toEqual([
+      undefined, 'Evidence path', 'Finding ID', 'Page URL', 'Viewport', 'Rule ID', 'Component', 'Technical locator', 'Evidence type', 'Detail'
+    ]);
+    expect(workbook.getWorksheet('Manual Checks')?.getRow(4).values).toEqual([
+      undefined, 'Check ID', 'Manual check', 'WCAG criterion', 'Applies to', 'Procedure', 'Status', 'Reviewer notes'
+    ]);
+    expect(workbook.getWorksheet('WCAG 2.2 Reference')?.getRow(3).values).toEqual([
+      undefined, 'Success criterion', 'Level', 'Title', 'Understanding link'
+    ]);
+    expect(workbook.getWorksheet('Findings')?.getCell('B7').dataValidation.formulae?.[0]).toContain('manual');
   });
 
   it('rejects a replacement workbook that can introduce template drift', async () => {
@@ -96,10 +86,10 @@ describe('canonical workbook template fidelity', () => {
     await expect(writeExcelReport(summaryWithEvidence(''), {
       outputPath: join(directory, 'report.xlsx'),
       templatePath: replacement
-    })).rejects.toThrow('must be an exact copy of Accessibility Testing Boilerplate v.4 (4)');
+    })).rejects.toThrow('does not match the CarlasHub WCAG audit template');
   });
 
-  it('preserves the template sheet structure and colour scheme while populating only its existing fields', async () => {
+  it('preserves the six-sheet design while extending styled report rows', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'a11y-template-fidelity-'));
     const screenshotDirectory = join(directory, 'screenshots', 'elements');
     await mkdir(screenshotDirectory, { recursive: true });
@@ -108,11 +98,7 @@ describe('canonical workbook template fidelity', () => {
     const output = join(directory, 'Accessibility_Audit_Report.xlsx');
     const summary = summaryWithEvidence(screenshot);
     const finding = summary.findings[0]!;
-    summary.findings = [
-      finding,
-      { ...finding, key: 'test-finding-2' },
-      { ...finding, key: 'test-finding-3' }
-    ];
+    summary.findings = [finding, { ...finding, key: 'test-finding-2' }, { ...finding, key: 'test-finding-3' }];
     await writeExcelReport(summary, { outputPath: output });
 
     const template = new ExcelJS.Workbook();
@@ -127,29 +113,26 @@ describe('canonical workbook template fidelity', () => {
       expect(generatedSheet?.views).toEqual(templateSheet.views);
     }
 
-    const templateReport = template.getWorksheet('Accessibility Report')!;
-    const generatedReport = generated.getWorksheet('Accessibility Report')!;
+    const templateFindings = template.getWorksheet('Findings')!;
+    const generatedFindings = generated.getWorksheet('Findings')!;
     for (let column = 1; column <= EXPECTED_REPORT_HEADERS.length; column += 1) {
-      expect(generatedReport.getColumn(column).width).toBe(templateReport.getColumn(column).width);
-      expect(generatedReport.getColumn(column).hidden).toBe(templateReport.getColumn(column).hidden);
-      expect(visualStyle(generatedReport.getCell(1, column))).toEqual(visualStyle(templateReport.getCell(1, column)));
-      expect(visualStyle(generatedReport.getCell(2, column))).toEqual(visualStyle(templateReport.getCell(2, column)));
-      expect(visualStyle(generatedReport.getCell(4, column))).toEqual(visualStyle(templateReport.getCell(2, column)));
+      expect(generatedFindings.getColumn(column).width).toBe(templateFindings.getColumn(column).width);
+      expect(generatedFindings.getCell(6, column).fill).toEqual(templateFindings.getCell(6, column).fill);
+      expect(generatedFindings.getCell(6, column).font).toEqual(templateFindings.getCell(6, column).font);
+      expect(generatedFindings.getCell(9, column).fill).toEqual(templateFindings.getCell(7, column).fill);
+      expect(generatedFindings.getCell(9, column).font).toEqual(templateFindings.getCell(7, column).font);
+      expect(generatedFindings.getCell(9, column).border).toEqual(templateFindings.getCell(7, column).border);
     }
-    expect(generatedReport.autoFilter).toBe('A1:AF4');
-    expect(conditionalFormattingRefs(generatedReport)).toEqual(
-      conditionalFormattingRefs(templateReport).map((ref) => ref.replaceAll('3', '4'))
+    expect(generatedFindings.autoFilter).toBe('A6:Y9');
+    expect(generatedFindings.getCell('B9').dataValidation.formulae?.[0]).toContain('manual');
+    expect(generatedFindings.getCell('T9').dataValidation.formulae?.[0]).toContain('Development');
+    expect(generatedFindings.getCell('U9').dataValidation.formulae?.[0]).toContain('Small');
+    expect(generatedFindings.getCell('Y9').dataValidation.formulae?.[0]).toContain('Review');
+    expect(generated.getWorksheet('Page Inventory')?.getCell('A5').text).toBe('https://preview.example.test/');
+    expect(generated.getWorksheet('Evidence')?.getCell('A5').hyperlink).toContain('screenshots/elements/element.png');
+    expect(generated.getWorksheet('Manual Checks')?.getCell('A5').value).toBeNull();
+    expect(generated.getWorksheet('WCAG 2.2 Reference')?.getCell('A4').value).toEqual(
+      template.getWorksheet('WCAG 2.2 Reference')?.getCell('A4').value
     );
-    expect(generatedReport.getCell('Y4').dataValidation.formulae).toEqual([
-      '"Accessibility Support,Client Auditor,CSS Support,Creative Support,Development Support Traffic,Implementation Queue,No Assignment,Product Engineer,Product Owner,Third-Party Auditor,Third-Party Issue (YouTube, ATS, etc.)"'
-    ]);
-    expect(generatedReport.getCell('AF4').dataValidation.formulae).toEqual(['=OR(AF4=0,MOD(AF4,0.25)=0)']);
-
-    for (const sheetName of ['Page Inventroy', 'Image Inventory']) {
-      const worksheet = generated.getWorksheet(sheetName)!;
-      expect(worksheet.actualColumnCount).toBe(1);
-      expect(worksheet.getColumn(1).width).toBe(template.getWorksheet(sheetName)!.getColumn(1).width);
-      expect(worksheet.getCell('B1').value).toBeNull();
-    }
   });
 });

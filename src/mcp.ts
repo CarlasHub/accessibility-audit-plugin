@@ -54,7 +54,7 @@ export function createAccessibilityAuditMcpServer(
           landingPageUrl: {
             type: 'string',
             title: 'Landing-page QA URL',
-            description: 'The single landing-page URL written to Accessibility Overview. Leave empty to use the first resolved URL.',
+            description: 'The single landing-page URL written to Audit Summary. Leave empty to use the first resolved URL.',
             default: landingPageUrl ?? targets.find((target) => /^https?:\/\//i.test(target)) ?? ''
           },
           confirm: {
@@ -103,7 +103,7 @@ export function createAccessibilityAuditMcpServer(
 
   const commonInput = {
     auditor: z.string().min(1).default(DEFAULT_AUDITOR).describe('Name written to the workbook overview.'),
-    landingPageUrl: z.string().url().optional().describe('Single landing-page QA URL written to Accessibility Overview; defaults to the first resolved URL.'),
+    landingPageUrl: z.string().url().optional().describe('Single landing-page QA URL written to Audit Summary; defaults to the first resolved URL.'),
     outputDir: z.string().min(1).default(DEFAULT_OUTPUT_DIR).describe('Isolated directory for JSON, screenshots, and XLSX.'),
     allowedHosts: z.array(z.string()).default([]).describe('Exact hosts or parent domains permitted for the run.'),
     stagingOnly: z.boolean().default(false).describe('Reject hosts that do not look like staging, QA, preview, test, or local hosts.'),
@@ -115,7 +115,7 @@ export function createAccessibilityAuditMcpServer(
     maxTabStops: z.number().int().min(1).max(500).default(120),
     maxLinksPerPage: z.number().int().min(1).max(1000).default(200),
     captureScreenshots: z.boolean().default(true).describe('Capture linked contextual evidence for confirmed, blocker, and review findings; full-page images are limited to page-level findings or unresolved blockers.'),
-    templatePath: z.string().optional().describe('Optional path to a byte-identical copy of Accessibility Testing Boilerplate v.4 (4); every other workbook is rejected.'),
+    templatePath: z.string().optional().describe('Optional path to a byte-identical copy of the bundled CarlasHub WCAG 2.2 report template; every other workbook is rejected.'),
     reportName: z.string().default(DEFAULT_REPORT_NAME)
   };
 

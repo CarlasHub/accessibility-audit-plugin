@@ -40,7 +40,7 @@ The plugin is URL-list driven. It never assumes that one URL represents an entir
 
 Include pages that expose distinct states or content, such as search results, no-results states, form pages, error pages, localized pages, and pages with unique navigation or widgets. A component that is absent from the supplied pages cannot be tested.
 
-The landing-page QA URL is only the main reference link shown in `Accessibility Overview`. Changing it does not add pages to the audit.
+The landing-page QA URL is only the main reference link shown in `Audit Summary`. Changing it does not add pages to the audit.
 
 ### Page-list files
 
@@ -127,7 +127,7 @@ To stop:
 
 One stop request allows the plugin to close Chromium and write validated partial JSON, XLSX, and ZIP output. A second `Ctrl+C` exits immediately and may prevent partial reports from being finalized.
 
-Cancelled output must be treated as partial. `Page Inventroy` lists the URLs whose browser testing started; check the JSON summary to determine which pages and viewports completed, remained partial, or never started.
+Cancelled output must be treated as partial. `Page Inventory` lists the URLs whose browser testing started; check the JSON summary to determine which pages and viewports completed, remained partial, or never started.
 
 ## Step 5: open the output correctly
 
@@ -145,13 +145,14 @@ For sharing, send the ZIP. The recipient should extract the complete ZIP before 
 
 Review in this order:
 
-1. `Accessibility Overview`: confirm scope, auditor, methods, totals, limitations, and outstanding manual checks.
-2. `Page Inventroy`: confirm the headerless column-A list contains the URLs whose browser testing started; use JSON to inspect completion, redirects, HTTP status, consent handling, and runtime errors.
-3. `Accessibility Report`: triage confirmed issues first, then perform the stated checks for review items.
-4. `Image Inventory`: open each linked relative path in the headerless column-A list, then match it to the finding/component context in Accessibility Report and JSON.
-5. Complete the guided checks in [Manual verification](manual-verification.md).
+1. `Audit Summary`: confirm scope, auditor, methods, totals, limitations, and outstanding manual checks.
+2. `Findings`: triage confirmed issues first, then perform the stated checks for review items.
+3. `Page Inventory`: confirm each tested URL and its completion, viewport, consent, and runtime-error state.
+4. `Evidence`: open each relative screenshot link and match it to its finding, page, viewport, rule, and locator.
+5. `Manual Checks`: record the outcome of every applicable human verification procedure.
+6. `WCAG 2.2 Reference`: use the criterion, level, title, and Understanding link as a navigation aid.
 
-Do not conclude that the site passed because the workbook has few or no automated rows. Do not conclude that every row is a proven failure merely because its workflow Status defaults to `Fail`.
+Do not conclude that the site passed because the workbook has few or no automated rows. An `Open` workflow status means the item still needs triage; `Evidence type` states how strongly automation supports it.
 
 ## Understanding one finding row
 
@@ -159,18 +160,21 @@ Read these fields together:
 
 | Field | How to use it |
 |---|---|
-| Links | Every page where the same component implementation and root cause were found. |
+| Affected URL(s) | Every page where the same component implementation and root cause were found. |
+| Evidence type | Whether the item is confirmed, requires review, records a blocker, or needs a manual decision. |
+| Status | Workflow state, initially `Open`. |
+| WCAG criterion, Level, WCAG title | The mapped WCAG 2.2 reference. |
 | Summary | A short title stating the affected desktop/mobile scope and rendered component. |
-| Environment | Browser and affected desktop/mobile/reflow viewport. |
+| Viewport(s) | Affected desktop/mobile/reflow viewport. |
+| Component and Location | The rendered component and page area. |
 | Issue | Component name, page location, affected viewport, barrier, user impact, and technical locator. |
-| Testing | How the evidence was produced and what a person must verify. |
-| Screengrab | Link to the first evidence image when one exists. |
-| ProductNote | Whether the evidence is confirmed or still requires review. |
-| Labels | Evidence category, rule identifier, and mapped WCAG criteria. |
-| Impact | Expected user impact severity, not remediation priority or certainty. |
-| Assignment | Suggested implementation, content, design, or accessibility queue. |
-| Notes | Concrete remediation only. |
-| Estimate | Starts at `0`; update in quarter increments after engineering assessment. |
+| User impact | The practical barrier for disabled users. |
+| Technical locator | A selector or other reproducible location hint. |
+| Test method, Actual result, Expected result | How the result was produced and what should be reproduced or verified. |
+| Recommendation | Concrete remediation guidance. |
+| Owner and Effort | Triage fields for the delivery team. |
+| Screenshot | Link to the first evidence image when one exists. |
+| Rule ID and Labels | Traceability to the automated or manual rule and grouping metadata. |
 
 One reusable component/root-cause combination is consolidated into one row across multiple pages, including repeated instances within the component. Each affected URL still appears separately in Links. Page-specific implementations, different measured colour treatments, behaviours, criteria, or remediation requirements remain separate rows. A repeated same-name landmark set or one family of filter controls should not become one row per DOM node when its implementation and root cause match. Missing `aria-controls` alone produces no finding for an ordinary disclosure/accordion, and Escape is not a generic accordion/disclosure requirement.
 
@@ -184,7 +188,7 @@ Use this triage sequence:
 
 1. Resolve blockers and rerun those pages.
 2. Reproduce confirmed issues and prioritize them by user impact and product risk.
-3. Complete the Testing procedure for every review item; reclassify it only after evidence supports the decision.
+3. Complete the Test method for every review item; reclassify it only after evidence supports the decision.
 4. Assign and estimate accepted failures.
 5. Complete the guided manual checks with suitable browsers, devices, and assistive technologies.
 6. Implement fixes.
@@ -205,13 +209,13 @@ No. Many requirements need human judgment, assistive technology, a physical devi
 
 No. It is a signal that needs the described manual decision. WCAG exceptions and page context can change the result.
 
-### “Status says Fail, so confidence must be confirmed.”
+### “Status says Open, so confidence must be confirmed.”
 
-No. `Status` is initialized for the implementation workflow. Evidence confidence is recorded separately in Labels and ProductNote.
+No. `Status` is initialized for the implementation workflow. Evidence confidence is recorded separately in `Evidence type`.
 
 ### “The screenshots prove the whole issue.”
 
-Not always. A screenshot provides visual context. Use it with the Testing text, selector, structured JSON evidence, and manual reproduction.
+Not always. A screenshot provides visual context. Use it with the Test method, technical locator, structured JSON evidence, and manual reproduction.
 
 ## When to involve a specialist
 

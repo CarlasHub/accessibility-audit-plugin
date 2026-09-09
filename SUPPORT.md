@@ -20,7 +20,7 @@ Collect the following without including secrets or private page content:
 - Reload Cursor or restart the Claude, Codex, or Copilot session after rebuilding.
 - Allow the one-time automatic Chromium installation, or install it explicitly with `npx playwright install chromium` when organisational policy blocks automatic downloads.
 - Check `allowedHosts`, `stagingOnly`, redirects, and authentication when pages are skipped.
-- Keep screenshot capture enabled and use a writable output directory when Image Inventory is empty.
+- Keep screenshot capture enabled and use a writable output directory when Evidence is empty.
 
 ## The plugin is installed but the command or MCP server is missing
 
@@ -53,18 +53,18 @@ The report uses relative links to keep the workbook small. Extract the complete 
 
 ## Fewer pages were tested than expected
 
-The plugin never crawls a site. It tests only explicit URLs resolved from the supplied arguments or page-list file. Check `Page Inventroy`, `requestedUrls`, `auditedUrls`, and `skippedUrls`. The landing-page QA URL is report metadata and does not expand the scope.
+The plugin never crawls a site. It tests only explicit URLs resolved from the supplied arguments or page-list file. Check `Page Inventory`, `requestedUrls`, `auditedUrls`, and `skippedUrls`. The landing-page QA URL is report metadata and does not expand the scope.
 
 ## A finding looks incorrect
 
 Check its evidence category before treating it as a defect:
 
 - `confirmed` has deterministic reproduced evidence;
-- `review` requires the procedure in Testing;
+- `review` requires the procedure in `Test method`;
 - `blocker` means the page was not tested;
 - `manual` means automation cannot decide.
 
-Include the sanitized finding ID, rule ID, page, viewport, Testing text, and relevant JSON evidence in a bug report. Do not attach private customer screenshots or content to a public issue.
+Include the sanitized finding ID, rule ID, page, viewport, test method, and relevant JSON evidence in a bug report. Do not attach private customer screenshots or content to a public issue.
 
 ## Issues
 

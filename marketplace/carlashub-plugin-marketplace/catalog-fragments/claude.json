@@ -1,0 +1,10 @@
+{
+  "name": "accessibility-audit",
+  "description": "Evidence-backed WCAG 2.2 A/AA page audits with validated Excel reporting.",
+  "source": {
+    "source": "git-subdir",
+    "url": "https://github.com/CarlasHub/accessibility-audit-plugin.git",
+    "ref": "main",
+    "path": "marketplace/carlashub-plugin-marketplace/accessibility-audit/claude"
+  }
+}

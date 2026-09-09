@@ -10,8 +10,8 @@ This guide installs the Accessibility Audit plugin without adding dependencies o
 | Claude Code | Built checkout passed with `--plugin-dir`, or a built local marketplace | Any directory from which Claude Code is started |
 | Claude Desktop Chat | Generated custom-plugin ZIP uploaded through Customize | A local Chat conversation on the computer running the plugin MCP server |
 | Codex | Built checkout registered as a local marketplace in Codex CLI | Any directory from which Codex CLI is started |
-| GitHub Copilot CLI | Generated `copilot-cli` payload installed directly or through the RAI Ops marketplace | Any directory from which Copilot CLI is started |
-| GitHub Copilot in VS Code | Generated `copilot-vscode` payload distributed through the RAI Ops marketplace | Any project opened in VS Code |
+| GitHub Copilot CLI | Generated `copilot-cli` payload installed directly or from a compatible marketplace | Any directory from which Copilot CLI is started |
+| GitHub Copilot in VS Code | Generated `copilot-vscode` payload distributed through a compatible marketplace | Any project opened in VS Code |
 
 The Codex IDE extension does not currently load plugins. Use Codex CLI or another Codex/ChatGPT surface that supports plugins.
 
@@ -42,7 +42,7 @@ If your organisation uses a private mirror, authenticate Git before cloning thro
 Run these commands in a tools directory, not inside the application repository that will be audited:
 
 ```sh
-git clone https://github.com/carla-goncalves_radancy/accessibility-audit-plugin.git accessibility-audit
+git clone https://github.com/CarlasHub/accessibility-audit-plugin.git accessibility-audit
 cd accessibility-audit
 npm ci
 npm run build
@@ -88,7 +88,7 @@ Clone and build directly in Cursor's local plugin directory, or create a directo
 
 ```powershell
 $PluginPath = Join-Path $env:USERPROFILE ".cursor\plugins\local\accessibility-audit"
-git clone https://github.com/carla-goncalves_radancy/accessibility-audit-plugin.git $PluginPath
+git clone https://github.com/CarlasHub/accessibility-audit-plugin.git $PluginPath
 Set-Location $PluginPath
 npm ci
 npx playwright install chromium
@@ -205,7 +205,7 @@ Build and validate the generated marketplace payload from the isolated source ch
 npm run build:marketplace
 npm run validate:marketplace
 npm run test:marketplace
-copilot plugin install ./marketplace/rai-ops-plugin-marketplace/accessibility-audit/copilot-cli
+copilot plugin install ./marketplace/carlashub-plugin-marketplace/accessibility-audit/copilot-cli
 copilot plugin list
 ```
 
@@ -215,18 +215,18 @@ Start Copilot CLI in an unrelated project. In an interactive session, run `/skil
 Use the Accessibility Audit plugin to audit https://preview.example.test/.
 ```
 
-After the RAI Ops marketplace version is published, users register that marketplace and install its entry instead of installing a local path:
+After the CarlasHub marketplace is published, users can register it and install the entry instead of using a local path:
 
 ```sh
-copilot plugin marketplace add radancy-pe/rai-ops-plugin-marketplace
-copilot plugin install accessibility-audit@radancy
+copilot plugin marketplace add CarlasHub/accessibility-audit-plugin
+copilot plugin install accessibility-audit@carlashub-plugins
 ```
 
 The first activation installs the bundled production runtime into `COPILOT_PLUGIN_DATA`; it does not add packages or files to the open project.
 
 ## 3F. Install in GitHub Copilot in VS Code
 
-The generated `copilot-vscode` payload follows the marketplace’s VS Code harness convention. Publish it through the RAI Ops marketplace, then use the organisation-approved plugin installation flow in VS Code. After installation:
+The generated `copilot-vscode` payload follows the marketplace’s VS Code harness convention. Publish it through a compatible marketplace, then use the organisation-approved plugin installation flow in VS Code. After installation:
 
 1. Reload VS Code if the marketplace UI requests it.
 2. Confirm that `accessibility-audit-vscode` is enabled.
@@ -274,10 +274,10 @@ codex plugin add accessibility-audit@accessibility-audit-marketplace
 
 ```sh
 copilot plugin uninstall accessibility-audit
-copilot plugin install ./marketplace/rai-ops-plugin-marketplace/accessibility-audit/copilot-cli
+copilot plugin install ./marketplace/carlashub-plugin-marketplace/accessibility-audit/copilot-cli
 ```
 
-- Copilot marketplace: run `copilot plugin marketplace update radancy`, then `copilot plugin update accessibility-audit`.
+- Copilot marketplace: run `copilot plugin marketplace update carlashub-plugins`, then `copilot plugin update accessibility-audit`.
 
 ## 6. Uninstall
 

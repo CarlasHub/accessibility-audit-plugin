@@ -1,4 +1,4 @@
-import type { Frame, Locator, Page } from '@playwright/test';
+import type { Frame, Locator, Page } from 'playwright';
 import type { ConsentHandlingResult, ElementContext, InteractionBlocker } from '../types.js';
 
 const consentSurfaceSelector = [

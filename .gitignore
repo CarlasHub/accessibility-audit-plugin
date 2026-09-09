@@ -1,5 +1,7 @@
 node_modules/
 dist/
+!action/dist/
+!action/dist/**
 artifacts/
 Accessibility Audit Results/
 accessibility-audit-results/
@@ -7,4 +9,4 @@ coverage/
 .DS_Store
 *.log
 *.tgz
-!marketplace/rai-ops-plugin-marketplace/accessibility-audit/**/_install-source/*.tgz
+!marketplace/carlashub-plugin-marketplace/accessibility-audit/**/_install-source/*.tgz

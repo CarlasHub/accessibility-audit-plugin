@@ -5,7 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const root = resolve(import.meta.dirname, '..');
-const sourceRoot = join(root, 'marketplace', 'rai-ops-plugin-marketplace', 'accessibility-audit');
+const sourceRoot = join(root, 'marketplace', 'carlashub-plugin-marketplace', 'accessibility-audit');
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'accessibility-audit-marketplace-smoke-'));
 const pluginData = join(temporaryRoot, 'plugin data with spaces');
 const targetProject = join(temporaryRoot, 'read only target');

@@ -1,6 +1,8 @@
 import type { AuditSummary } from '../types.js';
 
-export const IMAGE_INVENTORY_SHEET = 'Image Inventory';
+export const EVIDENCE_SHEET = 'Evidence';
+/** @deprecated Use EVIDENCE_SHEET. Retained for API compatibility. */
+export const IMAGE_INVENTORY_SHEET = EVIDENCE_SHEET;
 export function getImageEvidencePaths(summary: AuditSummary): string[] {
   const paths: string[] = [];
   const seen = new Set<string>();

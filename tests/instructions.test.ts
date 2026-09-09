@@ -25,10 +25,10 @@ describe('embedded audit instructions', () => {
     expect(instructions).toContain('write validated partial JSON and XLSX output');
     expect(instructions).toContain('element screenshot');
     expect(instructions).toContain('both the authenticated request context and an in-page fetch agree');
-    expect(instructions).toContain('Image Inventory');
-    expect(instructions).toContain('Accessibility Testing Boilerplate v.4 (4)');
-    expect(instructions).toContain('headerless column-A list of unique URLs');
-    expect(instructions).toContain('headerless column-A list of unique screenshot references');
+    expect(instructions).toContain('relative hyperlinks in Findings and Evidence');
+    expect(instructions).toContain('six-sheet CarlasHub WCAG 2.2 workbook');
+    expect(instructions).toContain('Page Inventory with one structured row per requested or skipped URL');
+    expect(instructions).toContain('Evidence with one structured row per retained evidence item');
     expect(instructions).not.toMatch(/guidepup/i);
     expect(instructions).not.toContain('Screen Reader Failures with');
     expect(instructions).toContain('Do not install dependencies in');
@@ -37,11 +37,11 @@ describe('embedded audit instructions', () => {
     expect(instructions).toContain('customer names, or site-specific rules from an earlier run');
     expect(instructions).toContain('Use one row for the same reusable component implementation and root cause');
     expect(instructions).toContain('same reusable component implementation and root cause');
-    expect(instructions).toContain('set every populated Accessibility Report row to Fail');
-    expect(instructions).toContain('initialize Estimate to numeric 0');
+    expect(instructions).toContain('set every populated Findings row to Open');
+    expect(instructions).toContain('populate Owner and Effort from the finding');
     expect(instructions).toContain('Explain the result in plain language');
     expect(instructions).toContain('only supplied URLs were tested');
-    expect(instructions).toContain("default Fail workflow status from evidence confidence");
+    expect(instructions).toContain("Open workflow status from evidence confidence");
     expect(instructions).toContain('extract the ZIP');
   });
 

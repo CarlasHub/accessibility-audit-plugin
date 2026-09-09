@@ -933,7 +933,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
     const sharedComponentKey = createSharedComponentKey(component, `disclosure-family|${component}`);
     // Interaction errors are retained in ViewportAudit.disclosures and reflected
     // as tested-inconclusive coverage. An incomplete test is not an accessibility
-    // defect and therefore must not create an Accessibility Report row.
+    // defect and therefore must not create a Findings row.
     const completed = disclosures.filter((item) => (
       !item.error
       && (item.enterTargetVerified ?? item.activationTargetVerified) === true

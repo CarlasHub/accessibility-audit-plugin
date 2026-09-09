@@ -1,19 +1,19 @@
 {
   "name": "accessibility-audit-plugin",
-  "version": "0.9.7",
+  "version": "1.0.0",
   "private": true,
   "description": "Cross-platform Codex, Claude Code, Claude Desktop, Cursor, and GitHub Copilot plugin for structured WCAG 2.2 accessibility audits.",
   "author": {
-    "name": "Radancy",
-    "url": "https://github.com/radancy-pe"
+    "name": "CarlasHub",
+    "url": "https://github.com/CarlasHub"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/carla-goncalves_radancy/accessibility-audit-plugin.git"
+    "url": "git+https://github.com/CarlasHub/accessibility-audit-plugin.git"
   },
-  "homepage": "https://github.com/carla-goncalves_radancy/accessibility-audit-plugin#readme",
+  "homepage": "https://github.com/CarlasHub/accessibility-audit-plugin#readme",
   "bugs": {
-    "url": "https://github.com/carla-goncalves_radancy/accessibility-audit-plugin/issues"
+    "url": "https://github.com/CarlasHub/accessibility-audit-plugin/issues"
   },
   "keywords": [
     "accessibility",
@@ -25,7 +25,8 @@
     "claude-desktop-plugin",
     "codex-plugin",
     "github-copilot-plugin",
-    "copilot-cli-plugin"
+    "copilot-cli-plugin",
+    "github-action"
   ],
   "type": "module",
   "bin": {
@@ -33,6 +34,7 @@
     "accessibility-audit-mcp": "dist/mcp.js"
   },
   "files": [
+    ".agents/",
     ".claude-plugin/",
     ".codex-plugin/",
     ".cursor-plugin/",
@@ -45,16 +47,20 @@
     ".claude-mcp.json",
     ".mcp.json",
     "mcp.json",
+    "plugin.json",
     "README.md",
     "SECURITY.md",
     "SUPPORT.md",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "LICENSE",
+    "PRIVACY.md",
+    "TERMS.md",
     "audit.config.example.json"
   ],
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/verify-site-neutrality.mjs --require-dist",
+    "build:action": "npm run build && node scripts/clean-action-dist.mjs && ncc build dist/action-entry.js -o action/dist --minify --no-source-map-register -e playwright -e playwright-core && node scripts/finalize-action-dist.mjs",
     "build:marketplace": "npm run build && node scripts/build-marketplace-payload.mjs",
     "package:claude-desktop": "npm run build:marketplace && node scripts/package-claude-desktop.mjs",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
@@ -62,12 +68,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:integration": "cross-env RUN_BROWSER_INTEGRATION=1 vitest run tests/integration.test.ts",
+    "test:action": "node scripts/smoke-action-bundle.mjs",
     "test:watch": "vitest",
     "audit": "tsx src/cli.ts audit",
     "mcp": "tsx src/mcp.ts",
     "validate:marketplace": "node scripts/validate-marketplace-payload.mjs",
     "test:marketplace": "node scripts/smoke-marketplace-payload.mjs",
-    "test:rai-marketplace": "node scripts/test-rai-ops-compatibility.mjs",
+    "test:marketplace-compatibility": "node scripts/test-marketplace-compatibility.mjs",
     "audit:dependencies": "npm audit --omit=dev --audit-level=high",
     "verify:site-neutrality": "node scripts/verify-site-neutrality.mjs"
   },
@@ -76,20 +83,20 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "@playwright/test": "1.62.1",
     "archiver": "^7.0.1",
     "axe-core": "4.13.0",
     "commander": "15.0.0",
     "exceljs": "4.4.0",
+    "playwright": "1.62.1",
     "zod": "4.5.4"
   },
   "bundleDependencies": [
     "@modelcontextprotocol/sdk",
-    "@playwright/test",
     "archiver",
     "axe-core",
     "commander",
     "exceljs",
+    "playwright",
     "zod"
   ],
   "overrides": {
@@ -99,6 +106,7 @@
     "@eslint/js": "9.39.1",
     "@types/archiver": "^6.0.3",
     "@types/node": "24.10.1",
+    "@vercel/ncc": "0.45.0",
     "cross-env": "10.1.0",
     "eslint": "9.39.1",
     "tsx": "4.20.6",

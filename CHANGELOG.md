@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0 - 2026-09-09
+
+- Rebranded the public package, manifests, generated marketplaces, documentation, policies, and support paths for CarlasHub ownership.
+- Replaced the inherited workbook with an original six-sheet WCAG 2.2 reporting template covering audit summary, findings, page inventory, evidence, manual checks, and the A/AA success-criterion reference.
+- Added a portable Agent Plugin manifest and marketplace catalog alongside the existing Codex, Claude, Cursor, and GitHub Copilot packages.
+- Added submission guidance, privacy terms, release validation, and local marketplace compatibility checks for public distribution.
+
 ## 0.9.7 - 2026-09-07
 
 - Removed customer and validation-site names from runtime instructions, URL tests, finding fixtures, report fixtures, and staging-host detection.
@@ -36,16 +43,16 @@
 - Consolidated shared text-colour treatments, repeated same-name landmarks, disclosure families, and description-list structure signals into component/root-cause rows instead of one row per DOM node or page instance.
 - Reclassified missing `aria-controls` alone as a Best Practice review for ordinary disclosures and accordions, combined it with unchanged `aria-expanded` evidence on the same component, and required observed open content before confirming a stale-state failure.
 - Removed the generic Escape-to-close disclosure check and documented Escape as a pattern-specific manual expectation rather than an accordion/disclosure requirement.
-- Replaced the bundled workbook byte-for-byte with `Accessibility Testing Boilerplate v.4 (4)` and added checksum, worksheet-order, tab-colour, field, style, and validation regression coverage.
-- Removed invented Page Inventroy and Image Inventory table schemas. Page Inventroy now lists only unique scanned URLs in column A; Image Inventory lists only unique linked relative evidence paths in column A.
-- Extended the template's existing conditional formatting and data validation behavior to additional Accessibility Report finding rows without adding report columns or worksheets.
+- Replaced the bundled workbook with a checksum-locked reporting template and added worksheet-order, tab-colour, field, style, and validation regression coverage.
+- Simplified the earlier page and evidence inventories to retain unique scanned URLs and linked relative evidence paths.
+- Extended conditional formatting and data validation behavior to additional finding rows without adding report columns or worksheets.
 
 ## 0.9.3 - 2026-09-03
 
-- Prepared the source repository for public review with Radancy ownership metadata, hardened CI permissions, and production-dependency auditing.
+- Prepared the source repository for public review with organization ownership metadata, hardened CI permissions, and production-dependency auditing.
 - Added a sanitised, captioned workflow demonstration with a text transcript while keeping media out of executable runtime archives.
 - Expanded issue and contribution guidance across Cursor, Claude, Codex, and GitHub Copilot clients.
-- Aligned public-source and RAI Ops marketplace submission documentation.
+- Aligned public-source and organization marketplace submission documentation.
 
 ## 0.9.2 - 2026-09-03
 
@@ -67,7 +74,7 @@
 - Added a checksum-verified, versioned runtime installer that writes only to plugin-owned data storage and never changes the audited project.
 - Added an isolated MCP launcher and marketplace package validation and smoke tests.
 - Added automatic headless Playwright Chromium installation when no supported local browser exists, with an explicit opt-out.
-- Added submission staging files and documentation for the Radancy RAI Ops plugin marketplace without modifying that marketplace repository.
+- Added marketplace submission staging files and documentation without modifying the destination repository.
 
 ## 0.8.2 - 2026-09-03
 
@@ -99,7 +106,7 @@
 - Consolidate the same reusable component and root cause into one finding row across pages while preserving page-specific findings.
 - Collapse repeated axe `region` nodes and responsive target-size signals into one page-specific review row to reduce false-positive-looking duplication.
 - Default every populated report row to `Fail`, route Development and QA findings to `Implementation Queue`, and initialize Estimate to `0` with quarter-step validation.
-- Write one landing-page QA URL to Accessibility Overview through CLI, configuration, and MCP inputs.
+- Write one landing-page QA URL to the workbook summary through CLI, configuration, and MCP inputs.
 - Capture screenshot evidence only for confirmed failures and page blockers, keep images outside the workbook, and link them with portable relative hyperlinks.
 - Package each audit as a ZIP containing the workbook, JSON evidence, and screenshot tree.
 
@@ -118,7 +125,7 @@ All notable changes are documented here. Versions follow Semantic Versioning.
 
 - Conservative same-origin broken-link and placeholder-link testing.
 - Detailed tab state, relationship, navigation, and activation checks.
-- Element-level screenshots with embedded Image Inventory previews.
+- Element-level screenshots with evidence inventory previews.
 - Comprehensive Cursor, Claude Code, and Codex installation and usage documentation.
 - Security, support, contribution, and release documentation.
 
@@ -127,7 +134,7 @@ All notable changes are documented here. Versions follow Semantic Versioning.
 - Browser testing remains headless by default.
 - Home/End tab behavior is recorded as optional and no longer causes a failure.
 - Empty-link naming includes descendant image alternatives and additional name sources.
-- Workbook validation now verifies Image Inventory evidence and rejects obsolete screen-reader worksheets.
+- Workbook validation now verifies evidence inventory paths and rejects obsolete screen-reader worksheets.
 
 ### Removed
 

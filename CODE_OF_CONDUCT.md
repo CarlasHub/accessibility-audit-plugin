@@ -14,4 +14,4 @@ Accessibility feedback must be treated as product evidence, not as a judgement a
 
 Report conduct or security concerns privately through the repository’s GitHub security advisory channel. Maintainers may edit or remove contributions, comments, issues, or other participation that violates this policy and may temporarily or permanently restrict participation when necessary.
 
-This policy applies in the repository and in public spaces where someone is representing the project or Radancy.
+This policy applies in the repository and in public spaces where someone is representing the project or CarlasHub.

@@ -12,12 +12,13 @@ describe('plugin packaging', () => {
   it('keeps package and client manifests version-aligned', async () => {
     const manifests = await Promise.all([
       json('package.json'),
+      json('plugin.json'),
       json('.codex-plugin/plugin.json'),
       json('.cursor-plugin/plugin.json'),
       json('.claude-plugin/plugin.json')
     ]);
-    expect(manifests.map((manifest) => manifest.version)).toEqual(Array(4).fill(VERSION));
-    expect(manifests.map((manifest) => (manifest.author as { name?: string } | undefined)?.name)).toEqual(Array(4).fill('Radancy'));
+    expect(manifests.map((manifest) => manifest.version)).toEqual(Array(5).fill(VERSION));
+    expect(manifests.map((manifest) => (manifest.author as { name?: string } | undefined)?.name)).toEqual(Array(5).fill('CarlasHub'));
     const marketplace = await json('.claude-plugin/marketplace.json') as {
       plugins?: Array<{ version?: string }>;
     };
@@ -27,6 +28,7 @@ describe('plugin packaging', () => {
   it('contains no retired screen-reader execution option in public manifests or MCP definitions', async () => {
     const paths = [
       'package.json',
+      'plugin.json',
       '.codex-plugin/plugin.json',
       '.cursor-plugin/plugin.json',
       '.claude-plugin/plugin.json',
@@ -36,6 +38,18 @@ describe('plugin packaging', () => {
     ];
     const publicConfiguration = (await Promise.all(paths.map((path) => readFile(path, 'utf8')))).join('\n');
     expect(publicConfiguration).not.toMatch(/guidepup|screenReader/i);
+  });
+
+  it('provides portable plugin and marketplace metadata', async () => {
+    const [plugin, mcp, marketplace] = await Promise.all([
+      json('plugin.json'),
+      json('mcp.json'),
+      json('.agents/plugins/marketplace.json')
+    ]);
+    expect(plugin.$schema).toBe('https://agent-plugins.org/schemas/1.0.0/plugin.schema.json');
+    expect(mcp.$schema).toBe('https://agent-plugins.org/schemas/1.0.0/mcp.schema.json');
+    expect((mcp.mcpServers as Record<string, { type?: string }> | undefined)?.['accessibility-audit']?.type).toBe('stdio');
+    expect(marketplace.name).toBe('carlashub-plugins');
   });
 
   it('bundles every production dependency for offline marketplace activation', async () => {

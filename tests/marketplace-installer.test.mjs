@@ -59,7 +59,7 @@ describe('marketplace runtime installer', () => {
   it('uses client-owned data directories with a private fallback', () => {
     expect(resolvePluginRoot({ COPILOT_PLUGIN_ROOT: '/plugins/audit' })).toContain('/plugins/audit');
     expect(resolvePluginDataRoot({ CLAUDE_PLUGIN_DATA: '/client/data' }, '/home/test')).toContain('/client/data');
-    expect(resolvePluginDataRoot({}, '/home/test')).toBe('/home/test/.radancy/cache/accessibility-audit');
+    expect(resolvePluginDataRoot({}, '/home/test')).toBe('/home/test/.carlashub/cache/accessibility-audit');
   });
 
   it('installs once, verifies the runtime, and reuses the ready version', async () => {
