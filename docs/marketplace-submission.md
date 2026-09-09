@@ -49,9 +49,10 @@ The public listing should link to [Privacy](../PRIVACY.md), [Terms](../TERMS.md)
 1. Make the repository public after the security and privacy review passes.
 2. Confirm that the root `action.yml`, committed `action/dist`, README usage example, licence, support, privacy, and security files are present.
 3. Draft a `v1.0.0` GitHub release from the tested commit.
-4. Select **Publish this Action to the GitHub Marketplace**, accept the GitHub Marketplace Developer Agreement, and choose **Code quality** plus **Testing** where those categories are available.
-5. Create or move the `v1` tag to the same commit so users can follow compatible `v1.x.x` releases.
-6. Run `.github/workflows/accessibility-audit.yml` manually against a public, non-sensitive page and retain the workflow result as listing evidence.
+4. Confirm two-factor authentication is enabled for the publishing account and accept the GitHub Marketplace Developer Agreement.
+5. Select **Publish this Action to the GitHub Marketplace** and choose **Code quality** plus **Testing** where those categories are available.
+6. Create or move the `v1` tag to the same commit so users can follow compatible `v1.x.x` releases.
+7. Run `.github/workflows/accessibility-audit.yml` manually against a public, non-sensitive page and retain the workflow result as listing evidence.
 
 See [GitHub Action usage](github-action.md) for the consumer contract and [GitHub Developer Program application](github-developer-program.md) for the application evidence and owner-only steps.
 

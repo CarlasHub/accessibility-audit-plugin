@@ -24,8 +24,9 @@ The evidence below can be used to keep the existing Developer Program account in
 
 1. GitHub Developer Program membership is active and its badge is public.
 2. The repository, documentation, `v1.0.0` release, and movable `v1` tag are public.
-3. Accept the GitHub Marketplace Developer Agreement in GitHub's release editor.
-4. Publish `v1.0.0` to GitHub Marketplace as a free Action under **Code quality** and **Testing**.
-5. Pin the public repository to the CarlasHub profile and link the Marketplace listing from the repository About section.
+3. Complete GitHub's account verification and enable two-factor authentication for the owner account.
+4. Confirm the GitHub Marketplace Developer Agreement is accepted in GitHub's release editor.
+5. Publish `v1.0.0` to GitHub Marketplace as a free Action under **Code quality** and **Testing**.
+6. Pin the public repository to the CarlasHub profile and link the Marketplace listing from the repository About section.
 
-Acceptance of GitHub's agreements belongs to the account owner and is intentionally not automated by this repository.
+Account verification, two-factor authentication, and acceptance of GitHub's agreements belong to the account owner and are intentionally not automated by this repository.
