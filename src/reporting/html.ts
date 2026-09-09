@@ -45,6 +45,11 @@ function count(summary: AuditSummary, predicate: (finding: Finding) => boolean):
   return summary.findings.filter(predicate).length;
 }
 
+function sourceLabel(value: string): string {
+  const sources = value.split(',').map((source) => source.trim()).filter(Boolean);
+  return [...new Map(sources.map((source) => [source.toLocaleLowerCase(), source])).values()].join(', ') || 'Not specified';
+}
+
 function findingRows(summary: AuditSummary, outputPath: string): string {
   if (!summary.findings.length) {
     return '<tr><td colspan="6" class="empty">No automated findings were recorded.</td></tr>';
@@ -141,7 +146,7 @@ function renderReport(summary: AuditSummary, outputPath: string): string {
     <p class="eyebrow">Audit status · ${escapeHtml(summary.status)}</p>
     <h1>Accessibility audit report</h1>
     <p class="lede">A structured review of ${link(target)} against ${escapeHtml(conformance)}, combining automated browser evidence with a defined manual-assessment plan.</p>
-    <div class="meta"><span><strong>Generated:</strong> ${escapeHtml(generated)} UTC</span><span><strong>Auditor:</strong> ${escapeHtml(summary.auditor)}</span><span><strong>Source:</strong> ${escapeHtml(summary.source)}</span></div>
+    <div class="meta"><span><strong>Generated:</strong> ${escapeHtml(generated)} UTC</span><span><strong>Auditor:</strong> ${escapeHtml(summary.auditor)}</span><span><strong>Source:</strong> ${escapeHtml(sourceLabel(summary.source))}</span></div>
     <div class="notice warning"><strong>Conformance note:</strong> Automated testing cannot certify WCAG conformance. Confirmed failures require remediation, review findings require a human decision, and every manual check below remains part of the audit.</div>
     <section class="metrics" aria-label="Audit summary">
       <div class="metric"><span>Pages audited</span><strong>${summary.auditedUrls.length}</strong></div>

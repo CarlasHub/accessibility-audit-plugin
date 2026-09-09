@@ -13,7 +13,7 @@ describe('HTML accessibility report', () => {
       status: 'completed',
       generatedAt: '2026-09-09T12:00:00.000Z',
       auditor: 'CarlasHub <script>alert(1)</script>',
-      source: 'direct input',
+      source: 'direct input, direct input',
       wcagLevel: 'AA',
       landingPageUrl: 'https://example.test/',
       requestedUrls: ['https://example.test/'],
@@ -62,6 +62,8 @@ describe('HTML accessibility report', () => {
     expect(html).toContain('<caption>Automated and evidence-backed findings</caption>');
     expect(html).toContain('screenshots/elements/button.png');
     expect(html).toContain('CarlasHub &lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).toContain('<strong>Source:</strong> direct input</span>');
+    expect(html).not.toContain('direct input, direct input');
     expect(html).not.toContain('CarlasHub <script>alert(1)</script>');
     expect(html).not.toMatch(/https?:\/\/[^"']+\.(?:css|js)/i);
   });
