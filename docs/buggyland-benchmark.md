@@ -4,8 +4,8 @@ This page records the public end-to-end test of the CarlasHub Accessibility Audi
 
 ## Verified public run
 
-- **GitHub Actions run:** [BuggyLand WCAG audit #3](https://github.com/CarlasHub/buggyland/actions/runs/34384488369)
-- **Action version tested:** commit [`e633f49`](https://github.com/CarlasHub/accessibility-audit-plugin/commit/e633f4910616fb9ce1ddf4698686240662d0aa93)
+- **GitHub Actions run:** [BuggyLand WCAG audit #5](https://github.com/CarlasHub/buggyland/actions/runs/34391886799)
+- **Action version tested:** commit [`c5a4bfa`](https://github.com/CarlasHub/accessibility-audit-plugin/commit/c5a4bfa50bfa18dcec2a83e5cbe47335901c7481)
 - **Scope:** both published BuggyLand pages
 - **Requested standard:** WCAG 2.2 Levels A, AA, and AAA
 - **Execution:** 2 pages audited, 0 page errors
@@ -13,12 +13,14 @@ This page records the public end-to-end test of the CarlasHub Accessibility Audi
 - **Benchmark inventory:** 172 declared failure fixtures across all 86 active WCAG 2.2 success criteria
 - **Criterion reach:** automated evidence mapped to 37 criteria; 49 criteria remain explicitly assigned to human verification
 
-The workflow keeps its GitHub Actions artifact for 90 days. The v1.1.0 release keeps permanent copies:
+The workflow keeps its GitHub Actions artifact for 90 days. The v1.2.0 release keeps permanent copies:
 
-- [Enhanced WCAG benchmark workbook](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.1.0/BuggyLand_WCAG_2.2_Benchmark_Report.xlsx)
-- [Original Action workbook](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.1.0/BuggyLand_GitHub_Action_Original_Report.xlsx)
-- [Raw Action JSON](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.1.0/buggyland-audit-results.json)
-- [Captioned tutorial video](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.1.0/BuggyLand_GitHub_Action_Tutorial.mp4)
+- [Interactive HTML report](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.0/Accessibility_Audit_Report.html)
+- [Enhanced WCAG benchmark workbook](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.0/BuggyLand_WCAG_2.2_Benchmark_Report.xlsx)
+- [Original Action workbook](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.0/Accessibility_Audit_Report.xlsx)
+- [Raw Action JSON](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.0/audit-results.json)
+- [Portable report bundle](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.0/accessibility-audit-results.zip)
+- [Captioned tutorial video](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.0/BuggyLand_GitHub_Action_Tutorial.mp4)
 
 ## Why 172 fixtures do not produce 172 findings
 
@@ -53,7 +55,7 @@ Copy [BuggyLand's workflow](https://github.com/CarlasHub/buggyland/blob/main/.gi
 
 ```text
 https://carlashub.github.io/buggyland/
-https://carlashub.github.io/buggyland/aaa.html
+https://carlashub.github.io/buggyland/page2.html
 ```
 
 Use the [WCAG 2.2 standard](https://www.w3.org/TR/WCAG22/) and [How to Meet WCAG 2.2](https://www.w3.org/WAI/WCAG22/quickref/) as the normative and implementation references while completing the manual plan.
