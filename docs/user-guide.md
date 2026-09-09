@@ -10,7 +10,7 @@ The plugin does three things:
 
 1. Opens each supplied page in headless Chromium at three viewport sizes.
 2. Runs automated and scripted interaction checks and records the evidence.
-3. Produces a structured Excel workbook, detailed JSON, linked screenshots, and a portable ZIP.
+3. Produces a polished self-contained HTML report, a structured Excel workbook, detailed JSON, linked screenshots, and a portable ZIP.
 
 It does not certify WCAG conformance. W3C explains that tools can assist evaluation but cannot determine accessibility without knowledgeable human evaluation.
 
@@ -125,7 +125,7 @@ To stop:
 - use the editor’s Stop control in Cursor, Claude Code, or Codex; or
 - press `Ctrl+C` once in a terminal.
 
-One stop request allows the plugin to close Chromium and write validated partial JSON, XLSX, and ZIP output. A second `Ctrl+C` exits immediately and may prevent partial reports from being finalized.
+One stop request allows the plugin to close Chromium and write partial HTML and JSON plus validated XLSX and ZIP output. A second `Ctrl+C` exits immediately and may prevent partial reports from being finalized.
 
 Cancelled output must be treated as partial. `Page Inventory` lists the URLs whose browser testing started; check the JSON summary to determine which pages and viewports completed, remained partial, or never started.
 
@@ -133,13 +133,14 @@ Cancelled output must be treated as partial. `Page Inventory` lists the URLs who
 
 The output contains:
 
+- `Accessibility_Audit_Report.html` — the easiest report to open, search, filter, print, and share;
 - `Accessibility_Audit_Report.xlsx` — the working accessibility report;
 - `audit-results.json` — detailed evidence and run state;
 - `screenshots/elements/` — focused evidence for confirmed component failures;
 - `screenshots/` — full-page evidence only for page-level failures or blockers;
 - a ZIP beside the output directory containing the portable package.
 
-For sharing, send the ZIP. The recipient should extract the complete ZIP before opening the workbook. Opening the workbook directly from inside the ZIP, moving only the workbook, or renaming/moving the screenshot tree can break relative evidence links.
+For sharing, send the ZIP. The recipient should extract the complete ZIP, open the HTML report first, and use the workbook for triage. Opening the workbook directly from inside the ZIP, moving only the workbook, or renaming/moving the screenshot tree can break relative evidence links.
 
 ## Step 6: review the workbook
 

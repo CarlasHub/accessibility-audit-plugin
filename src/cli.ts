@@ -54,7 +54,7 @@ function terminalText(value: string): string {
 }
 
 const program = new Command();
-program.name('accessibility-audit').description('Run structured WCAG 2.2 audits and generate the standard Excel report.').version(PLUGIN_VERSION);
+program.name('accessibility-audit').description('Run structured WCAG 2.2 audits and generate accessible HTML, Excel, and JSON evidence.').version(PLUGIN_VERSION);
 
 program
   .command('audit')
@@ -131,7 +131,7 @@ program
         process.exit(130);
       }
       stopRequested = true;
-      process.stderr.write('Stop requested. Closing active browser work and writing partial JSON/XLSX output.\n');
+      process.stderr.write('Stop requested. Closing active browser work and writing partial HTML/JSON/XLSX output.\n');
       abortController.abort(CANCEL_REASON);
     };
     process.on('SIGINT', stopGracefully);

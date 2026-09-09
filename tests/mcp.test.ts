@@ -7,6 +7,7 @@ import { createAccessibilityAuditMcpServer } from '../src/mcp.js';
 const completedAuditResult = {
   status: 'completed' as const,
   reportPath: '/tmp/report.xlsx',
+  htmlPath: '/tmp/report.html',
   jsonPath: '/tmp/audit-results.json',
   archivePath: '/tmp/accessibility-audit.zip',
   requestedPageCount: 1,

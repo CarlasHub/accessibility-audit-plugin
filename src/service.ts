@@ -9,6 +9,7 @@ import { collectUrls } from './urls.js';
 import { DEFAULT_REPORT_NAME } from './instructions.js';
 import { validateExcelReport, type WorkbookValidation } from './reporting/validate.js';
 import { createAuditArchive } from './reporting/archive.js';
+import { writeHtmlReport } from './reporting/html.js';
 
 export interface AuditRequest {
   inputs: string[];
@@ -21,6 +22,7 @@ export interface AuditRequest {
 export interface AuditRunResult {
   status: AuditStatus;
   reportPath: string;
+  htmlPath: string;
   jsonPath: string;
   archivePath: string;
   requestedPageCount: number;
@@ -74,6 +76,7 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
   const summary = await runAudit(collected.urls, collected.source, collected.skipped, options, execution);
   const reportName = cleanReportName(request.reportName ?? DEFAULT_REPORT_NAME);
   const reportPath = outputArtifactPath(options.outputDir, reportName);
+  const htmlPath = outputArtifactPath(options.outputDir, reportName.replace(/\.xlsx$/i, '.html'));
   const jsonPath = outputArtifactPath(options.outputDir, 'audit-results.json');
   const applyLateCancellation = async (): Promise<boolean> => {
     if (!execution.signal?.aborted || summary.status === 'cancelled') return false;
@@ -111,11 +114,13 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
   if (!validation.valid) {
     throw new Error(`Generated workbook validation failed at ${reportPath}: ${validation.errors.join(' ')}`);
   }
+  await emitProgress(execution, { phase: 'reporting', message: `Writing accessible HTML report to ${htmlPath}.` });
+  await writeHtmlReport(summary, htmlPath);
   await emitProgress(execution, {
     phase: 'reporting',
-    message: 'Packaging the workbook, JSON evidence, and linked screenshots as a portable ZIP archive.'
+    message: 'Packaging the HTML report, workbook, JSON evidence, and linked screenshots as a portable ZIP archive.'
   });
-  const archivePath = await createAuditArchive(options.outputDir, reportPath, jsonPath);
+  const archivePath = await createAuditArchive(options.outputDir, reportPath, htmlPath, jsonPath);
   const completedPageCount = summary.pages.filter((page) =>
     page.viewports.length === options.viewports.length &&
     page.viewports.every((viewport) => (
@@ -129,6 +134,7 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
   const result: AuditRunResult = {
     status: summary.status,
     reportPath,
+    htmlPath,
     jsonPath,
     archivePath,
     requestedPageCount: collected.urls.length,
@@ -147,8 +153,8 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
   await emitProgress(execution, {
     phase: summary.status === 'cancelled' ? 'cancelled' : 'completed',
     message: summary.status === 'cancelled'
-      ? `Stopped safely. Partial Excel and JSON output is in ${options.outputDir}; the portable ZIP is ${archivePath}.`
-      : `Audit completed. Excel, JSON, and linked screenshots are in ${options.outputDir}; the portable ZIP is ${archivePath}.`
+      ? `Stopped safely. Partial HTML, Excel, and JSON output is in ${options.outputDir}; the portable ZIP is ${archivePath}.`
+      : `Audit completed. HTML, Excel, JSON, and linked screenshots are in ${options.outputDir}; the portable ZIP is ${archivePath}.`
   });
   return result;
 }

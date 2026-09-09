@@ -1,6 +1,6 @@
 # GitHub Action usage
 
-`CarlasHub/accessibility-audit-plugin` is a free JavaScript Action for collecting structured WCAG 2.2 accessibility evidence in CI. It runs the same site-independent audit engine as the editor plugins and produces a validated Excel workbook, JSON evidence, screenshots, and a portable ZIP.
+`CarlasHub/accessibility-audit-plugin` is a free JavaScript Action for collecting structured WCAG 2.2 accessibility evidence in CI. It runs the same site-independent audit engine as the editor plugins and produces a polished self-contained HTML report, a validated Excel workbook, JSON evidence, screenshots, and a portable ZIP.
 
 It is an automated testing aid, not a WCAG certification. Complete the report's manual checks before making a conformance claim.
 
@@ -82,7 +82,7 @@ Start with `none` while establishing a baseline. Move to a severity policy after
 
 ## Outputs
 
-The Action exposes `output-dir`, `report-path`, `json-path`, `archive-path`, `confirmed-findings`, `review-findings`, `blockers`, and `gate-result`. An `if: always()` upload step preserves evidence even when the configured gate fails.
+The Action exposes `output-dir`, `html-path`, `report-path`, `json-path`, `archive-path`, `confirmed-findings`, `review-findings`, `blockers`, and `gate-result`. An `if: always()` upload step preserves evidence even when the configured gate fails. Download the workflow artifact, extract it, and open `Accessibility_Audit_Report.html` first; the workbook and raw JSON remain beside it for deeper analysis.
 
 ## Security and privacy
 

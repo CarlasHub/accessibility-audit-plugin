@@ -10,7 +10,7 @@ The evidence below can be used to keep the existing Developer Program account in
 - **Repository:** `https://github.com/CarlasHub/accessibility-audit-plugin`
 - **Owner:** CarlasHub
 - **Licence:** MIT
-- **Integration:** A JavaScript GitHub Action that audits explicit web pages and writes Excel, JSON, screenshot, and ZIP evidence to a workflow run.
+- **Integration:** A JavaScript GitHub Action that audits explicit web pages and writes accessible HTML, Excel, JSON, screenshot, and ZIP evidence to a workflow run.
 - **GitHub API use:** With an explicitly supplied `GITHUB_TOKEN`, it lists pull-request comments and creates or updates one marked audit summary through the GitHub REST API.
 - **Permissions:** `contents: read`; `pull-requests: write` only when comments are enabled.
 - **Support:** Public issues for sanitized bugs and feature requests; private security advisories for vulnerabilities; keep a monitored support email in the existing Developer Program account details.
@@ -18,7 +18,7 @@ The evidence below can be used to keep the existing Developer Program account in
 
 ## Project description
 
-> CarlasHub WCAG Accessibility Audit is an open-source GitHub Action that runs repeatable accessibility checks against explicitly supplied web pages. It produces a validated Excel report, structured JSON, screenshot evidence, and a portable archive in GitHub Actions. When enabled, it uses the GitHub REST API to create or update a concise pull-request audit summary. The project applies least-privilege permissions, keeps human-review findings separate from confirmed automated evidence, and is released under the MIT License.
+> CarlasHub WCAG Accessibility Audit is an open-source GitHub Action that runs repeatable accessibility checks against explicitly supplied web pages. It produces a polished self-contained HTML report, a validated Excel report, structured JSON, screenshot evidence, and a portable archive in GitHub Actions. When enabled, it uses the GitHub REST API to create or update a concise pull-request audit summary. The project applies least-privilege permissions, keeps human-review findings separate from confirmed automated evidence, and is released under the MIT License.
 
 ## Recognition checklist
 

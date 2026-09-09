@@ -1,6 +1,6 @@
-# Workbook reporting
+# HTML and workbook reporting
 
-The reporter uses the bundled CarlasHub WCAG 2.2 audit workbook. It combines the practical structure expected from a WCAG audit with structured scope, evidence, ownership, and manual-check fields that make remediation and follow-up easier.
+Every audit writes two human-readable formats. Open the self-contained HTML report first for a clean summary, searchable and filterable findings, page coverage, evidence links, manual checks, and print-friendly sharing. Use the bundled CarlasHub WCAG 2.2 workbook for detailed triage, ownership, remediation, and follow-up.
 
 ## Read the workbook in this order
 
@@ -56,7 +56,7 @@ Images are not embedded. The Evidence sheet stores portable relative links and e
 
 The Page Inventory represents requested scope, including skipped and not-started pages, so missing coverage is visible in the workbook. The JSON coverage matrix remains the authoritative record for each page, viewport, and test area.
 
-Graceful cancellation still writes and validates partial JSON and XLSX output. Interrupted or unperformed work is never presented as passed.
+Graceful cancellation still writes partial HTML and JSON plus a validated partial XLSX workbook. Interrupted or unperformed work is never presented as passed.
 
 ## Coverage and pass claims
 

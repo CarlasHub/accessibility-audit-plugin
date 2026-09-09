@@ -150878,18 +150878,18 @@ Execution rules:
 2. Run the implemented axe, DOM/semantic, keyboard/focus, responsive, disclosure/navigation, image/link-name, form/error-state, same-origin link-destination, tab relationship, and common component checks. A component that is absent from a page is not a pass for that component.
 3. Validate same-origin links conservatively. Confirm 404/410 only when both the authenticated request context and an in-page fetch agree. Keep server errors, placeholder destinations, and ambiguous states as review items. Do not request external, download, logout, delete, or unsubscribe destinations.
 4. Capture at most one representative contextual element screenshot per final confirmed, blocker, or review reporting unit when the relevant rendered state can be reproduced. Keep all occurrences traceable in JSON. Use full-page evidence only for page-level failures or an unresolved blocking surface. Store PNGs beside the workbook and add relative hyperlinks in Findings and Evidence. Never embed audit screenshots in the workbook.
-5. Display progress through MCP notifications in Cursor, Claude, Codex, or Copilot and through stderr in terminal runs. The client Stop action or one Ctrl+C requests graceful cancellation: close active browser work, retain completed evidence, and write validated partial JSON and XLSX output. Label that output cancelled/partial. A second Ctrl+C is an immediate exit and may prevent final report writing.
+5. Display progress through MCP notifications in Cursor, Claude, Codex, or Copilot and through stderr in terminal runs. The client Stop action or one Ctrl+C requests graceful cancellation: close active browser work, retain completed evidence, and write partial HTML and JSON plus a validated partial XLSX workbook. Label that output cancelled/partial. A second Ctrl+C is an immediate exit and may prevent final report writing.
 6. Do not claim that automation or axe covers all WCAG 2.2 A/AA requirements. Retrieve list_guided_manual_checks and preserve screen-reader, physical-device, content, visual, and judgment-based checks as outstanding until a person performs them.
 7. Treat deterministic reproduced failures as confirmed issues. Keep heuristics or unresolved content and visual questions as review issues. Keep unavailable pages as blockers. Keep unexecuted assistive-technology and judgment-based procedures as guided/manual checks.
 8. Use one row for the same reusable component implementation and root cause across all affected pages, and group repeated DOM instances within that component. List every affected page individually in the merged row's Links cell. Keep a page-specific implementation, colour treatment, behaviour, success criterion, or remediation requirement on its own row. Do not merge unrelated findings merely because they share a host or WCAG criterion. Do not report missing aria-controls alone as a WCAG failure or standalone review for an ordinary disclosure/accordion; generic disclosures/accordions do not require Escape to close.
 9. If a modal, consent layer, or other surface cannot be dismissed, record it as an interaction-coverage blocker, skip underlying state-based checks, and never interpret the resulting focus sequence or absence of findings as a page pass. Preserve axe incomplete results, unresolved focus-indicator samples, and incomplete interactions as raw JSON evidence and inconclusive coverage; do not promote them to workbook findings. Record every page/viewport/area outcome in the JSON coverage matrix using confirmed-passed, confirmed-failed, tested-inconclusive, manual-review-required, not-tested, or not-applicable.
 
 Report rules:
-1. Generate the six-sheet CarlasHub WCAG 2.2 workbook and JSON evidence. Preserve the worksheet order, tab colours, accessible colour scheme, formulas, validations, filters, and the 25 Findings columns. Remove placeholder values and do not add worksheets or columns.
+1. Generate the self-contained accessible HTML report, six-sheet CarlasHub WCAG 2.2 workbook, and JSON evidence. Preserve the workbook's worksheet order, tab colours, accessible colour scheme, formulas, validations, filters, and the 25 Findings columns. Remove placeholder values and do not add worksheets or columns.
 2. Populate Page Inventory with one structured row per requested or skipped URL, Evidence with one structured row per retained evidence item, Manual Checks with every outstanding guided procedure, and Findings with one row per reporting unit. Use portable relative links for screenshots and direct links for page URLs. Do not embed screenshots.
 3. Put only concrete fixes in Notes. Do not mention Jira, ticket workflow, audit narration, or uncertainty in remediation fields.
 4. Put the single landing-page QA URL in Audit Summary, use the supplied auditor name exactly, set every populated Findings row to Open, preserve confirmed, review, blocker, or manual as its Evidence type, and populate Owner and Effort from the finding. Validate the workbook with validate_accessibility_report before delivery.
-5. Report whether the run completed or was cancelled, the exact workbook, JSON, and portable ZIP paths, pages completed/partial/not started, counts by confirmed/review/blocker/manual classification, Evidence row and linked screenshot counts, and workbook validation result.
+5. Report whether the run completed or was cancelled, the exact HTML, workbook, JSON, and portable ZIP paths, pages completed/partial/not started, counts by confirmed/review/blocker/manual classification, Evidence row and linked screenshot counts, and workbook validation result.
 6. Call the result an evidence-backed structured audit, not a certification or complete WCAG conformance verdict. A confirmed pass applies only to the exact executed rule and state; axe incomplete results, truncated link checks, sampled keyboard traversal, and unexercised states are not passes.
 7. Explain the result in plain language for a user who may not know WCAG. State that only supplied URLs were tested; define the evidence categories that are present; distinguish the workbook's Open workflow status from evidence confidence; identify outstanding guided checks; and tell the user to extract the ZIP and keep the workbook with its screenshots directory so relative evidence links work.`));
 function buildEmbeddedAuditInstructions(options = {}) {
@@ -155714,7 +155714,7 @@ var archiver = __nccwpck_require__(99392);
 
 
 
-async function createAuditArchive(outputDir, reportPath, jsonPath) {
+async function createAuditArchive(outputDir, reportPath, htmlPath, jsonPath) {
     const bundleName = (0,external_node_path_.basename)((0,external_node_path_.resolve)(outputDir));
     // Construct the extension at runtime so JavaScript bundlers do not mistake
     // the generated archive for a static asset that must be relocated.
@@ -155734,6 +155734,7 @@ async function createAuditArchive(outputDir, reportPath, jsonPath) {
         });
         archive.pipe(output);
         archive.file(reportPath, { name: `${bundleName}/${(0,external_node_path_.basename)(reportPath)}` });
+        archive.file(htmlPath, { name: `${bundleName}/${(0,external_node_path_.basename)(htmlPath)}` });
         archive.file(jsonPath, { name: `${bundleName}/${(0,external_node_path_.basename)(jsonPath)}` });
         if (hasScreenshots)
             archive.directory(screenshotsPath, `${bundleName}/screenshots`);
@@ -155742,7 +155743,194 @@ async function createAuditArchive(outputDir, reportPath, jsonPath) {
     return archivePath;
 }
 //# sourceMappingURL=archive.js.map
+;// CONCATENATED MODULE: ./dist/reporting/html.js
+
+
+const STATUS_LABELS = {
+    'confirmed-passed': 'Passed',
+    'confirmed-failed': 'Failed',
+    'tested-inconclusive': 'Inconclusive',
+    'manual-review-required': 'Manual review',
+    'not-tested': 'Not tested',
+    'not-applicable': 'Not applicable'
+};
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+function safeLink(value) {
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+function html_link(value, label = value) {
+    const href = safeLink(value);
+    return href
+        ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`
+        : escapeHtml(label);
+}
+function list(values, empty = 'None recorded') {
+    const unique = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+    return unique.length ? `<ul>${unique.map((value) => `<li>${escapeHtml(value)}</li>`).join('')}</ul>` : `<p>${empty}</p>`;
+}
+function count(summary, predicate) {
+    return summary.findings.filter(predicate).length;
+}
+function findingRows(summary, outputPath) {
+    if (!summary.findings.length) {
+        return '<tr><td colspan="6" class="empty">No automated findings were recorded.</td></tr>';
+    }
+    return summary.findings.map((finding, index) => {
+        const screenshots = finding.evidence
+            .filter((item) => item.screenshot)
+            .map((item) => {
+            const screenshotPath = (0,external_node_path_.relative)((0,external_node_path_.dirname)(outputPath), String(item.screenshot)).replaceAll('\\', '/');
+            return `<li><a href="${escapeHtml(screenshotPath)}">${escapeHtml(item.viewport || 'Evidence screenshot')}</a></li>`;
+        })
+            .join('');
+        const pages = finding.urls.map((url) => `<li>${html_link(url)}</li>`).join('');
+        const selectors = finding.selectors.map((selector) => `<li><code>${escapeHtml(selector)}</code></li>`).join('');
+        return `<tr data-search="${escapeHtml([
+            finding.ruleId,
+            finding.summary,
+            finding.issue,
+            finding.componentName,
+            finding.componentLocation,
+            finding.classification,
+            finding.severity,
+            ...finding.wcag,
+            ...finding.urls
+        ].filter(Boolean).join(' ').toLowerCase())}" data-classification="${escapeHtml(finding.classification)}" data-severity="${escapeHtml(finding.severity)}">
+      <td><span class="finding-id">A11Y-${String(index + 1).padStart(3, '0')}</span><br><span class="muted">${escapeHtml(finding.ruleId)}</span></td>
+      <td><span class="badge badge-${escapeHtml(finding.classification)}">${escapeHtml(finding.classification)}</span></td>
+      <td><span class="badge severity-${escapeHtml(finding.severity.toLowerCase())}">${escapeHtml(finding.severity)}</span></td>
+      <td><strong>${escapeHtml(finding.summary)}</strong><p>${escapeHtml(finding.issue)}</p>
+        <details><summary>Impact, testing and remediation</summary>
+          <h4>Impact</h4><p>${escapeHtml(finding.impact)}</p>
+          <h4>How to verify</h4><p>${escapeHtml(finding.testing)}</p>
+          <h4>Recommended remediation</h4><p>${escapeHtml(finding.remediation)}</p>
+          <h4>Component</h4><p>${escapeHtml(finding.componentName || finding.component)}${finding.componentLocation ? ` — ${escapeHtml(finding.componentLocation)}` : ''}</p>
+          ${selectors ? `<h4>Selectors</h4><ul>${selectors}</ul>` : ''}
+          ${screenshots ? `<h4>Evidence</h4><ul>${screenshots}</ul>` : ''}
+        </details>
+      </td>
+      <td>${finding.wcag.length ? finding.wcag.map((criterion) => `<span class="criterion">${escapeHtml(criterion)}</span>`).join(' ') : '<span class="muted">Advisory</span>'}</td>
+      <td><ul>${pages}</ul></td>
+    </tr>`;
+    }).join('');
+}
+function pageRows(summary) {
+    const pages = new Map(summary.pages.map((page) => [page.url, page]));
+    const skipped = new Map(summary.skippedUrls.map((item) => [item.url, item.reason]));
+    const urls = [...new Set([...summary.requestedUrls, ...summary.auditedUrls, ...pages.keys(), ...skipped.keys()])];
+    return urls.map((url) => {
+        const page = pages.get(url);
+        const viewports = page?.viewports.map((item) => item.viewport.name) ?? [];
+        const errors = page?.viewports.flatMap((item) => item.errors) ?? [];
+        const blockers = page?.viewports.flatMap((item) => item.interactionBlocker?.reason ? [item.interactionBlocker.reason] : []) ?? [];
+        const status = skipped.has(url) ? 'Skipped' : page ? 'Audited' : 'Not started';
+        return `<tr><td>${html_link(url)}</td><td><span class="status-dot status-${status.toLowerCase().replace(' ', '-')}"></span>${status}</td><td>${escapeHtml(viewports.join(', ') || '—')}</td><td>${list([skipped.get(url) || '', ...errors, ...blockers], 'None')}</td></tr>`;
+    }).join('');
+}
+function coverageRows(summary) {
+    return summary.coverage.flatMap((page) => page.viewports.flatMap((viewport) => viewport.assessments.map((assessment) => (`<tr><td>${html_link(page.url)}</td><td>${escapeHtml(viewport.viewport)}</td><td>${escapeHtml(assessment.area.replaceAll('-', ' '))}</td><td><span class="coverage coverage-${escapeHtml(assessment.status)}">${escapeHtml(STATUS_LABELS[assessment.status] || assessment.status)}</span></td><td>${escapeHtml(assessment.detail)}</td></tr>`)))).join('') || '<tr><td colspan="5" class="empty">No coverage results were recorded.</td></tr>';
+}
+function manualRows(summary) {
+    return summary.manualChecks.map((check) => `<tr><td><span class="finding-id">${escapeHtml(check.id)}</span></td><td><strong>${escapeHtml(check.title)}</strong></td><td>${check.wcag.map((criterion) => `<span class="criterion">${escapeHtml(criterion)}</span>`).join(' ') || 'Advisory'}</td><td>${escapeHtml(check.applicableTo)}</td><td>${escapeHtml(check.procedure)}</td><td><span class="coverage coverage-manual-review-required">Not tested</span></td></tr>`).join('') || '<tr><td colspan="6" class="empty">No guided manual checks were generated.</td></tr>';
+}
+function renderReport(summary, outputPath) {
+    const confirmed = count(summary, (finding) => finding.classification === 'confirmed');
+    const reviews = count(summary, (finding) => finding.classification === 'review');
+    const blockers = count(summary, (finding) => finding.classification === 'blocker');
+    const serious = count(summary, (finding) => finding.severity === 'Critical' || finding.severity === 'Serious');
+    const generated = Number.isNaN(Date.parse(summary.generatedAt)) ? summary.generatedAt : new Date(summary.generatedAt).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' });
+    const target = summary.landingPageUrl || summary.requestedUrls[0] || 'Not specified';
+    const conformance = summary.wcagLevel === 'AAA' ? 'WCAG 2.2 Level A, AA and AAA' : 'WCAG 2.2 Level A and AA';
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Accessibility audit report — ${escapeHtml(target)}</title>
+  <style>
+    :root{--blue:#1a73e8;--blue-dark:#174ea6;--ink:#202124;--muted:#5f6368;--line:#dadce0;--surface:#f8f9fa;--red:#c5221f;--amber:#b06000;--green:#137333;--shadow:0 1px 2px rgba(60,64,67,.12),0 1px 3px 1px rgba(60,64,67,.08)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--ink);background:#fff;font:15px/1.55 Arial,"Helvetica Neue",sans-serif}a{color:var(--blue-dark);text-underline-offset:2px}a:hover{text-decoration-thickness:2px}.skip{position:absolute;left:16px;top:-60px;background:#fff;padding:12px 16px;border:2px solid var(--blue);z-index:10}.skip:focus{top:12px}.masthead{border-bottom:1px solid var(--line);background:#fff}.masthead-inner,.page{max-width:1440px;margin:auto;padding-left:32px;padding-right:32px}.masthead-inner{height:72px;display:flex;align-items:center;gap:14px}.mark{width:36px;height:36px;border-radius:9px;background:var(--blue);color:#fff;display:grid;place-items:center;font-weight:700}.brand{font-size:18px;font-weight:600}.brand span{display:block;color:var(--muted);font-size:12px;font-weight:400}.page{padding-top:38px;padding-bottom:64px}.eyebrow{color:var(--blue-dark);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}h1{font-size:38px;line-height:1.15;letter-spacing:-.6px;margin:8px 0 12px}h2{font-size:24px;margin:42px 0 14px;letter-spacing:-.2px}h3{font-size:17px;margin:0 0 10px}h4{font-size:14px;margin:16px 0 4px}.lede{font-size:17px;color:var(--muted);max-width:850px}.meta{display:flex;flex-wrap:wrap;gap:10px 26px;color:var(--muted);margin:20px 0 28px}.meta strong{color:var(--ink)}.notice{border-left:4px solid var(--blue);background:#e8f0fe;border-radius:0 8px 8px 0;padding:15px 18px;margin:26px 0}.notice.warning{border-color:var(--amber);background:#fef7e0}.metrics{display:grid;grid-template-columns:repeat(6,minmax(135px,1fr));gap:14px;margin:28px 0}.metric{border:1px solid var(--line);border-radius:12px;padding:18px;background:#fff;box-shadow:var(--shadow)}.metric strong{display:block;font-size:28px;line-height:1.1;margin-top:6px}.metric span{color:var(--muted);font-size:13px}.metric.attention strong{color:var(--red)}nav{position:sticky;top:0;z-index:5;background:rgba(255,255,255,.96);border-bottom:1px solid var(--line);margin:28px calc(50% - 50vw);padding:0 max(32px,calc((100vw - 1440px)/2 + 32px));display:flex;gap:22px;overflow:auto}nav a{display:block;padding:14px 0;color:var(--muted);font-weight:600;text-decoration:none;white-space:nowrap}nav a:hover,nav a:focus{color:var(--blue-dark);border-bottom:2px solid var(--blue)}.toolbar{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:16px 0}.field{display:grid;gap:5px}.field label{font-size:12px;font-weight:700;color:var(--muted)}input,select{min-height:42px;border:1px solid #9aa0a6;border-radius:6px;background:#fff;color:var(--ink);padding:8px 11px;font:inherit}input{width:min(420px,80vw)}input:focus,select:focus{outline:3px solid #d2e3fc;border-color:var(--blue)}.result-count{margin-left:auto;color:var(--muted);padding-bottom:10px}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}table{width:100%;border-collapse:collapse;min-width:900px}caption{text-align:left;padding:14px 16px;background:var(--surface);font-weight:600}th{position:sticky;top:0;background:#f1f3f4;text-align:left;font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:#3c4043}th,td{padding:13px 14px;border-bottom:1px solid var(--line);vertical-align:top}tr:last-child td{border-bottom:0}tbody tr:hover{background:#f8fbff}td p{margin:5px 0}td ul{margin:0;padding-left:18px}.finding-id{font-weight:700;white-space:nowrap}.muted{color:var(--muted);font-size:13px}.badge,.criterion,.coverage{display:inline-block;border-radius:999px;font-size:12px;font-weight:700;line-height:1.4;padding:3px 8px;white-space:nowrap}.badge-confirmed,.severity-critical,.severity-serious,.coverage-confirmed-failed{color:#a50e0e;background:#fce8e6}.badge-review,.severity-moderate,.coverage-tested-inconclusive,.coverage-manual-review-required,.coverage-not-tested{color:#8a4b00;background:#fef7e0}.badge-blocker{color:#fff;background:var(--red)}.badge-manual,.severity-minor,.severity-advisory,.coverage-not-applicable{color:#3c4043;background:#f1f3f4}.coverage-confirmed-passed{color:#0d652d;background:#e6f4ea}.criterion{margin:1px;color:#174ea6;background:#e8f0fe}details{margin-top:9px}summary{cursor:pointer;color:var(--blue-dark);font-weight:600}code{white-space:normal;overflow-wrap:anywhere;background:#f1f3f4;border-radius:3px;padding:1px 4px}.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:#9aa0a6}.status-audited{background:var(--green)}.status-skipped{background:var(--amber)}.empty{text-align:center;color:var(--muted);padding:32px}.limitations{display:grid;grid-template-columns:1fr 1fr;gap:16px}.panel{border:1px solid var(--line);border-radius:10px;padding:18px;background:var(--surface)}.panel ul{margin:8px 0;padding-left:20px}.footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+    @media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}.limitations{grid-template-columns:1fr}.masthead-inner,.page{padding-left:18px;padding-right:18px}h1{font-size:31px}.result-count{width:100%;margin-left:0}}
+    @media print{nav,.toolbar,.skip{display:none}.page{max-width:none;padding:20px}.metrics{grid-template-columns:repeat(3,1fr)}.metric{box-shadow:none}details{display:block}details>summary{display:none}.table-wrap{overflow:visible}table{min-width:0;font-size:10px}th{position:static}a{color:inherit;text-decoration:none}}
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to report</a>
+  <header class="masthead"><div class="masthead-inner"><div class="mark" aria-hidden="true">CA</div><div class="brand">CarlasHub Accessibility Audit<span>WCAG 2.2 evidence report</span></div></div></header>
+  <main id="main" class="page">
+    <p class="eyebrow">Audit status · ${escapeHtml(summary.status)}</p>
+    <h1>Accessibility audit report</h1>
+    <p class="lede">A structured review of ${html_link(target)} against ${escapeHtml(conformance)}, combining automated browser evidence with a defined manual-assessment plan.</p>
+    <div class="meta"><span><strong>Generated:</strong> ${escapeHtml(generated)} UTC</span><span><strong>Auditor:</strong> ${escapeHtml(summary.auditor)}</span><span><strong>Source:</strong> ${escapeHtml(summary.source)}</span></div>
+    <div class="notice warning"><strong>Conformance note:</strong> Automated testing cannot certify WCAG conformance. Confirmed failures require remediation, review findings require a human decision, and every manual check below remains part of the audit.</div>
+    <section class="metrics" aria-label="Audit summary">
+      <div class="metric"><span>Pages audited</span><strong>${summary.auditedUrls.length}</strong></div>
+      <div class="metric"><span>Total findings</span><strong>${summary.findings.length}</strong></div>
+      <div class="metric attention"><span>Confirmed</span><strong>${confirmed}</strong></div>
+      <div class="metric attention"><span>Serious / critical</span><strong>${serious}</strong></div>
+      <div class="metric"><span>Needs review</span><strong>${reviews}</strong></div>
+      <div class="metric"><span>Manual checks</span><strong>${summary.manualChecks.length}</strong></div>
+    </section>
+    ${blockers ? `<div class="notice"><strong>${blockers} audit blocker${blockers === 1 ? '' : 's'}:</strong> review the findings before treating coverage as complete.</div>` : ''}
+    <nav aria-label="Report sections"><a href="#findings">Findings</a><a href="#pages">Pages</a><a href="#coverage">Coverage</a><a href="#manual">Manual checks</a><a href="#method">Method and limitations</a></nav>
+
+    <section id="findings" aria-labelledby="findings-title"><h2 id="findings-title">Findings</h2><p class="lede">Search and filter the evidence. Expand a finding for its impact, verification steps, remediation and linked screenshots.</p>
+      <div class="toolbar"><div class="field"><label for="finding-search">Search findings</label><input id="finding-search" type="search" placeholder="Rule, issue, page or WCAG criterion"></div><div class="field"><label for="classification-filter">Classification</label><select id="classification-filter"><option value="">All classifications</option><option value="confirmed">Confirmed</option><option value="review">Review</option><option value="blocker">Blocker</option><option value="manual">Manual</option></select></div><div class="field"><label for="severity-filter">Severity</label><select id="severity-filter"><option value="">All severities</option><option>Critical</option><option>Serious</option><option>Moderate</option><option>Minor</option><option>Advisory</option></select></div><div id="result-count" class="result-count" aria-live="polite"></div></div>
+      <div class="table-wrap"><table><caption>Automated and evidence-backed findings</caption><thead><tr><th scope="col">ID / rule</th><th scope="col">Class</th><th scope="col">Severity</th><th scope="col">Finding</th><th scope="col">WCAG</th><th scope="col">Pages</th></tr></thead><tbody id="finding-rows">${findingRows(summary, outputPath)}</tbody></table></div>
+    </section>
+
+    <section id="pages" aria-labelledby="pages-title"><h2 id="pages-title">Page inventory</h2><div class="table-wrap"><table><caption>Requested targets and audit status</caption><thead><tr><th scope="col">URL</th><th scope="col">Status</th><th scope="col">Viewports</th><th scope="col">Notes</th></tr></thead><tbody>${pageRows(summary)}</tbody></table></div></section>
+    <section id="coverage" aria-labelledby="coverage-title"><h2 id="coverage-title">Test coverage</h2><p class="lede">“Manual review”, “inconclusive” and “not tested” are unresolved outcomes—not passes.</p><div class="table-wrap"><table><caption>Coverage by page, viewport and audit area</caption><thead><tr><th scope="col">Page</th><th scope="col">Viewport</th><th scope="col">Area</th><th scope="col">Outcome</th><th scope="col">Evidence note</th></tr></thead><tbody>${coverageRows(summary)}</tbody></table></div></section>
+    <section id="manual" aria-labelledby="manual-title"><h2 id="manual-title">Guided manual checks</h2><p class="lede">Complete these checks with keyboard, screen reader, zoom/reflow and human judgement as applicable.</p><div class="table-wrap"><table><caption>Required human assessment plan</caption><thead><tr><th scope="col">ID</th><th scope="col">Check</th><th scope="col">WCAG</th><th scope="col">Applies to</th><th scope="col">Procedure</th><th scope="col">Status</th></tr></thead><tbody>${manualRows(summary)}</tbody></table></div></section>
+    <section id="method" aria-labelledby="method-title"><h2 id="method-title">Method and limitations</h2><div class="limitations"><div class="panel"><h3>Audit scope</h3><ul><li>${escapeHtml(conformance)}</li><li>${summary.requestedUrls.length} requested URL${summary.requestedUrls.length === 1 ? '' : 's'}; ${summary.auditedUrls.length} audited</li><li>${summary.pages.flatMap((page) => page.viewports).length} page-and-viewport runs</li><li>Automated axe rules plus DOM, keyboard, responsive, disclosure, tab and link checks</li></ul></div><div class="panel"><h3>Known limitations</h3>${list([...summary.limitations, `${summary.manualChecks.length} guided manual check(s) require human completion.`], 'No limitations recorded.')}</div></div></section>
+    <footer class="footer">Generated by CarlasHub Accessibility Audit. Keep this file beside the <code>screenshots</code> folder so evidence links continue to work.</footer>
+  </main>
+  <script>
+    (() => {
+      const search = document.getElementById('finding-search');
+      const classification = document.getElementById('classification-filter');
+      const severity = document.getElementById('severity-filter');
+      const rows = [...document.querySelectorAll('#finding-rows tr[data-search]')];
+      const count = document.getElementById('result-count');
+      const filter = () => {
+        const query = search.value.trim().toLowerCase();
+        let visible = 0;
+        for (const row of rows) {
+          const show = (!query || row.dataset.search.includes(query)) && (!classification.value || row.dataset.classification === classification.value) && (!severity.value || row.dataset.severity === severity.value);
+          row.hidden = !show;
+          if (show) visible += 1;
+        }
+        count.textContent = visible + ' of ' + rows.length + ' findings';
+      };
+      search.addEventListener('input', filter);
+      classification.addEventListener('change', filter);
+      severity.addEventListener('change', filter);
+      filter();
+    })();
+  </script>
+</body>
+</html>`;
+}
+async function writeHtmlReport(summary, outputPath) {
+    await (0,promises_.writeFile)(outputPath, `${renderReport(summary, outputPath)}\n`, 'utf8');
+    return outputPath;
+}
+//# sourceMappingURL=html.js.map
 ;// CONCATENATED MODULE: ./dist/service.js
+
 
 
 
@@ -155788,6 +155976,7 @@ async function executeAudit(request) {
     const summary = await runAudit(collected.urls, collected.source, collected.skipped, options, execution);
     const reportName = cleanReportName(request.reportName ?? DEFAULT_REPORT_NAME);
     const reportPath = outputArtifactPath(options.outputDir, reportName);
+    const htmlPath = outputArtifactPath(options.outputDir, reportName.replace(/\.xlsx$/i, '.html'));
     const jsonPath = outputArtifactPath(options.outputDir, 'audit-results.json');
     const applyLateCancellation = async () => {
         if (!execution.signal?.aborted || summary.status === 'cancelled')
@@ -155826,11 +156015,13 @@ async function executeAudit(request) {
     if (!validation.valid) {
         throw new Error(`Generated workbook validation failed at ${reportPath}: ${validation.errors.join(' ')}`);
     }
+    await service_emitProgress(execution, { phase: 'reporting', message: `Writing accessible HTML report to ${htmlPath}.` });
+    await writeHtmlReport(summary, htmlPath);
     await service_emitProgress(execution, {
         phase: 'reporting',
-        message: 'Packaging the workbook, JSON evidence, and linked screenshots as a portable ZIP archive.'
+        message: 'Packaging the HTML report, workbook, JSON evidence, and linked screenshots as a portable ZIP archive.'
     });
-    const archivePath = await createAuditArchive(options.outputDir, reportPath, jsonPath);
+    const archivePath = await createAuditArchive(options.outputDir, reportPath, htmlPath, jsonPath);
     const completedPageCount = summary.pages.filter((page) => page.viewports.length === options.viewports.length &&
         page.viewports.every((viewport) => (!viewport.cancelled
             && !viewport.interactionBlocker
@@ -155840,6 +156031,7 @@ async function executeAudit(request) {
     const result = {
         status: summary.status,
         reportPath,
+        htmlPath,
         jsonPath,
         archivePath,
         requestedPageCount: collected.urls.length,
@@ -155858,8 +156050,8 @@ async function executeAudit(request) {
     await service_emitProgress(execution, {
         phase: summary.status === 'cancelled' ? 'cancelled' : 'completed',
         message: summary.status === 'cancelled'
-            ? `Stopped safely. Partial Excel and JSON output is in ${options.outputDir}; the portable ZIP is ${archivePath}.`
-            : `Audit completed. Excel, JSON, and linked screenshots are in ${options.outputDir}; the portable ZIP is ${archivePath}.`
+            ? `Stopped safely. Partial HTML, Excel, and JSON output is in ${options.outputDir}; the portable ZIP is ${archivePath}.`
+            : `Audit completed. HTML, Excel, JSON, and linked screenshots are in ${options.outputDir}; the portable ZIP is ${archivePath}.`
     });
     return result;
 }
@@ -155993,7 +156185,7 @@ function reportMarkdown(result, gate, environment) {
         '',
         `**Policy:** ${gate.label}  `,
         `**Gate result:** ${gateResult}`,
-        ...(workflowRun ? ['', `[Open the workflow run](${workflowRun}) to download the complete Excel, JSON, screenshots, and ZIP evidence.`] : []),
+        ...(workflowRun ? ['', `[Open the workflow run](${workflowRun}) to download the accessible HTML report, Excel workbook, JSON, screenshots, and ZIP evidence.`] : []),
         '',
         '_Automated results are evidence, not a declaration of WCAG conformance; complete the listed manual checks._'
     ].join('\n');
@@ -156089,6 +156281,7 @@ async function runGitHubAction(environment = process.env) {
     for (const [name, value] of [
         ['output-dir', outputDir],
         ['report-path', result.reportPath],
+        ['html-path', result.htmlPath],
         ['json-path', result.jsonPath],
         ['archive-path', result.archivePath],
         ['confirmed-findings', result.confirmedCount],

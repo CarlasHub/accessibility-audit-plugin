@@ -1,5 +1,5 @@
 name: CarlasHub WCAG Accessibility Audit
-description: Audit web pages against WCAG 2.2 and publish Excel, JSON, screenshot, and pull-request evidence.
+description: Audit web pages against WCAG 2.2 and publish accessible HTML, Excel, JSON, screenshot, and pull-request evidence.
 author: CarlasHub
 
 branding:
@@ -72,6 +72,8 @@ outputs:
     description: Absolute directory containing all generated audit evidence.
   report-path:
     description: Absolute path to the validated Excel workbook.
+  html-path:
+    description: Absolute path to the accessible self-contained HTML report.
   json-path:
     description: Absolute path to the JSON evidence.
   archive-path:

@@ -297,6 +297,8 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
         .filter((path) => /\.png$/i.test(path));
       expect(generatedScreenshots).toHaveLength(referencedScreenshots.size);
       expect(result.reportPath).toMatch(/Accessibility_Audit_Report\.xlsx$/);
+      expect(result.htmlPath).toMatch(/Accessibility_Audit_Report\.html$/);
+      expect(await readFile(result.htmlPath, 'utf8')).toContain('<title>Accessibility audit report');
       expect(Buffer.byteLength(await readFile(result.archivePath))).toBeGreaterThan(0);
     } finally {
       await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()));
@@ -394,7 +396,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       const [exitCode] = await once(child, 'exit') as [number | null, NodeJS.Signals | null];
 
       expect(exitCode).toBe(130);
-      expect(stderr).toContain('Stopped safely. Partial Excel and JSON output is in');
+      expect(stderr).toContain('Stopped safely. Partial HTML, Excel, and JSON output is in');
       expect(stderr).toContain('the portable ZIP is');
       const cliResult = JSON.parse(stdout) as { status: string; validation: { valid: boolean; auditor: string } };
       expect(cliResult.status).toBe('cancelled');

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0 - 2026-09-09
+
+- Added a polished, self-contained, responsive HTML report with accessible navigation, summary metrics, searchable and filterable findings, complete manual checks, coverage details, and print styling.
+- Added the HTML report to GitHub Action outputs, job summaries, portable ZIP archives, CLI/MCP completion messages, and public documentation.
+- Rebuilt the BuggyLand benchmark workbook for broader Excel and LibreOffice compatibility by removing threaded comments and cached formulas while retaining the full criteria, fixture, coverage, manual-plan, and run metadata sheets.
+- Replaced the short result-only demonstration with an end-to-end tutorial covering workflow setup, manual execution, run status, artifact download, HTML review, workbook review, and the limits of automated testing.
+
 ## 1.1.0 - 2026-09-09
 
 - Added the `wcag-level` GitHub Action and CLI option so audits can include supported WCAG 2.2 AAA automation in addition to the default A/AA rules.

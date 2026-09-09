@@ -153,7 +153,7 @@ function reportMarkdown(result: AuditRunResult, gate: GateEvaluation, environmen
     '',
     `**Policy:** ${gate.label}  `,
     `**Gate result:** ${gateResult}`,
-    ...(workflowRun ? ['', `[Open the workflow run](${workflowRun}) to download the complete Excel, JSON, screenshots, and ZIP evidence.`] : []),
+    ...(workflowRun ? ['', `[Open the workflow run](${workflowRun}) to download the accessible HTML report, Excel workbook, JSON, screenshots, and ZIP evidence.`] : []),
     '',
     '_Automated results are evidence, not a declaration of WCAG conformance; complete the listed manual checks._'
   ].join('\n');
@@ -261,6 +261,7 @@ export async function runGitHubAction(environment: ActionEnvironment = process.e
   for (const [name, value] of [
     ['output-dir', outputDir],
     ['report-path', result.reportPath],
+    ['html-path', result.htmlPath],
     ['json-path', result.jsonPath],
     ['archive-path', result.archivePath],
     ['confirmed-findings', result.confirmedCount],

@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933.svg)](package.json)
 
-A free GitHub Action and isolated Codex, Claude Code, Cursor, GitHub Copilot CLI, and GitHub Copilot in VS Code plugin that helps teams find and document web accessibility barriers. Give it one or more page URLs—or a file containing URLs—and it runs repeatable checks in a headless browser, then produces an Excel report, detailed JSON evidence, and a portable ZIP.
+A free GitHub Action and isolated Codex, Claude Code, Cursor, GitHub Copilot CLI, and GitHub Copilot in VS Code plugin that helps teams find and document web accessibility barriers. Give it one or more page URLs—or a file containing URLs—and it runs repeatable checks in a headless browser, then produces a polished self-contained HTML report, an Excel workbook, detailed JSON evidence, and a portable ZIP.
 
 Maintained by CarlasHub and released under the MIT License.
 
@@ -16,13 +16,13 @@ You do not need to know WCAG terminology to run the plugin. Start with the workf
 
 ## Live BuggyLand demonstration
 
-[![Captioned walkthrough of the CarlasHub Action auditing BuggyLand](https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/buggyland-github-action-tutorial-poster.png)](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.1.0/BuggyLand_GitHub_Action_Tutorial.mp4)
+[![Captioned walkthrough of the CarlasHub Action auditing BuggyLand](https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/buggyland-github-action-tutorial-poster.png)](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.0/BuggyLand_GitHub_Action_Tutorial.mp4)
 
-[Watch or download the 80-second captioned walkthrough](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.1.0/BuggyLand_GitHub_Action_Tutorial.mp4), inspect the [successful public run](https://github.com/CarlasHub/buggyland/actions/runs/34384488369), or read the [video transcript](docs/buggyland-github-action-tutorial-transcript.md). The recording has no audio.
+[Watch or download the complete captioned walkthrough](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.0/BuggyLand_GitHub_Action_Tutorial.mp4), inspect the [successful public run](https://github.com/CarlasHub/buggyland/actions/runs/34384488369), or read the [video transcript](docs/buggyland-github-action-tutorial-transcript.md). It starts with creating and running the workflow, then shows exactly where to download and open the results.
 
 The two [BuggyLand](https://carlashub.github.io/buggyland/) pages declare 172 intentional failure fixtures across all 86 active WCAG 2.2 success criteria. The Action produced 70 consolidated machine results: 52 confirmed failures and 18 items for review, with zero execution errors. Those numbers should not match: automated rules inspect rendered behaviour, consolidate repeated evidence, and cannot decide every WCAG requirement. The [benchmark evidence guide](docs/buggyland-benchmark.md) provides the complete criteria matrix, fixture inventory, downloadable enhanced workbook, raw JSON, and manual verification plan.
 
-For a client-neutral example, [watch the sanitised plugin demonstration](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4) or read its [transcript](docs/accessibility-audit-demo-transcript.md).
+For a client-neutral example, [watch the sanitised plugin demonstration](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4) or read its [transcript](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/accessibility-audit-demo-transcript.md).
 
 ## Use the free GitHub Action
 
@@ -61,7 +61,7 @@ jobs:
           path: ${{ steps.audit.outputs.output-dir }}
 ```
 
-The Action tests only the URLs you list. It posts or updates one pull-request summary when permitted and retains Excel, JSON, screenshots, and a portable ZIP for upload. `fail-on: none` is the informational default; severity gates count confirmed findings only, never items awaiting human review. See [GitHub Action usage](docs/github-action.md) for every input, output, permission, and security recommendation.
+The Action tests only the URLs you list. It posts or updates one pull-request summary when permitted and retains HTML, Excel, JSON, screenshots, and a portable ZIP for upload. `fail-on: none` is the informational default; severity gates count confirmed findings only, never items awaiting human review. See [GitHub Action usage](docs/github-action.md) for every input, output, permission, and security recommendation.
 
 ## Start here
 
@@ -71,7 +71,7 @@ If the plugin is already installed:
 2. In Cursor or Claude Code, run `/accessibility-audit` with one URL, several URLs, or a page-list file. In Codex or Copilot, ask it to use the Accessibility Audit plugin with the same input.
 3. Check the confirmation form. It shows the input, the auditor name, and the landing-page QA URL before testing starts.
 4. Let the headless audit finish, or stop it safely if needed. Progress appears in the editor or terminal.
-5. Extract the generated ZIP and open `Accessibility_Audit_Report.xlsx`. Keep the workbook and `screenshots` folder together so its evidence links continue to work.
+5. Extract the generated ZIP and open `Accessibility_Audit_Report.html` for the quickest review. Use `Accessibility_Audit_Report.xlsx` for detailed triage, keeping it beside the `screenshots` folder so its evidence links continue to work.
 
 One page:
 
@@ -106,7 +106,7 @@ For a complete-site audit, the page-list file must contain the complete canonica
 | Pages/input | The exact URLs or page-list file that will be tested. | Required |
 | Auditor | The name recorded in the workbook. Use a person’s name when a person owns the audit. | `Automated` |
 | Landing-page QA URL | The project’s main QA or staging URL shown in the Overview sheet. It is report metadata and does not add pages to the scope. | First resolved URL |
-| Output directory | The isolated folder that receives the report, JSON, screenshots, and ZIP. | `Accessibility Audit Results` in the user’s home directory |
+| Output directory | The isolated folder that receives the HTML report, workbook, JSON, screenshots, and ZIP. | `Accessibility Audit Results` in the user’s home directory |
 
 ### What happens during the audit
 
@@ -153,7 +153,7 @@ See [Understanding the report](docs/reporting.md) for a worksheet and column gui
 - At most one representative contextual component screenshot per final confirmed, blocker, or review reporting unit, with the affected element outlined inside its navigation, form, tablist, card, section, or other component boundary.
 - Full-page screenshots only for page-level failures or unresolved blocking surfaces; a failed component capture never falls back to unrelated full-page evidence.
 - Lightweight relative screenshot links in `Findings` and `Evidence`; images are not embedded in the workbook.
-- Graceful cancellation that writes and validates partial JSON and XLSX output.
+- Graceful cancellation that writes partial HTML and JSON plus a validated partial XLSX workbook.
 - URL, XLSX, CSV, TXT, and JSON page-list inputs.
 - One row for the same reusable component implementation, rendered name, and root cause across affected pages; generic unnamed controls also require the same rendered location, and page-specific findings remain separate.
 - Embedded instructions, command, skill, rules, MCP server, workbook template, validation, CI checks, and generated marketplace payloads for Claude and GitHub Copilot.
@@ -353,7 +353,7 @@ Progress is written to stderr. The final structured result is written to stdout.
 - In Cursor, Claude, Codex, or Copilot, press the client’s **Stop** control.
 - In a terminal, press `Ctrl+C` once.
 
-The plugin closes active Chromium work, retains completed evidence, writes `audit-results.json` and `Accessibility_Audit_Report.xlsx`, validates the partial workbook, packages its files, and returns `status: "cancelled"`. Pressing `Ctrl+C` a second time exits immediately and can prevent report completion.
+The plugin closes active Chromium work, retains completed evidence, writes `Accessibility_Audit_Report.html`, `audit-results.json`, and `Accessibility_Audit_Report.xlsx`, validates the partial workbook, packages its files, and returns `status: "cancelled"`. Pressing `Ctrl+C` a second time exits immediately and can prevent report completion.
 
 ## Inputs
 
@@ -373,11 +373,12 @@ The default output directory is `Accessibility Audit Results` under the user’s
 
 Generated files:
 
+- `Accessibility_Audit_Report.html` — polished, self-contained, accessible report for fast browser review, filtering, printing, and sharing.
 - `Accessibility_Audit_Report.xlsx` — validated CarlasHub WCAG 2.2 audit workbook.
 - `audit-results.json` — complete evidence, classifications, requested/completed/skipped pages, axe incomplete/pass metadata, keyboard and link truncation, interaction blockers, the coverage matrix, and guided checks.
 - `screenshots/*.png` — full-page screenshots only for page-level failures or unresolved blocking surfaces.
 - `screenshots/elements/*.png` — one retained representative contextual image per final confirmed, blocker, or review reporting unit when the element and tested state are visible and stable; the affected element is outlined within surrounding component context.
-- `<output-directory>.zip` — portable copy of the workbook, JSON, and linked screenshot tree, written beside the output directory.
+- `<output-directory>.zip` — portable copy of the HTML report, workbook, JSON, and linked screenshot tree, written beside the output directory.
 
 Workbook worksheets:
 

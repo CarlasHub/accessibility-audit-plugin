@@ -104,7 +104,7 @@ export function createAccessibilityAuditMcpServer(
   const commonInput = {
     auditor: z.string().min(1).default(DEFAULT_AUDITOR).describe('Name written to the workbook overview.'),
     landingPageUrl: z.string().url().optional().describe('Single landing-page QA URL written to Audit Summary; defaults to the first resolved URL.'),
-    outputDir: z.string().min(1).default(DEFAULT_OUTPUT_DIR).describe('Isolated directory for JSON, screenshots, and XLSX.'),
+    outputDir: z.string().min(1).default(DEFAULT_OUTPUT_DIR).describe('Isolated directory for HTML, JSON, screenshots, and XLSX.'),
     allowedHosts: z.array(z.string()).default([]).describe('Exact hosts or parent domains permitted for the run.'),
     stagingOnly: z.boolean().default(false).describe('Reject hosts that do not look like staging, QA, preview, test, or local hosts.'),
     channel: z.string().optional().describe('Installed Playwright browser channel, for example chrome.'),
@@ -122,7 +122,7 @@ export function createAccessibilityAuditMcpServer(
   server.registerTool(
     'run_accessibility_audit',
     {
-      description: 'Professional one-shot entry point. Confirm pages and auditor, run headless desktop/mobile/reflow checks with progress, validate same-origin links, capture element evidence, and generate validated complete or partial Excel/JSON reports. Client cancellation preserves completed output.',
+      description: 'Professional one-shot entry point. Confirm pages and auditor, run headless desktop/mobile/reflow checks with progress, validate same-origin links, capture element evidence, and generate complete or partial HTML, Excel, and JSON reports. Client cancellation preserves completed output.',
       inputSchema: {
         targets: z.array(z.string().min(1)).min(1).describe('Authorized HTTP(S) URLs and/or one XLSX, CSV, TXT, or JSON page-list path.'),
         ...commonInput,
@@ -239,7 +239,7 @@ export function createAccessibilityAuditMcpServer(
   server.registerTool(
     'audit_pages',
     {
-      description: 'Audit explicit page URLs at desktop, mobile, and 320px reflow sizes; run axe, DOM, keyboard, link, component, and screenshot checks; retain incomplete/blocker/truncation evidence and a page-level coverage matrix; consolidate only equivalent component defects; and write JSON plus the standard Excel workbook.',
+      description: 'Audit explicit page URLs at desktop, mobile, and 320px reflow sizes; run axe, DOM, keyboard, link, component, and screenshot checks; retain incomplete/blocker/truncation evidence and a page-level coverage matrix; consolidate only equivalent component defects; and write accessible HTML, JSON, and the standard Excel workbook.',
       inputSchema: { urls: z.array(z.string().url()).min(1), ...commonInput }
     },
     async ({ urls, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly, channel, headless, autoInstallBrowser, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName }, extra) => {
@@ -257,7 +257,7 @@ export function createAccessibilityAuditMcpServer(
   server.registerTool(
     'audit_from_file',
     {
-      description: 'Read URLs from an XLSX page list or text/CSV/JSON file, then run the full headless desktop/mobile accessibility audit and generate the standard Excel report.',
+      description: 'Read URLs from an XLSX page list or text/CSV/JSON file, then run the full headless desktop/mobile accessibility audit and generate accessible HTML, JSON evidence, and the standard Excel report.',
       inputSchema: { inputPath: z.string().min(1), ...commonInput }
     },
     async ({ inputPath, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly, channel, headless, autoInstallBrowser, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName }, extra) => {

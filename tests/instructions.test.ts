@@ -22,7 +22,7 @@ describe('embedded audit instructions', () => {
     expect(instructions).toContain(`Output directory: ${DEFAULT_OUTPUT_DIR}`);
     expect(instructions).toContain('preview.example.test');
     expect(instructions).toContain('run headlessly by default');
-    expect(instructions).toContain('write validated partial JSON and XLSX output');
+    expect(instructions).toContain('write partial HTML and JSON plus a validated partial XLSX workbook');
     expect(instructions).toContain('element screenshot');
     expect(instructions).toContain('both the authenticated request context and an in-page fetch agree');
     expect(instructions).toContain('relative hyperlinks in Findings and Evidence');
