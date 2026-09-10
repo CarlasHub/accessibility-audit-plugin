@@ -4,6 +4,7 @@ import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ExcelJS, { type CellValue, type DataValidation, type Style, type Worksheet } from 'exceljs';
 import type { AuditSummary, Finding, PageAudit } from '../types.js';
+import { findingId } from './finding-id.js';
 
 interface LookupEntry {
   criterion: string;
@@ -169,14 +170,10 @@ function writeStyledRow(worksheet: Worksheet, rowNumber: number, values: CellVal
   }
 }
 
-function findingId(index: number): string {
-  return `A11Y${String(index + 1).padStart(3, '0')}`;
-}
-
 function pageStatus(page: PageAudit | undefined, skipped: boolean): string {
   if (skipped || !page) return 'Not started';
   if (page.viewports.some((viewport) => viewport.cancelled)) return 'Cancelled';
-  if (page.viewports.some((viewport) => viewport.interactionBlocker || !viewport.axeRun.completed)) return 'Partial';
+  if (page.partial || page.viewports.some((viewport) => viewport.partial || viewport.interactionBlocker || !viewport.axeRun.completed)) return 'Partial';
   return 'Completed';
 }
 
@@ -220,7 +217,7 @@ function populateEvidence(worksheet: Worksheet, summary: AuditSummary, outputPat
       const path = evidence.screenshot ? workbookRelativePath(outputPath, evidence.screenshot) : '';
       writeStyledRow(worksheet, rowNumber, [
         path ? { text: path, hyperlink: path, tooltip: 'Open the evidence file stored beside this workbook.' } : 'Not captured',
-        findingId(findingIndex),
+        findingId(finding, findingIndex),
         { text: evidence.pageUrl, hyperlink: evidence.pageUrl },
         evidence.viewport ? viewportLabel(evidence.viewport) : 'Not specified',
         finding.ruleId,
@@ -251,6 +248,85 @@ function populateManualChecks(worksheet: Worksheet, summary: AuditSummary): void
   worksheet.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(5, summary.manualChecks.length + 4), column: 7 } };
 }
 
+function populateCriteria(workbook: ExcelJS.Workbook, summary: AuditSummary): void {
+  const worksheet = workbook.addWorksheet('WCAG Criteria', {
+    properties: { tabColor: { argb: 'FF7030A0' } }
+  });
+  worksheet.mergeCells('A1:H1');
+  worksheet.getCell('A1').value = 'WCAG 2.2 criterion-by-criterion ledger';
+  worksheet.getCell('A1').font = { name: 'Arial', size: 18, bold: true, color: { argb: 'FFFFFFFF' } };
+  worksheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF17365D' } };
+  worksheet.getCell('A1').alignment = { vertical: 'middle' };
+  worksheet.getRow(1).height = 32;
+  worksheet.mergeCells('A2:H2');
+  worksheet.getCell('A2').value = 'The conformance target is WCAG 2.2 Level AA. Level AAA entries are optional advisory checks. Automated evidence does not replace qualified human assessment or establish conformance.';
+  worksheet.getCell('A2').font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF595959' } };
+  worksheet.getCell('A2').alignment = { wrapText: true, vertical: 'middle' };
+  worksheet.getRow(2).height = 32;
+
+  const headers = ['Criterion', 'Level', 'Scope', 'Status', 'Finding IDs', 'Automated evidence', 'Decision note', 'Understanding'];
+  worksheet.getRow(4).values = headers;
+  worksheet.getRow(4).height = 26;
+  worksheet.getRow(4).eachCell((cell) => {
+    cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+    cell.alignment = { vertical: 'middle', wrapText: true };
+    cell.border = { bottom: { style: 'thin', color: { argb: 'FFB4C6E7' } } };
+  });
+
+  const statusColours: Record<string, string> = {
+    passed: 'FFE2F0D9',
+    failed: 'FFF4CCCC',
+    'manual-review-required': 'FFFFF2CC',
+    inconclusive: 'FFFCE5CD',
+    'not-applicable': 'FFE7E6E6'
+  };
+  (summary.criteria ?? []).forEach((criterion, index) => {
+    const row = worksheet.getRow(index + 5);
+    row.values = [
+      `${criterion.criterion} ${criterion.title}`,
+      criterion.level,
+      criterion.scope === 'standard' ? 'AA conformance target' : 'AAA advisory',
+      criterion.status,
+      criterion.findingIds.join('\n') || 'None',
+      criterion.automatedEvidence.join('\n') || 'No automated evidence mapped',
+      criterion.detail,
+      { text: criterion.understandingUrl, hyperlink: criterion.understandingUrl, tooltip: `Open WCAG Understanding ${criterion.criterion}` }
+    ];
+    row.height = 48;
+    row.eachCell((cell, column) => {
+      cell.font = { name: 'Arial', size: 10, color: { argb: 'FF202124' } };
+      cell.alignment = { vertical: 'top', wrapText: true };
+      cell.border = {
+        bottom: { style: 'hair', color: { argb: 'FFD9E2F3' } },
+        right: { style: 'hair', color: { argb: 'FFE7E6E6' } }
+      };
+      if (column === 4) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: statusColours[criterion.status] ?? 'FFFFFFFF' } };
+    });
+    row.getCell(1).font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF202124' } };
+    row.getCell(4).dataValidation = {
+      type: 'list',
+      allowBlank: false,
+      formulae: ['"passed,failed,manual-review-required,not-applicable,inconclusive"'],
+      showErrorMessage: true,
+      errorTitle: 'Choose a WCAG status',
+      error: 'Select one of the five supported criterion statuses.',
+      showInputMessage: true,
+      promptTitle: 'Human assessment decision',
+      prompt: 'Change this status only after recording qualified human evidence in the decision note.'
+    };
+    row.getCell(8).font = { name: 'Arial', size: 10, color: { argb: 'FF0563C1' }, underline: true };
+  });
+
+  worksheet.columns = [
+    { width: 34 }, { width: 9 }, { width: 22 }, { width: 24 },
+    { width: 18 }, { width: 42 }, { width: 48 }, { width: 46 }
+  ];
+  worksheet.views = [{ state: 'frozen', ySplit: 4 }];
+  worksheet.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(5, (summary.criteria?.length ?? 0) + 4), column: 8 } };
+  worksheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+}
+
 function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
   const allViewports = summary.pages.flatMap((page) => page.viewports);
   const classifications = (classification: Finding['classification']): number =>
@@ -260,9 +336,8 @@ function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
   worksheet.getCell('B4').value = summary.status === 'completed' ? 'Completed' : 'Cancelled';
   worksheet.getCell('B5').value = new Date(summary.generatedAt);
   worksheet.getCell('B6').value = summary.auditor;
-  worksheet.getCell('B7').value = summary.wcagLevel === 'AAA'
-    ? 'WCAG 2.2 Level A, AA, and AAA'
-    : 'WCAG 2.2 Level A and AA';
+  const aaaAdvisory = summary.aaaAdvisory ?? summary.wcagLevel === 'AAA';
+  worksheet.getCell('B7').value = `WCAG 2.2 Level A and AA${aaaAdvisory ? '; separate Level AAA advisory checks enabled' : ''}`;
   const landingUrl = summary.landingPageUrl || summary.requestedUrls[0] || '';
   worksheet.getCell('B8').value = /^https?:\/\//i.test(landingUrl) ? { text: landingUrl, hyperlink: landingUrl } : landingUrl;
   worksheet.getCell('B9').value = summary.requestedUrls.length;
@@ -279,8 +354,11 @@ function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
   worksheet.getCell('A14').value = [
     `Requested URLs: ${summary.requestedUrls.length}`,
     `Audited URLs: ${summary.auditedUrls.length}`,
+    `Partial pages: ${summary.pages.filter((page) => page.partial).length}`,
     `Skipped URLs: ${summary.skippedUrls.length}`,
     `Viewports run: ${allViewports.length}`,
+    `Conformance target: WCAG 2.2 Level AA`,
+    `AAA advisory checks: ${aaaAdvisory ? 'Enabled' : 'Disabled'}`,
     `Source: ${summary.source}`
   ].join('\n');
   const unresolvedCoverage = summary.coverage.flatMap((page) => page.viewports)
@@ -288,7 +366,9 @@ function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
     .filter((item) => !['confirmed-passed', 'confirmed-failed', 'not-applicable'].includes(item.status)).length;
   worksheet.getCell('A19').value = [
     ...summary.limitations,
+    'Conformance decision: Not determined. Qualified human assessment and sign-off are mandatory.',
     `Coverage matrix contains ${unresolvedCoverage} inconclusive, manual-review-required, or not-tested result(s); these are not passes.`,
+    `Criterion ledger contains ${(summary.criteria ?? []).filter((criterion) => ['manual-review-required', 'inconclusive'].includes(criterion.status)).length} unresolved criterion outcome(s).`,
     summary.manualChecks.length
       ? `${summary.manualChecks.length} guided manual check(s) remain in the Manual Checks sheet.`
       : 'No additional guided manual checks were generated.'
@@ -321,7 +401,7 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
     writeStyledRow(
       findingsSheet,
       index + 7,
-      reportRowValues(finding, findingId(index), criterionEntries(finding, lookup), options.outputPath),
+      reportRowValues(finding, findingId(finding, index), criterionEntries(finding, lookup), options.outputPath),
       findingTemplate
     );
   });
@@ -334,6 +414,7 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
   populatePageInventory(pageSheet, summary);
   populateEvidence(evidenceSheet, summary, options.outputPath);
   populateManualChecks(manualSheet, summary);
+  populateCriteria(workbook, summary);
   workbook.creator = summary.auditor;
   workbook.lastModifiedBy = summary.auditor;
   workbook.created = new Date(summary.generatedAt);

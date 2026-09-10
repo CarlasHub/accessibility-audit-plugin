@@ -60,4 +60,16 @@ describe('collectUrls', () => {
     );
     expect(urlRestrictionReason('https://preview-42.example/page', { stagingOnly: true })).toBeNull();
   });
+
+  it('preserves distinct hash-routed application states', async () => {
+    await expect(collectUrls([
+      'https://example.test/app',
+      'https://example.test/app#special'
+    ])).resolves.toMatchObject({
+      urls: [
+        'https://example.test/app',
+        'https://example.test/app#special'
+      ]
+    });
+  });
 });

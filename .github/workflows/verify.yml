@@ -13,7 +13,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
+  unit:
+    name: Unit and static gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run audit:dependencies
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npm run build
+
+  browser:
+    name: Local Playwright gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+
+  built-products:
+    name: Built CLI and GitHub Action gates
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -23,15 +55,26 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run audit:dependencies
       - run: npx playwright install --with-deps chromium
-      - run: npm run check
-      - run: npm run test:integration
+      - run: npm run test:built-cli
       - run: npm run build:action
       - run: npm run test:action
-      - name: Verify the committed Action bundle is current
+      - name: Verify the committed Action bundle matches its source
         run: git diff --exit-code -- action/dist
+
+  packaging:
+    name: Marketplace and package gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - run: npm run build:marketplace
       - run: npm run validate:marketplace
       - run: npm run test:marketplace
+      - run: npm run test:marketplace-compatibility
       - run: npm pack --dry-run

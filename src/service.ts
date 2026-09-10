@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { AuditConfigInput } from './config.js';
 import type { AuditExecutionContext, AuditProgressEvent, AuditStatus } from './types.js';
@@ -10,6 +10,7 @@ import { DEFAULT_REPORT_NAME } from './instructions.js';
 import { validateExcelReport, type WorkbookValidation } from './reporting/validate.js';
 import { createAuditArchive } from './reporting/archive.js';
 import { writeHtmlReport } from './reporting/html.js';
+import { writeJsonReport } from './reporting/json.js';
 
 export interface AuditRequest {
   inputs: string[];
@@ -92,7 +93,7 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
     summary.status = 'cancelled';
     summary.cancelledAt = cancelledAt;
     summary.limitations.push('The audit was stopped by the user. Results include only work completed before cancellation.');
-    await writeFile(jsonPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+    await writeJsonReport(summary, jsonPath);
     return true;
   };
   await applyLateCancellation();
@@ -131,6 +132,7 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
   const archivePath = await createAuditArchive(options.outputDir, reportPath, htmlPath, jsonPath);
   const completedPageCount = summary.pages.filter((page) =>
     page.viewports.length === options.viewports.length &&
+    !page.partial &&
     page.viewports.every((viewport) => (
       !viewport.cancelled
       && !viewport.interactionBlocker

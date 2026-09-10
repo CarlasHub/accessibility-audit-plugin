@@ -31,7 +31,7 @@ Record the browser and operating system. Reproduce any failure with the exact co
 
 ## Test supported screen-reader and browser combinations
 
-This plugin does not run a screen reader. A tester familiar with the agreed assistive technologies should manually test desktop and mobile combinations supported by the product.
+The optional native GitHub Actions workflow can run bounded Guidepup journeys with VoiceOver on macOS and NVDA on Windows and retain spoken transcripts with environment metadata. That evidence helps reproduce announcements, but it does not determine whether a complete task is understandable or prove conformance. A tester familiar with the agreed assistive technologies must still manually test the desktop and mobile combinations supported by the product.
 
 For navigation, forms, search, tabs, dialogs, carousels, and dynamic messages, confirm:
 
@@ -43,7 +43,7 @@ For navigation, forms, search, tabs, dialogs, carousels, and dynamic messages, c
 - headings, regions, lists, tables, and form groups provide useful navigation;
 - visible labels and announced names are consistent enough for speech-input users.
 
-Record the screen reader, version, browser, browser version, operating system, commands used, announcement heard, expected result, and outcome.
+Record the screen reader, version, browser, browser version, operating system, commands used, announcement heard, expected result, and outcome. When a native CI transcript exists, cite it as supporting evidence and record what the human tester independently verified.
 
 ## Verify zoom, text resize, and reflow
 

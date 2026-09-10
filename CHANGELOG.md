@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.1 - 2026-09-10
+
+- Corrected the release lineage after `v1.3.0` was accidentally published from the previous `v1.2.1` source commit; `v1.3.0` is retained as withdrawn and must not be used.
+
+- Kept WCAG 2.2 Level AA as the public conformance target and separated optional AAA checks into clearly labelled advisory evidence.
+- Added a complete criterion-by-criterion WCAG 2.2 ledger to HTML, XLSX, and JSON reports with explicit failed, manual-review-required, not-applicable, and inconclusive outcomes and a mandatory-human conformance decision.
+- Replaced the generic keyboard sample with deterministic forward/reverse focus-order and bypass-block journeys, plus off-viewport focus evidence.
+- Expanded reflow and text-spacing evidence to retain clipping, overlap, lost interactive functionality, and focus visibility signals.
+- Added pinned Guidepup workflows for VoiceOver/WebKit on macOS and NVDA/Firefox on Windows with JSON, Markdown, HTML, and Playwright transcript artifacts.
+- Added deliberately passing and failing regression pages covering AA/AAA contrast separation, semantic failures, keyboard journeys, and reflow behaviour.
+
+## 1.3.0 - 2026-09-10
+
+- Withdrawn: this tag was accidentally created from the `v1.2.1` source commit before the intended v1.3 changes were pushed. Use `v1.2.1` until `v1.3.1` is available.
+
 ## 1.2.1 - 2026-09-09
 
 - Made axe-core execution reliable on pages with strict Content Security Policy headers.

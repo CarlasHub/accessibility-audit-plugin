@@ -3,6 +3,8 @@
   "landingPageUrl": "https://preview.example.test/",
   "allowedHosts": ["preview.example.test"],
   "stagingOnly": true,
+  "wcagLevel": "AA",
+  "aaaAdvisory": false,
   "headless": true,
   "autoInstallBrowser": true,
   "timeoutMs": 30000,

@@ -1,0 +1,89 @@
+name: Native screen-reader evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      target-url:
+        description: Explicit public or allowlisted test URL
+        required: true
+        default: https://carlashub.github.io/a11y-test-cases/
+      navigation-steps:
+        description: Bounded number of screen-reader navigation steps (4-100)
+        required: false
+        default: '20'
+
+permissions:
+  contents: read
+
+jobs:
+  voiceover:
+    name: VoiceOver on macOS
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      A11Y_TARGET_URL: ${{ inputs['target-url'] }}
+      A11Y_SCREEN_READER: voiceover
+      A11Y_SCREEN_READER_STEPS: ${{ inputs['navigation-steps'] }}
+      A11Y_SCREEN_READER_EVIDENCE_DIR: screen-reader-evidence/voiceover
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Configure VoiceOver automation
+        run: npx --no-install guidepup setup --ci
+      - name: Install pinned VoiceOver assets
+        run: npx --no-install guidepup install voiceover
+      - name: Install WebKit
+        run: npx playwright install webkit
+      - name: Run VoiceOver evidence journey
+        run: npm run test:screen-reader:voiceover
+      - name: Upload VoiceOver transcript and report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: voiceover-accessibility-evidence
+          path: |
+            screen-reader-evidence/voiceover/
+            screen-reader-playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 30
+
+  nvda:
+    name: NVDA on Windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      A11Y_TARGET_URL: ${{ inputs['target-url'] }}
+      A11Y_SCREEN_READER: nvda
+      A11Y_SCREEN_READER_STEPS: ${{ inputs['navigation-steps'] }}
+      A11Y_SCREEN_READER_EVIDENCE_DIR: screen-reader-evidence/nvda
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Configure NVDA automation
+        run: npx --no-install guidepup setup --ci
+      - name: Install pinned NVDA assets
+        run: npx --no-install guidepup install nvda
+      - name: Install Firefox
+        run: npx playwright install firefox
+      - name: Run NVDA evidence journey
+        run: npm run test:screen-reader:nvda
+      - name: Upload NVDA transcript and report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nvda-accessibility-evidence
+          path: |
+            screen-reader-evidence/nvda/
+            screen-reader-playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 30

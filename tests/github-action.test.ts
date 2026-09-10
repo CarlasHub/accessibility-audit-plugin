@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateGate, parseBooleanInput, parseFailurePolicy, parseListInput, parseWcagLevel } from '../src/github-action.js';
+import {
+  evaluateGate,
+  parseBooleanInput,
+  parseFailurePolicy,
+  parseListInput,
+  parsePositiveInteger,
+  parseWcagLevel
+} from '../src/github-action.js';
 
 describe('GitHub Action inputs', () => {
   it('reads one URL per line and JSON arrays without treating URL commas as separators', () => {
@@ -20,6 +27,12 @@ describe('GitHub Action inputs', () => {
     expect(() => parseFailurePolicy('review')).toThrow(/fail-on must be one of/);
     expect(parseWcagLevel('aaa')).toBe('AAA');
     expect(() => parseWcagLevel('A')).toThrow(/AA or AAA/);
+  });
+
+  it('enforces the documented Action concurrency range', () => {
+    expect(parsePositiveInteger('', 2, 'concurrency', 8)).toBe(2);
+    expect(parsePositiveInteger('8', 2, 'concurrency', 8)).toBe(8);
+    expect(() => parsePositiveInteger('9', 2, 'concurrency', 8)).toThrow('between 1 and 8');
   });
 });
 

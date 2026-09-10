@@ -16,6 +16,7 @@ interface AuditCliOptions {
   config?: string;
   auditor?: string;
   wcagLevel?: string;
+  aaaAdvisory?: boolean;
   landingPage?: string;
   output?: string;
   allowHost?: string[];
@@ -62,7 +63,8 @@ program
   .argument('<inputs...>', 'URLs or input files')
   .option('-c, --config <path>', 'JSON configuration file')
   .option('--auditor <name>', 'Auditor name')
-  .option('--wcag-level <level>', 'WCAG conformance level: AA or AAA')
+  .option('--wcag-level <level>', 'WCAG conformance target: AA (legacy AAA also enables the separate AAA advisory checks)')
+  .option('--aaa-advisory', 'Run WCAG Level AAA rules as advisory checks, separate from the Level AA conformance target')
   .option('--landing-page <url>', 'Landing-page QA URL written to Audit Summary')
   .option('-o, --output <directory>', 'Output directory')
   .option('--allow-host <host>', 'Allowed hostname; repeat for more than one', collect, [])
@@ -109,6 +111,7 @@ program
       ...fileConfig,
       auditor,
       ...(cli.wcagLevel ? { wcagLevel: cli.wcagLevel.toUpperCase() as 'AA' | 'AAA' } : {}),
+      ...(fromCommandLine('aaaAdvisory') ? { aaaAdvisory: Boolean(cli.aaaAdvisory) } : {}),
       ...(landingPageUrl ? { landingPageUrl } : {}),
       ...(cli.output ? { outputDir: cli.output } : {}),
       ...(cli.allowHost?.length ? { allowedHosts: cli.allowHost } : {}),

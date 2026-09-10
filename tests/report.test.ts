@@ -26,13 +26,13 @@ function summaryWithScreenshot(screenshot: string): AuditSummary {
         detail: '<img src="logo.png">', screenshot
       }], assignment: 'Content', effort: 'Small', translationRequired: 'Review'
     }],
-    manualChecks: [{ id: 'manual-image-purpose', title: 'Confirm image purpose', wcag: ['1.1.1'], applicableTo: 'Images', procedure: 'Confirm the text alternative conveys the image purpose.' }],
+    manualChecks: [{ id: 'manual-image-purpose', classification: 'manual', title: 'Confirm image purpose', wcag: ['1.1.1'], applicableTo: 'Images', procedure: 'Confirm the text alternative conveys the image purpose.' }],
     limitations: ['Not a conformance certification.']
   };
 }
 
 describe('Excel report', () => {
-  it('writes the six-sheet CarlasHub report with linked, lightweight evidence', async () => {
+  it('writes the seven-sheet CarlasHub report with linked, lightweight evidence', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'a11y-report-'));
     const screenshot = join(directory, 'screenshots', 'elements', 'element.png');
     await mkdir(join(directory, 'screenshots', 'elements'), { recursive: true });

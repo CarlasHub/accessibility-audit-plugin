@@ -5,6 +5,7 @@ dist/
 artifacts/
 Accessibility Audit Results/
 accessibility-audit-results/
+buggyland-regression-results/
 coverage/
 evidence/
 outputs/

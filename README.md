@@ -22,13 +22,15 @@ You do not need to know WCAG terminology to run the plugin. Start with the workf
 
 The demonstrated audit of [A11y Test Cases](https://carlashub.github.io/a11y-test-cases/) completed one page and produced 52 findings: 51 confirmed and 1 requiring review, plus 7 guided manual checks. No secret or paid marketplace installation is required for a public URL.
 
-## Deeper BuggyLand benchmark
+## BuggyLand benchmark and v1.3.1 regression gate
 
 [![Captioned walkthrough of the CarlasHub Action auditing BuggyLand](https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/buggyland-github-action-tutorial-poster.png)](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.0/BuggyLand_GitHub_Action_Tutorial.mp4)
 
-[Watch or download the complete captioned walkthrough](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.0/BuggyLand_GitHub_Action_Tutorial.mp4), inspect the [successful public run](https://github.com/CarlasHub/buggyland/actions/runs/34391886799), or read the [video transcript](docs/buggyland-github-action-tutorial-transcript.md). It starts with adding and running the workflow, then shows exactly where to download and open the HTML and Excel results.
+[Watch or download the complete captioned v1.2.0 walkthrough](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.0/BuggyLand_GitHub_Action_Tutorial.mp4), inspect its [successful public run](https://github.com/CarlasHub/buggyland/actions/runs/34391886799), or read the [video transcript](docs/buggyland-github-action-tutorial-transcript.md). It starts with adding and running the workflow, then shows exactly where to download and open the HTML and Excel results.
 
-The two [BuggyLand](https://carlashub.github.io/buggyland/) pages declare 172 intentional failure fixtures across all 86 active WCAG 2.2 success criteria. The Action produced 70 consolidated machine results: 52 confirmed failures and 18 items for review, with zero execution errors. Those numbers should not match: automated rules inspect rendered behaviour, consolidate repeated evidence, and cannot decide every WCAG requirement. The [benchmark evidence guide](docs/buggyland-benchmark.md) provides the complete criteria matrix, fixture inventory, downloadable enhanced workbook, raw JSON, and manual verification plan.
+The two [BuggyLand](https://carlashub.github.io/buggyland/) pages declare 172 intentional failure fixtures across all 86 active WCAG 2.2 success criteria. The historical v1.2.0 walkthrough produced 70 consolidated machine results: 52 confirmed failures and 18 items for review, with zero execution errors. Those numbers should not match: automated rules inspect rendered behaviour, consolidate repeated evidence, and cannot decide every WCAG requirement. The [benchmark evidence guide](docs/buggyland-benchmark.md) provides the complete criteria matrix, fixture inventory, downloadable enhanced workbook, raw JSON, and manual verification plan.
+
+The v1.3.1 release gate is stricter. It audits four page and fragment states at desktop, mobile, and 320px reflow sizes, then repeats the complete run to detect unstable results. Its reviewed baseline is 66 consolidated records: 32 confirmed failures, 33 items for review, and 1 interaction blocker, plus 7 guided manual checks. Two blocked `#special` states remain visibly partial instead of being reported as passes. The exact baseline is enforced by the [regression fixture](tests/fixtures/buggyland-regression.json) and the [scheduled public workflow](.github/workflows/buggyland-regression.yml).
 
 For a client-neutral example, [watch the sanitised plugin demonstration](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4) or read its [transcript](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/accessibility-audit-demo-transcript.md).
 
@@ -122,9 +124,9 @@ Every supplied page is checked at desktop (1440×1000), mobile (390×844), and 3
 
 - images, links, buttons, and form fields that do not have usable names;
 - incorrect page structure or broken relationships between controls and content;
-- keyboard focus that is unreachable, out of order, invisible, or fully covered;
+- keyboard focus that is unreachable, out of order, outside the viewport, invisible, or fully covered, including forward/reverse order and bypass-block journeys;
 - menus, disclosures, and tabs whose state or keyboard operation is broken;
-- content that overflows at narrow widths or after WCAG text-spacing overrides;
+- content that overflows, clips, overlaps, disappears, or loses focus visibility/functionality at narrow widths or after WCAG text-spacing overrides;
 - same-site links that are empty, placeholders, missing fragments, or consistently return 404/410;
 - target-size spacing conflicts, plus selected table, media, and responsive-layout signals that require review.
 
@@ -143,6 +145,8 @@ The report separates four evidence categories:
 
 Every populated finding starts with `Status = Open` so teams can triage it without implying a final compliance verdict. Use `Evidence type` to distinguish confirmed, review, blocker, and manual records, then follow `Test method` before assigning work.
 
+WCAG 2.2 Level AA is always the public conformance target. Optional AAA automation is advisory only. The HTML report, workbook, and JSON include a criterion-by-criterion ledger using `passed`, `failed`, `manual-review-required`, `not-applicable`, and `inconclusive`; a criterion is never inferred to pass merely because no automated issue was found. The overall conformance decision remains **not determined** until qualified human assessment is complete.
+
 Severity (`Critical`, `Serious`, `Moderate`, or `Minor`) describes expected user impact. It is different from WCAG level, evidence confidence, remediation effort, and delivery priority.
 
 See [Understanding the report](docs/reporting.md) for a worksheet and column guide, and [Manual verification](docs/manual-verification.md) for checks that remain outstanding.
@@ -153,10 +157,10 @@ See [Understanding the report](docs/reporting.md) for a worksheet and column gui
 - Automatic one-time installation of headless Playwright Chromium when no supported browser is available; runtime and browser files stay in plugin-owned storage.
 - axe-core WCAG 2.2 A/AA rules plus selected best-practice signals, which remain review items when no WCAG success criterion is mapped.
 - DOM and semantic checks for page structure, image alternatives, controls, fields, landmarks, duplicate ids, tables, and media.
-- Sequential keyboard traversal, focus visibility review, focus obscuration checks, and disclosure state/relationship interaction tests.
+- Deterministic forward/reverse keyboard journeys, bypass-block activation, focus visibility/viewport/obscuration checks, and disclosure state/relationship interaction tests.
 - Tab-component state, roving tabindex, arrow navigation, activation, and tab/panel relationship checks.
 - Conservative same-origin link validation for empty names, placeholders, missing fragments, confirmed 404/410 destinations, and server-error review signals.
-- Desktop, 390px mobile, and 320px reflow viewports.
+- Desktop, 390px mobile, and 320px reflow viewports with overflow, clipping, overlap, focus, and lost-functionality evidence before and after WCAG text spacing.
 - Consent-banner detection and dismissal before interaction testing and evidence capture; reject or necessary-only actions are preferred.
 - At most one representative contextual component screenshot per final confirmed, blocker, or review reporting unit, with the affected element outlined inside its navigation, form, tablist, card, section, or other component boundary.
 - Full-page screenshots only for page-level failures or unresolved blocking surfaces; a failed component capture never falls back to unrelated full-page evidence.
@@ -167,6 +171,7 @@ See [Understanding the report](docs/reporting.md) for a worksheet and column gui
 - Embedded instructions, command, skill, rules, MCP server, workbook template, validation, CI checks, and generated marketplace payloads for Claude and GitHub Copilot.
 - A self-contained Node.js GitHub Action with job-summary, pull-request-comment, artifact, and conservative quality-gate support.
 - A per-page, per-viewport JSON coverage matrix that distinguishes confirmed pass/fail evidence from inconclusive, manual, not-tested, and not-applicable areas.
+- Optional native Guidepup workflows for macOS VoiceOver and Windows NVDA that publish bounded spoken-transcript evidence with browser, operating-system, and journey metadata.
 
 ## Requirements
 
@@ -175,7 +180,7 @@ See [Understanding the report](docs/reporting.md) for a worksheet and column gui
 - A Playwright-supported Chromium installation. If none is present, the plugin installs headless Playwright Chromium once after audit confirmation unless automatic installation is disabled.
 - Microsoft Excel or another OOXML-compatible reader for the generated workbook.
 
-No screen-reader package or operating-system accessibility permission is required.
+The core browser audit needs no screen-reader package or operating-system accessibility permission. Native screen-reader evidence is an optional, separate GitHub Actions workflow and does not replace manual assistive-technology testing.
 
 ## Install the plugin dependencies
 
@@ -396,10 +401,11 @@ Workbook worksheets:
 - `Evidence` — portable evidence paths linked to their finding, page, viewport, rule, component, locator, evidence type, and detail.
 - `Manual Checks` — guided procedures, applicability, status, and reviewer notes for checks automation cannot complete.
 - `WCAG 2.2 Reference` — visible criterion, level, title, and W3C Understanding links used to enrich findings.
+- `WCAG Criteria` — generated criterion-by-criterion AA and optional AAA-advisory status ledger with finding links, automated evidence, limitations, and W3C Understanding links.
 
-The report contains no screen-reader worksheet or screen-reader execution result.
+Native VoiceOver and NVDA runs publish separate JSON, Markdown, HTML, and Playwright artifacts so environment-specific spoken evidence is not confused with the core cross-platform report.
 
-The bundled workbook is an original CarlasHub template designed around WCAG 2.2 audit and remediation workflows. Its six sheets separate executive summary, findings, page coverage, evidence, guided manual checks, and standards reference while retaining portable links and validation controls.
+The bundled workbook is an original CarlasHub template designed around WCAG 2.2 audit and remediation workflows. Its six canonical template sheets separate executive summary, findings, page coverage, evidence, guided manual checks, and standards reference; the generator appends the seventh `WCAG Criteria` ledger while retaining portable links and validation controls.
 
 ## Finding confidence and false-positive controls
 

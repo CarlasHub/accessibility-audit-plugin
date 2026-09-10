@@ -668,8 +668,14 @@ function domFindings(audit: ViewportAudit): Finding[] {
       .filter((violation) => axeEmptyControlRules.has(violation.id))
       .flatMap((violation) => violation.nodes.map((node) => openingTagSignature(node.html)))
   );
+  const unlabeledFieldSelectors = new Set(audit.dom.unlabeledFields.map((item) => normalizeComponent(item.selector)));
+  const unlabeledFieldSignatures = new Set(audit.dom.unlabeledFields.map((item) => openingTagSignature(item.html)));
   for (const item of audit.dom.emptyNamedControls) {
     if (axeEmptyControlSignatures.has(openingTagSignature(item.html))) continue;
+    if (
+      unlabeledFieldSelectors.has(normalizeComponent(item.selector))
+      || unlabeledFieldSignatures.has(openingTagSignature(item.html))
+    ) continue;
     findings.push(makeFinding({
       identity: `empty-name|${normalizeComponent(item.selector)}`,
       ruleId: 'interactive-control-no-name',
@@ -820,6 +826,79 @@ function domFindings(audit: ViewportAudit): Finding[] {
     }));
   }
 
+  for (const clipped of audit.responsive.clippedElements) {
+    const criteria = clipped.phase === 'text-spacing' ? ['1.4.10', '1.4.12'] : ['1.4.10'];
+    findings.push(makeFinding({
+      identity: `responsive-clipped|${clipped.phase}|${normalizeComponent(clipped.selector)}`,
+      ruleId: 'responsive-content-clipped',
+      classification: 'review',
+      severity: 'Serious',
+      wcag: criteria,
+      summary: `Content may be clipped${clipped.phase === 'text-spacing' ? ' after text spacing' : ' at the narrow viewport'}`,
+      issue: `${clipped.selector} has ${clipped.axis} scroll dimensions larger than its visible box while its overflow styling can clip content.`,
+      impact: 'Users who zoom, reflow content, or increase text spacing may be unable to perceive content or reach functionality.',
+      testing: `At the ${clipped.phase} phase, the element measured ${clipped.clientWidth}×${clipped.clientHeight} CSS pixels with scroll dimensions ${clipped.scrollWidth}×${clipped.scrollHeight}.`,
+      remediation: 'Allow content to wrap and containers to grow. If clipping is intentional, verify that no meaningful content or operable control is hidden at 320 CSS pixels and with WCAG text spacing.',
+      component: normalizeComponent(clipped.selector),
+      urls: [audit.url],
+      viewports: [audit.viewport.name],
+      selectors: [clipped.selector],
+      evidence: [evidence('responsive', clipped.selector, JSON.stringify(clipped))],
+      assignment: 'Development',
+      effort: 'Medium',
+      translationRequired: 'Review'
+    }));
+  }
+
+  for (const overlap of audit.responsive.overlapPairs) {
+    const selectors = [overlap.firstSelector, overlap.secondSelector];
+    const criteria = overlap.phase === 'text-spacing' ? ['1.4.10', '1.4.12'] : ['1.4.10'];
+    findings.push(makeFinding({
+      identity: `responsive-overlap|${overlap.phase}|${selectors.map(normalizeComponent).sort().join('|')}`,
+      ruleId: 'responsive-controls-overlap',
+      classification: 'review',
+      severity: 'Serious',
+      wcag: criteria,
+      summary: `Interactive elements overlap${overlap.phase === 'text-spacing' ? ' after text spacing' : ' at the narrow viewport'}`,
+      issue: `Two visible interactive elements overlap by ${overlap.overlapWidth}×${overlap.overlapHeight} CSS pixels. Review whether either control, label, or focus indicator is obscured.`,
+      impact: 'Overlapping controls can hide information, make a target difficult to activate, or obscure keyboard focus.',
+      testing: `Rendered bounds were compared during the ${overlap.phase} reflow phase at ${audit.viewport.width} CSS pixels.`,
+      remediation: 'Use responsive layout and wrapping so controls do not cover one another at narrow widths or after text spacing is increased.',
+      component: normalizeComponent(overlap.firstSelector),
+      urls: [audit.url],
+      viewports: [audit.viewport.name],
+      selectors,
+      evidence: [evidence('responsive', overlap.firstSelector, JSON.stringify(overlap))],
+      assignment: 'Development',
+      effort: 'Medium',
+      translationRequired: 'Review'
+    }));
+  }
+
+  if (audit.responsive.lostInteractiveElements.length > 0) {
+    const selectors = audit.responsive.lostInteractiveElements.map((item) => item.selector);
+    findings.push(makeFinding({
+      identity: `text-spacing-lost-functionality|${selectors.map(normalizeComponent).sort().join('|')}`,
+      ruleId: 'text-spacing-functionality-lost',
+      classification: 'review',
+      severity: 'Serious',
+      wcag: ['1.4.12'],
+      summary: 'Interactive content may disappear after text spacing is increased',
+      issue: `${audit.responsive.lostInteractiveElements.length} control(s) that were visible before the WCAG text-spacing override were no longer visibly rendered afterwards.`,
+      impact: 'People who increase text spacing may lose access to controls or functionality.',
+      testing: 'Visible interactive elements were inventoried before and after applying the WCAG text-spacing values, then compared by stable selector.',
+      remediation: 'Remove fixed-height clipping and layout constraints so controls remain visible, readable, and operable with increased line, paragraph, word, and letter spacing.',
+      component: 'responsive layout',
+      urls: [audit.url],
+      viewports: [audit.viewport.name],
+      selectors,
+      evidence: audit.responsive.lostInteractiveElements.map((item) => evidence('responsive', item.selector, `Previously visible control disappeared: ${item.name || 'unnamed control'}.`)),
+      assignment: 'Development',
+      effort: 'Medium',
+      translationRequired: 'Review'
+    }));
+  }
+
   const groupKeyboardItems = (items: typeof audit.keyboard.sequence): Map<string, typeof items> => {
     const groups = new Map<string, typeof items>();
     for (const item of items) {
@@ -851,6 +930,58 @@ function domFindings(audit: ViewportAudit): Finding[] {
       assignment: 'Development',
       effort: 'Medium',
       translationRequired: 'No'
+    }));
+  }
+
+  const outsideViewport = audit.keyboard.sequence.filter((item) => item.outsideViewport);
+  for (const [component, items] of groupKeyboardItems(outsideViewport)) {
+    findings.push(makeFinding({
+      identity: `focus-outside-viewport|${component}`,
+      ruleId: 'keyboard-focus-outside-viewport',
+      classification: 'review',
+      severity: 'Serious',
+      wcag: ['2.4.11'],
+      summary: 'Keyboard focus may move outside the visible viewport',
+      issue: `Sequential focus reached ${items.length} element(s) whose rendered bounds were outside the visible viewport after focus settled.`,
+      impact: 'Keyboard users may lose track of focus and be unable to identify the currently active control.',
+      testing: `The deterministic keyboard traversal checked focused-element bounds after each Tab step; affected positions: ${items.map((item) => item.index).join(', ')}.`,
+      remediation: 'Scroll focused controls into view, remove hidden elements from the focus order, and ensure overlays do not separate visual and programmatic focus.',
+      component,
+      urls: [audit.url],
+      viewports: [audit.viewport.name],
+      selectors: items.map((item) => item.selector),
+      evidence: items.map((item) => evidence('keyboard', item.selector, `Focus position ${item.index} was outside the viewport.`)),
+      assignment: 'Development',
+      effort: 'Medium',
+      translationRequired: 'No'
+    }));
+  }
+
+  for (const journey of audit.keyboard.journeys.filter((item) => item.status === 'failed')) {
+    const isBypass = journey.id === 'bypass-blocks';
+    findings.push(makeFinding({
+      identity: `keyboard-journey|${journey.id}|${audit.url}`,
+      ruleId: `keyboard-journey-${journey.id}`,
+      classification: 'review',
+      severity: 'Serious',
+      wcag: [isBypass ? '2.4.1' : '2.4.3'],
+      summary: `${journey.title} did not produce the expected result`,
+      issue: journey.detail,
+      impact: isBypass
+        ? 'Keyboard users may be forced to traverse repeated content before reaching the main page content.'
+        : 'Keyboard users may encounter an unexpected or illogical focus sequence.',
+      testing: `Executed deterministic journey: ${journey.steps.join(' → ') || 'no completed steps'}.`,
+      remediation: isBypass
+        ? 'Provide an operable bypass mechanism whose target exists, becomes visible, and receives or immediately precedes focus.'
+        : 'Keep DOM and visual order aligned and ensure forward and reverse sequential navigation are predictable.',
+      component: 'page keyboard journey',
+      urls: [audit.url],
+      viewports: [audit.viewport.name],
+      selectors: [],
+      evidence: [evidence('keyboard', undefined, JSON.stringify(journey))],
+      assignment: 'Development',
+      effort: 'Medium',
+      translationRequired: 'Review'
     }));
   }
 
@@ -1037,23 +1168,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       effort: 'Medium' as const,
       translationRequired: 'No' as const
     };
-    if (tab.error) {
-      findings.push(makeFinding({
-        ...common,
-        identity: `tabs-test-error|${component}`,
-        ruleId: 'tabs-test-incomplete',
-        classification: 'review',
-        severity: 'Moderate',
-        wcag: ['Best Practice'],
-        summary: 'Tab interaction test did not complete',
-        issue: tab.error,
-        impact: 'The automated result cannot establish whether the tab interaction works correctly.',
-        testing: 'The rendered tablist was exercised in an isolated browser, but the interaction raised an error.',
-        remediation: 'Stabilize the tab interaction and rerun the keyboard and relationship checks before deciding conformance.',
-        evidence: [evidence('keyboard', tab.selector, JSON.stringify(tab))]
-      }));
-      continue;
-    }
+    if (tab.error) continue;
     if (!tab.navigationMovedToTab) {
       const otherTabsKeyboardUnreachable = tab.tabbableCount <= 1;
       findings.push(makeFinding({
@@ -1177,5 +1292,45 @@ function domFindings(audit: ViewportAudit): Finding[] {
 export function findingsFromPage(page: PageAudit): Finding[] {
   return page.viewports
     .filter((audit) => !audit.cancelled)
-    .flatMap((audit) => [...axeFindings(audit), ...domFindings(audit)].map((finding) => enrichComponent(finding, audit)));
+    .flatMap((audit) => {
+      const failed = (prefix: string): boolean => audit.errors.some((message) => message.startsWith(prefix));
+      const interactionUnavailable = Boolean(audit.interactionBlocker);
+      const evidenceGatedAudit: ViewportAudit = {
+        ...audit,
+        ...(failed('DOM checks error:') ? {
+          dom: {
+            h1Count: 1,
+            mainCount: 1,
+            unnamedLandmarks: [],
+            missingAltImages: [],
+            linkedImagesForReview: [],
+            emptyLinks: [],
+            emptyNamedControls: [],
+            unlabeledFields: [],
+            duplicateIds: [],
+            smallTargets: [],
+            tablesForReview: [],
+            autoplayMedia: []
+          }
+        } : {}),
+        ...(interactionUnavailable || failed('Keyboard checks error:') ? {
+          keyboard: { sequence: [], journeys: [], completedCycle: false, truncated: false, scope: 'unknown' }
+        } : {}),
+        ...(interactionUnavailable || failed('Disclosure checks error:') ? { disclosures: [] } : {}),
+        ...(interactionUnavailable || failed('Tab checks error:') ? { tabs: [] } : {}),
+        ...(interactionUnavailable || failed('Link checks error:') ? { links: [] } : {}),
+        ...(failed('Responsive checks error:') ? {
+          responsive: {
+            horizontalOverflow: 0,
+            overflowElements: [],
+            textSpacingOverflow: 0,
+            clippedElements: [],
+            overlapPairs: [],
+            lostInteractiveElements: []
+          }
+        } : {})
+      };
+      return [...axeFindings(audit), ...domFindings(evidenceGatedAudit)]
+        .map((finding) => enrichComponent(finding, audit));
+    });
 }

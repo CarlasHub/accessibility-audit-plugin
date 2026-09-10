@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Accessible regression fixture</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #767676; background: #fff; font: 16px/1.5 system-ui, sans-serif; }
+    a { color: #005a9c; }
+    a:focus-visible, button:focus-visible, input:focus-visible { outline: 3px solid #005fcc; outline-offset: 3px; }
+    .skip-link { display: inline-block; margin: 0.75rem; }
+    header, main, footer { width: min(100% - 2rem, 48rem); margin-inline: auto; }
+    nav ul { display: flex; flex-wrap: wrap; gap: 1rem; padding: 0; list-style: none; }
+    form { display: grid; gap: 0.5rem; max-width: 24rem; }
+    input, button { min-width: 44px; min-height: 44px; font: inherit; }
+    button { color: #fff; background: #005a9c; border: 2px solid #005a9c; }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <header>
+    <h1>Accessible regression fixture</h1>
+    <nav aria-label="Primary">
+      <ul><li><a href="#details">Details</a></li><li><a href="#contact">Contact</a></li></ul>
+    </nav>
+  </header>
+  <main id="main" tabindex="-1">
+    <section id="details" aria-labelledby="details-heading">
+      <h2 id="details-heading">Details</h2>
+      <p>This normal-sized text passes Level AA contrast but intentionally does not meet the enhanced Level AAA ratio.</p>
+    </section>
+    <form id="contact">
+      <label for="email">Email address</label>
+      <input id="email" name="email" type="email" autocomplete="email">
+      <button type="submit">Send message</button>
+    </form>
+  </main>
+  <footer><p>Regression evidence fixture.</p></footer>
+</body>
+</html>

@@ -15,9 +15,13 @@ inputs:
     required: false
     default: GitHub Actions
   wcag-level:
-    description: 'Conformance rules to include: AA (Levels A and AA) or AAA (Levels A, AA, and AAA).'
+    description: 'Conformance target. AA is the public-audit standard; legacy AAA also enables separate advisory rules.'
     required: false
     default: AA
+  aaa-advisory:
+    description: Run Level AAA rules as advisory checks without changing the Level AA conformance target.
+    required: false
+    default: 'false'
   output-dir:
     description: Report directory, relative to the workflow workspace unless absolute.
     required: false

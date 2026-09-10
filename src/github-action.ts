@@ -74,10 +74,11 @@ export function parseWcagLevel(value: string): 'AA' | 'AAA' {
   return normalized;
 }
 
-function parsePositiveInteger(value: string, fallback: number, name: string): number {
+export function parsePositiveInteger(value: string, fallback: number, name: string, maximum?: number): number {
   if (!value.trim()) return fallback;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`${name} must be a positive integer.`);
+  if (maximum !== undefined && parsed > maximum) throw new Error(`${name} must be between 1 and ${maximum}.`);
   return parsed;
 }
 
@@ -226,7 +227,10 @@ async function readStoredFindings(jsonPath: string): Promise<StoredAuditSummary[
   return stored.findings ?? [];
 }
 
-export async function runGitHubAction(environment: ActionEnvironment = process.env): Promise<AuditRunResult> {
+export async function runGitHubAction(
+  environment: ActionEnvironment = process.env,
+  signal?: AbortSignal
+): Promise<AuditRunResult> {
   const inputs = parseListInput(getInput(environment, 'URLS'));
   if (!inputs.length) throw new Error('The urls input must include at least one URL, with one URL per line.');
 
@@ -242,6 +246,7 @@ export async function runGitHubAction(environment: ActionEnvironment = process.e
     options: {
       auditor: getInput(environment, 'AUDITOR') || 'GitHub Actions',
       wcagLevel: parseWcagLevel(getInput(environment, 'WCAG-LEVEL')),
+      aaaAdvisory: parseBooleanInput(getInput(environment, 'AAA-ADVISORY'), false),
       outputDir,
       ...(getInput(environment, 'LANDING-PAGE-URL') ? { landingPageUrl: getInput(environment, 'LANDING-PAGE-URL') } : {}),
       allowedHosts,
@@ -249,12 +254,13 @@ export async function runGitHubAction(environment: ActionEnvironment = process.e
       headless: true,
       autoInstallBrowser: parseBooleanInput(getInput(environment, 'AUTO-INSTALL-BROWSER'), true),
       timeoutMs: parsePositiveInteger(getInput(environment, 'TIMEOUT-MS'), 30_000, 'timeout-ms'),
-      concurrency: parsePositiveInteger(getInput(environment, 'CONCURRENCY'), 2, 'concurrency'),
+      concurrency: parsePositiveInteger(getInput(environment, 'CONCURRENCY'), 2, 'concurrency', 8),
       captureScreenshots: parseBooleanInput(getInput(environment, 'CAPTURE-SCREENSHOTS'), true),
       ...(getInput(environment, 'BROWSER-CHANNEL') ? { channel: getInput(environment, 'BROWSER-CHANNEL') } : {}),
       ...(templatePath ? { templatePath } : {})
     },
     execution: {
+      ...(signal ? { signal } : {}),
       onProgress: (event) => { process.stdout.write(`${formatProgress(event)}\n`); }
     }
   });

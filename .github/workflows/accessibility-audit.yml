@@ -26,6 +26,7 @@ jobs:
         with:
           urls: ${{ inputs.target-url }}
           allowed-hosts: ${{ inputs.target-host }}
+          auditor: Carla / CarlasHub
           fail-on: none
           comment-on-pr: 'false'
       - name: Upload accessibility evidence

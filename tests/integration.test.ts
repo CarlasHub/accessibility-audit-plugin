@@ -5,13 +5,182 @@ import { once } from 'node:events';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
+import { chromium } from 'playwright';
 import { describe, expect, it } from 'vitest';
 import { resolveOptions } from '../src/config.js';
-import { runAudit } from '../src/audit/runner.js';
+import { auditViewport, runAudit, type AuditViewportDependencies } from '../src/audit/runner.js';
+import { runResponsiveChecks } from '../src/audit/browser-checks.js';
+import { buildCoverageMatrix } from '../src/audit/coverage.js';
+import { findingsFromPage } from '../src/audit/findings.js';
+import { detectInteractionBlocker } from '../src/audit/page-preparation.js';
+import type { CoverageArea } from '../src/types.js';
 import { executeAudit } from '../src/service.js';
 import { DEFAULT_AUDITOR } from '../src/instructions.js';
 
 describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit integration', () => {
+  it('keeps completed evidence and marks only injected pipeline failures partial', async () => {
+    const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+    const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
+    const failures: Array<{
+      name: string;
+      area: CoverageArea;
+      override: Partial<AuditViewportDependencies>;
+    }> = [
+      { name: 'DOM', area: 'structure-headings-landmarks', override: { runDomChecks: async () => { throw new Error('injected DOM failure'); } } },
+      { name: 'Keyboard', area: 'keyboard-only', override: { runKeyboardChecks: async () => { throw new Error('injected keyboard failure'); } } },
+      { name: 'Disclosure', area: 'interactive-components', override: { runDisclosureChecks: async () => { throw new Error('injected disclosure failure'); } } },
+      { name: 'Tab', area: 'interactive-components', override: { runTabChecks: async () => { throw new Error('injected tab failure'); } } },
+      { name: 'Link', area: 'broken-or-misleading-links', override: { runLinkChecks: async () => { throw new Error('injected link failure'); } } },
+      { name: 'Element context', area: 'viewport-render', override: { collectElementContexts: async () => { throw new Error('injected context failure'); } } },
+      { name: 'Screenshot', area: 'viewport-render', override: { captureElementScreenshots: async () => { throw new Error('injected screenshot failure'); } } }
+    ];
+
+    try {
+      for (const failure of failures) {
+        const structuralMarkup = failure.name === 'DOM' ? '' : '<main><h1>Failure injection fixture</h1></main>';
+        const html = `<!doctype html><html lang="en"><head><title>Failure injection</title></head><body>${structuralMarkup}<img id="hero" width="20" height="20" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></body></html>`;
+        const url = `data:text/html,${encodeURIComponent(html)}`;
+        const options = resolveOptions({
+          auditor: 'Failure injection',
+          outputDir: await mkdtemp(join(tmpdir(), 'a11y-injected-')),
+          allowedHosts: [],
+          stagingOnly: false,
+          concurrency: 1,
+          captureScreenshots: true,
+          viewports: [{ name: 'desktop', width: 1200, height: 800 }],
+          ...(channel ? { channel } : {})
+        });
+        const audit = await auditViewport(browser, url, options, options.viewports[0]!, undefined, failure.override);
+        const page = { url, viewports: [audit], partial: Boolean(audit.partial) };
+        const findings = findingsFromPage(page);
+        const coverage = buildCoverageMatrix([page], findings)[0]?.viewports[0]?.assessments ?? [];
+
+        expect(audit.partial, failure.name).toBe(true);
+        expect(audit.axeRun.completed, failure.name).toBe(true);
+        expect(audit.axe.some((result) => result.id === 'image-alt' && result.resultType === 'violation'), failure.name).toBe(true);
+        expect(findings.some((finding) => finding.ruleId === 'axe-image-alt' && finding.classification === 'confirmed'), failure.name).toBe(true);
+        expect(coverage.find((assessment) => assessment.area === 'automated-axe')?.status, failure.name).toBe('confirmed-failed');
+        expect(coverage.find((assessment) => assessment.area === failure.area)?.status, failure.name).toBe('tested-inconclusive');
+        if (failure.name === 'DOM') {
+          expect(findings.some((finding) => finding.ruleId === 'missing-main-landmark'), failure.name).toBe(false);
+          expect(findings.some((finding) => finding.ruleId === 'missing-h1'), failure.name).toBe(false);
+        }
+      }
+    } finally {
+      await browser.close();
+    }
+  }, 120_000);
+
+  it('distinguishes real interaction blockers from modal-like names at every supported viewport', async () => {
+    const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+    const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
+    const viewports = [
+      { name: 'desktop', width: 1200, height: 800 },
+      { name: 'mobile', width: 390, height: 844, isMobile: true },
+      { name: 'reflow-320', width: 320, height: 800, isMobile: true }
+    ];
+    const cases = [
+      {
+        name: 'CSS overriding hidden',
+        html: '<style>.forced-visible{display:block!important;position:fixed;inset:0;background:rgba(0,0,0,.6);pointer-events:auto}</style><main><h1>Page</h1></main><div id="css-dialog" role="dialog" hidden class="forced-visible">Blocking dialog</div>',
+        expectedSelector: '#css-dialog'
+      },
+      {
+        name: 'non-semantic fixed backdrop',
+        html: '<main><h1>Page</h1></main><div id="backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.6);pointer-events:auto"></div>',
+        expectedSelector: '#backdrop'
+      },
+      {
+        name: 'small modal-named card',
+        html: '<main><h1>Page</h1><div id="card" class="modal-card" style="width:200px;height:100px">Not a blocker</div></main>',
+        expectedSelector: undefined
+      },
+      {
+        name: 'stale consent class on body',
+        html: '<body class="consent-modal-open"><main><h1>Page</h1><p>Consent was dismissed.</p></main></body>',
+        expectedSelector: undefined
+      }
+    ];
+
+    try {
+      const page = await browser.newPage();
+      for (const viewport of viewports) {
+        await page.setViewportSize(viewport);
+        for (const fixture of cases) {
+          await page.setContent(`<!doctype html><html lang="en"><head><title>${fixture.name}</title></head>${fixture.html}</html>`);
+          const blocker = await detectInteractionBlocker(page);
+          if (fixture.expectedSelector) {
+            expect(blocker?.selector, `${viewport.name}: ${fixture.name}`).toBe(fixture.expectedSelector);
+          } else {
+            expect(blocker, `${viewport.name}: ${fixture.name}`).toBeNull();
+          }
+        }
+      }
+      await page.close();
+
+      for (const viewport of viewports) {
+        let keyboardCalls = 0;
+        const html = '<!doctype html><html lang="en"><head><title>Blocked page</title></head><body><main><h1>Page</h1><button>Unreachable</button></main><div id="backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.6);pointer-events:auto"></div></body></html>';
+        const url = `data:text/html,${encodeURIComponent(html)}`;
+        const options = resolveOptions({
+          auditor: 'Blocker contract',
+          outputDir: await mkdtemp(join(tmpdir(), 'a11y-blocker-')),
+          allowedHosts: [],
+          stagingOnly: false,
+          concurrency: 1,
+          captureScreenshots: false,
+          viewports: [viewport],
+          ...(channel ? { channel } : {})
+        });
+        const audit = await auditViewport(browser, url, options, viewport, undefined, {
+          runKeyboardChecks: async () => {
+            keyboardCalls += 1;
+            throw new Error('keyboard checks must not run behind an interaction blocker');
+          }
+        });
+        const findings = findingsFromPage({ url, viewports: [audit], partial: Boolean(audit.partial) });
+
+        expect(keyboardCalls, viewport.name).toBe(0);
+        expect(audit.interactionBlocker?.selector, viewport.name).toBe('#backdrop');
+        expect(findings.some((finding) => finding.classification === 'blocker'), viewport.name).toBe(true);
+        expect(findings.some((finding) => finding.ruleId.includes('keyboard-focus-obscured')), viewport.name).toBe(false);
+      }
+    } finally {
+      await browser.close();
+    }
+  }, 120_000);
+
+  it('does not classify an intentional carousel viewport as clipped content', async () => {
+    const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+    const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
+    try {
+      const page = await browser.newPage({ viewport: { width: 320, height: 800 } });
+      await page.setContent(`
+        <style>
+          .viewport { width: 100px; height: 40px; overflow: hidden; }
+          .track { display: flex; width: 300px; }
+          .carousel-slide { flex: 0 0 150px; }
+          .wide { width: 300px; height: 20px; }
+        </style>
+        <main>
+          <div id="stories-carousel" class="viewport carousel">
+            <div class="track" data-carousel>
+              <div class="carousel-slide">One</div>
+              <div class="carousel-slide">Two</div>
+            </div>
+          </div>
+          <div id="genuine-clipping" class="viewport"><div class="wide">Clipped content</div></div>
+        </main>
+      `);
+
+      const result = await runResponsiveChecks(page);
+      expect(result.clippedElements.some((element) => element.selector === '#stories-carousel')).toBe(false);
+      expect(result.clippedElements.some((element) => element.selector === '#genuine-clipping')).toBe(true);
+    } finally {
+      await browser.close();
+    }
+  });
+
   it('runs a real Chromium audit and classifies fixture failures', async () => {
     const url = pathToFileURL(resolve('tests/fixtures/site/index.html')).href;
     const outputDir = await mkdtemp(join(tmpdir(), 'a11y-browser-'));
@@ -54,13 +223,78 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
     expect(result.findings.filter((finding) => finding.selectors.length > 0).every((finding) => finding.componentName && finding.componentLocation)).toBe(true);
     expect(result.findings
       .filter((finding) => finding.classification === 'confirmed' && finding.selectors.length > 0)
-      .every((finding) => finding.evidence.every((item) => !item.screenshot || item.screenshot.includes('/screenshots/elements/')))).toBe(true);
+      .every((finding) => finding.evidence.every((item) => !item.screenshot || item.screenshot.includes('screenshots/elements/')))).toBe(true);
     expect(result.findings
       .filter((finding) => finding.classification === 'review' && finding.selectors.length > 0)
-      .some((finding) => finding.evidence.some((item) => item.screenshot?.includes('/screenshots/elements/')))).toBe(true);
+      .some((finding) => finding.evidence.some((item) => item.screenshot?.includes('screenshots/elements/')))).toBe(true);
     expect(result.pages[0]?.viewports[0]?.dom.emptyLinks.some((link) => link.selector === '#meaningful-image-link')).toBe(false);
     expect(result.pages[0]?.viewports[0]?.dom.emptyNamedControls.some((control) => control.selector === '#labelled-input')).toBe(false);
   });
+
+  it('keeps AA conformance separate from AAA advice and retains keyboard, reflow, and semantic fixture evidence', async () => {
+    const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+    const baseOptions = {
+      auditor: 'Regression Auditor',
+      allowedHosts: [],
+      stagingOnly: false,
+      concurrency: 1,
+      maxTabStops: 20,
+      captureScreenshots: false,
+      viewports: [{ name: 'reflow-320', width: 320, height: 800, isMobile: true }],
+      ...(channel ? { channel } : {})
+    };
+    const passUrl = pathToFileURL(resolve('tests/fixtures/quality/pass.html')).href;
+    const failUrl = pathToFileURL(resolve('tests/fixtures/quality/fail.html')).href;
+
+    const aaResult = await runAudit([passUrl], 'AA regression fixture', [], resolveOptions({
+      ...baseOptions,
+      outputDir: await mkdtemp(join(tmpdir(), 'a11y-quality-aa-')),
+      wcagLevel: 'AA',
+      aaaAdvisory: false
+    }));
+    expect(aaResult.conformanceTarget).toBe('AA');
+    expect(aaResult.aaaAdvisory).toBe(false);
+    expect(aaResult.criteria?.find((criterion) => criterion.criterion === '1.4.6')).toEqual(
+      expect.objectContaining({ scope: 'advisory', status: 'not-applicable' })
+    );
+    expect(aaResult.findings.some((finding) => finding.ruleId.includes('color-contrast-enhanced'))).toBe(false);
+    expect(aaResult.pages[0]?.viewports[0]?.keyboard.journeys).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'forward-reverse-focus-order', status: 'passed' }),
+      expect.objectContaining({ id: 'bypass-blocks', status: 'passed' })
+    ]));
+
+    const aaaResult = await runAudit([passUrl], 'AAA advisory regression fixture', [], resolveOptions({
+      ...baseOptions,
+      outputDir: await mkdtemp(join(tmpdir(), 'a11y-quality-aaa-')),
+      wcagLevel: 'AA',
+      aaaAdvisory: true
+    }));
+    expect(aaaResult.conformanceTarget).toBe('AA');
+    expect(aaaResult.aaaAdvisory).toBe(true);
+    expect(aaaResult.findings.some((finding) => finding.ruleId.includes('color-contrast-enhanced'))).toBe(true);
+    expect(aaaResult.criteria?.find((criterion) => criterion.criterion === '1.4.6')).toEqual(
+      expect.objectContaining({ scope: 'advisory', status: 'failed' })
+    );
+
+    const failResult = await runAudit([failUrl], 'failing regression fixture', [], resolveOptions({
+      ...baseOptions,
+      outputDir: await mkdtemp(join(tmpdir(), 'a11y-quality-fail-')),
+      wcagLevel: 'AA'
+    }));
+    const failRuleIds = failResult.findings.map((finding) => finding.ruleId);
+    expect(failRuleIds).toEqual(expect.arrayContaining([
+      expect.stringMatching(/(?:axe-)?color-contrast/),
+      expect.stringMatching(/(?:axe-)?image-alt/),
+      'responsive-content-clipped',
+      'responsive-controls-overlap',
+      'text-spacing-functionality-lost',
+      'keyboard-focus-outside-viewport',
+      'keyboard-journey-bypass-blocks'
+    ]));
+    expect(failResult.criteria?.find((criterion) => criterion.criterion === '1.4.10')?.status).toBe('inconclusive');
+    expect(failResult.humanAssessmentRequired).toBe(true);
+    expect(failResult.conformanceDecision).toBe('not-determined');
+  }, 120_000);
 
   it('runs axe under a strict CSP and blocks redirects outside the authorized hosts', async () => {
     const fixture = '<!doctype html><html lang="en"><head><title>Strict CSP</title></head><body><main><h1>Audit me</h1><img src="missing.png"></main></body></html>';
@@ -346,7 +580,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       expect(result.confirmedCount).toBeGreaterThan(0);
       const evidence = JSON.parse(await readFile(result.jsonPath, 'utf8')) as { findings: Array<{ ruleId: string; evidence: Array<{ screenshot?: string }> }> };
       expect(evidence.findings.some((finding) => finding.ruleId === 'link-broken-destination')).toBe(true);
-      expect(evidence.findings.some((finding) => finding.evidence.some((item) => item.screenshot?.includes('/screenshots/elements/')))).toBe(true);
+      expect(evidence.findings.some((finding) => finding.evidence.some((item) => item.screenshot?.includes('screenshots/elements/')))).toBe(true);
       const referencedScreenshots = new Set(evidence.findings.flatMap((finding) =>
         finding.evidence.map((item) => item.screenshot).filter((value): value is string => Boolean(value))
       ));
@@ -361,6 +595,54 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()));
     }
   }, 120_000);
+
+  it('runs the documented npm audit command through the built CLI', async () => {
+    const server = createServer((request, response) => {
+      if (request.url === '/') {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        response.end('<!doctype html><html lang="en"><head><title>Public CLI contract</title></head><body><main><h1>Audit target</h1><img src="/missing-alt.png"></main></body></html>');
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Fixture server did not expose a TCP port.');
+      const outputDir = await mkdtemp(join(tmpdir(), 'a11y-public-command-'));
+      const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+      const executable = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+      const child = spawn(executable, [
+        'run', 'audit', '--', `http://127.0.0.1:${address.port}/`, '--yes',
+        '--output', outputDir, '--allow-host', '127.0.0.1', '--no-screenshots', '--timeout', '10000',
+        ...(channel ? ['--channel', channel] : [])
+      ], { cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+      child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      const [exitCode] = await once(child, 'exit') as [number | null, NodeJS.Signals | null];
+
+      expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
+      expect(stderr).toContain('[accessibility-audit:browser]');
+      const evidence = JSON.parse(await readFile(join(outputDir, 'audit-results.json'), 'utf8')) as {
+        status: string;
+        findings: Array<{ ruleId: string; classification: string }>;
+      };
+      expect(evidence.status).toBe('completed');
+      expect(evidence.findings).toEqual(expect.arrayContaining([
+        expect.objectContaining({ ruleId: 'axe-image-alt', classification: 'confirmed' })
+      ]));
+      await Promise.all([
+        readFile(join(outputDir, 'Accessibility_Audit_Report.html')),
+        readFile(join(outputDir, 'Accessibility_Audit_Report.xlsx')),
+        readFile(`${outputDir}.zip`)
+      ]);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()));
+    }
+  }, 180_000);
 
   it('closes active Chromium work and writes a valid partial report after cancellation', async () => {
     const server = createServer(() => {

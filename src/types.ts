@@ -63,6 +63,8 @@ export interface ConsentHandlingResult {
 }
 
 export interface Finding {
+  /** Stable report identity shared by JSON, HTML, XLSX, and WCAG criterion links. */
+  id?: string;
   key: string;
   ruleId: string;
   classification: FindingClassification;
@@ -175,6 +177,7 @@ export interface KeyboardCheckResult {
     role: string;
     visibleIndicator: boolean;
     obscured: boolean;
+    outsideViewport: boolean;
     componentSelector?: string;
     modalSelector?: string;
     }>;
@@ -183,12 +186,38 @@ export interface KeyboardCheckResult {
   truncated: boolean;
   scope: 'document' | 'modal-only' | 'unknown';
   modalSelector?: string;
+  journeys: KeyboardJourneyResult[];
+}
+
+export interface KeyboardJourneyResult {
+  id: 'forward-reverse-focus-order' | 'bypass-blocks';
+  title: string;
+  status: 'passed' | 'failed' | 'not-applicable' | 'inconclusive';
+  steps: string[];
+  detail: string;
 }
 
 export interface ResponsiveCheckResult {
   horizontalOverflow: number;
   overflowElements: Array<{ selector: string; right: number; width: number }>;
   textSpacingOverflow: number;
+  clippedElements: Array<{
+    selector: string;
+    axis: 'horizontal' | 'vertical' | 'both';
+    phase: 'default' | 'text-spacing';
+    clientWidth: number;
+    clientHeight: number;
+    scrollWidth: number;
+    scrollHeight: number;
+  }>;
+  overlapPairs: Array<{
+    firstSelector: string;
+    secondSelector: string;
+    phase: 'default' | 'text-spacing';
+    overlapWidth: number;
+    overlapHeight: number;
+  }>;
+  lostInteractiveElements: Array<{ selector: string; name: string }>;
 }
 
 export interface DisclosureCheckResult {
@@ -351,19 +380,36 @@ export interface ViewportAudit {
   elementScreenshots: ElementScreenshot[];
   errors: string[];
   cancelled?: boolean;
+  partial?: boolean;
 }
 
 export interface PageAudit {
   url: string;
   viewports: ViewportAudit[];
+  partial?: boolean;
 }
 
 export interface ManualCheck {
   id: string;
+  classification: 'manual';
   title: string;
   wcag: string[];
   procedure: string;
   applicableTo: string;
+}
+
+export type WcagCriterionStatus = 'passed' | 'failed' | 'manual-review-required' | 'not-applicable' | 'inconclusive';
+
+export interface WcagCriterionAssessment {
+  criterion: string;
+  level: 'A' | 'AA' | 'AAA';
+  title: string;
+  understandingUrl: string;
+  scope: 'standard' | 'advisory';
+  status: WcagCriterionStatus;
+  findingIds: string[];
+  automatedEvidence: string[];
+  detail: string;
 }
 
 export interface AuditSummary {
@@ -373,12 +419,17 @@ export interface AuditSummary {
   auditor: string;
   source: string;
   wcagLevel: WcagConformanceLevel;
+  conformanceTarget?: 'AA';
+  aaaAdvisory?: boolean;
+  humanAssessmentRequired?: boolean;
+  conformanceDecision?: 'not-determined';
   landingPageUrl: string;
   requestedUrls: string[];
   auditedUrls: string[];
   skippedUrls: Array<{ url: string; reason: string }>;
   pages: PageAudit[];
   coverage: PageCoverage[];
+  criteria?: WcagCriterionAssessment[];
   findings: Finding[];
   manualChecks: ManualCheck[];
   limitations: string[];
@@ -387,6 +438,7 @@ export interface AuditSummary {
 export interface AuditOptions {
   auditor: string;
   wcagLevel: WcagConformanceLevel;
+  aaaAdvisory?: boolean;
   outputDir: string;
   landingPageUrl?: string;
   allowedHosts: string[];

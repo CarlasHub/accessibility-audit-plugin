@@ -23,9 +23,73 @@ function conciseMergedText(first?: string, second?: string, limit = 6): string |
 
 function canonicalRule(ruleId: string): string {
   if (['axe-image-alt', 'image-missing-alt'].includes(ruleId)) return 'image-alt';
-  if (['axe-label', 'form-field-no-label'].includes(ruleId)) return 'form-label';
-  if (['axe-button-name', 'axe-link-name', 'interactive-control-no-name'].includes(ruleId)) return 'control-name';
+  if (['axe-label', 'axe-select-name', 'axe-textarea-name', 'form-field-no-label'].includes(ruleId)) return 'form-label';
+  if (['axe-aria-command-name', 'axe-button-name', 'axe-input-button-name', 'axe-link-name', 'interactive-control-no-name'].includes(ruleId)) return 'control-name';
   return ruleId;
+}
+
+function equivalentAxeDomFamily(ruleId: string): string | null {
+  if (['axe-image-alt', 'image-missing-alt'].includes(ruleId)) return 'image-alt';
+  if (['axe-label', 'axe-select-name', 'axe-textarea-name', 'form-field-no-label'].includes(ruleId)) return 'form-label';
+  if (['axe-aria-command-name', 'axe-button-name', 'axe-input-button-name', 'axe-link-name', 'interactive-control-no-name'].includes(ruleId)) return 'control-name';
+  return null;
+}
+
+function normalizedSelector(selector: string): string {
+  return selector.trim().replace(/\s+/g, ' ');
+}
+
+function normalizedEvidenceDetail(detail: string): string {
+  return detail.trim().replace(/\s+/g, ' ');
+}
+
+function sharesRenderedElement(first: Finding, second: Finding): boolean {
+  const firstSelectors = new Set(first.selectors.map(normalizedSelector));
+  if (second.selectors.some((selector) => firstSelectors.has(normalizedSelector(selector)))) return true;
+
+  return first.evidence.some((firstEvidence) => second.evidence.some((secondEvidence) => (
+    firstEvidence.pageUrl === secondEvidence.pageUrl
+    && Boolean(normalizedEvidenceDetail(firstEvidence.detail))
+    && normalizedEvidenceDetail(firstEvidence.detail) === normalizedEvidenceDetail(secondEvidence.detail)
+  )));
+}
+
+function mergeEquivalentAxeDomFindings(findings: Finding[]): Finding[] {
+  const working = findings.map((finding) => ({
+    ...finding,
+    wcag: [...finding.wcag],
+    urls: [...finding.urls],
+    viewports: [...finding.viewports],
+    selectors: [...finding.selectors],
+    evidence: [...finding.evidence]
+  }));
+  const consumed = new Set<number>();
+
+  for (let axeIndex = 0; axeIndex < working.length; axeIndex += 1) {
+    const axe = working[axeIndex]!;
+    const family = axe.ruleId.startsWith('axe-') ? equivalentAxeDomFamily(axe.ruleId) : null;
+    if (!family) continue;
+
+    for (let domIndex = 0; domIndex < working.length; domIndex += 1) {
+      if (domIndex === axeIndex || consumed.has(domIndex)) continue;
+      const dom = working[domIndex]!;
+      if (dom.ruleId.startsWith('axe-') || equivalentAxeDomFamily(dom.ruleId) !== family) continue;
+      if (!axe.urls.some((url) => dom.urls.includes(url))) continue;
+      if (!sharesRenderedElement(axe, dom)) continue;
+
+      const context = mergeFindingContext([axe, dom]);
+      axe.wcag = uniqueSorted([...axe.wcag, ...dom.wcag]);
+      axe.urls = context.urls;
+      axe.viewports = context.viewports;
+      axe.selectors = context.selectors;
+      axe.evidence = context.evidence;
+      if (context.componentName) axe.componentName = context.componentName;
+      if (context.componentLocation) axe.componentLocation = context.componentLocation;
+      consumed.add(domIndex);
+    }
+  }
+
+  return working.filter((_, index) => !consumed.has(index));
 }
 
 function rootCause(finding: Finding): string {
@@ -236,7 +300,7 @@ export function consolidateFindings(findings: Finding[]): Finding[] {
     if (context.componentLocation) existing.componentLocation = context.componentLocation;
   };
   const localFindings = new Map<string, Finding>();
-  const ordered = [...findings].sort((a, b) => JSON.stringify([
+  const ordered = mergeEquivalentAxeDomFindings(findings).sort((a, b) => JSON.stringify([
     a.ruleId,
     a.key,
     uniqueSorted(a.urls),

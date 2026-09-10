@@ -1,0 +1,37 @@
+{
+  "name": "CarlasHub BuggyLand public regression baseline",
+  "urls": [
+    "https://carlashub.github.io/buggyland/",
+    "https://carlashub.github.io/buggyland/#special",
+    "https://carlashub.github.io/buggyland/page2.html",
+    "https://carlashub.github.io/buggyland/page2.html#special"
+  ],
+  "viewports": [
+    "desktop",
+    "mobile",
+    "reflow-320"
+  ],
+  "fixturePages": [
+    {
+      "url": "https://carlashub.github.io/buggyland/",
+      "cards": 55,
+      "examples": 110
+    },
+    {
+      "url": "https://carlashub.github.io/buggyland/page2.html",
+      "cards": 31,
+      "examples": 62
+    }
+  ],
+  "classifications": {
+    "confirmed": 32,
+    "review": 33,
+    "blocker": 1,
+    "manualChecks": 7,
+    "totalFindings": 66
+  },
+  "fullyCompletedPages": 2,
+  "partialPages": 2,
+  "blockerSelector": "div.modal-backdrop",
+  "findingIdentitySha256": "25ac3fbf4ebf61440afe47d03c73ab54ed81a604253254efd4e5db415e202403"
+}

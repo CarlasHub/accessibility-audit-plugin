@@ -10,6 +10,9 @@ Every audit writes two human-readable formats. Open the self-contained HTML repo
 4. **Evidence:** trace screenshots and other evidence back to a finding, page, viewport, rule, component, and technical locator.
 5. **Manual Checks:** assign and record the guided checks that automation cannot complete.
 6. **WCAG 2.2 Reference:** use the criterion, level, title, and Understanding link as a reporting aid.
+7. **WCAG Criteria:** review every WCAG 2.2 success criterion, its AA-target or AAA-advisory scope, evidence status, mapped finding ids, automated evidence, explanation, and Understanding link.
+
+The criterion ledger uses `passed`, `failed`, `manual-review-required`, `not-applicable`, and `inconclusive`. A failed criterion has retained failure evidence. `Passed` applies only where the recorded evidence supports that exact assessment; absence of a finding never creates a pass. AAA criteria are `not-applicable` unless advisory mode is enabled. The overall conformance decision remains `not-determined` until the outstanding human procedures have been completed by a qualified reviewer.
 
 ## Understand evidence confidence
 

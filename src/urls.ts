@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { extname, resolve } from 'node:path';
+import { basename, extname, resolve } from 'node:path';
 import ExcelJS from 'exceljs';
 
 export interface UrlCollection {
@@ -18,7 +18,6 @@ function normalizeUrl(value: string): string | null {
     if (parsed.username || parsed.password) {
       throw new Error('URLs containing embedded usernames or passwords are not supported.');
     }
-    parsed.hash = '';
     return parsed.toString();
   } catch (error) {
     if (error instanceof Error && error.message.includes('embedded usernames or passwords')) throw error;
@@ -133,7 +132,7 @@ export async function collectUrls(
 
     const filePath = resolve(input);
     const extension = extname(filePath).toLowerCase();
-    sources.push(filePath);
+    sources.push(basename(filePath));
     if (extension === '.xlsx') {
       found.push(...(await urlsFromWorkbook(filePath)));
       continue;

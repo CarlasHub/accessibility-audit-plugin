@@ -563,6 +563,7 @@ export async function runKeyboardChecks(page: Page, maxTabStops: number): Promis
         role: element.getAttribute('role') ?? element.tagName.toLowerCase(),
         visibleIndicator,
         obscured,
+        outsideViewport: rect.right <= 0 || rect.bottom <= 0 || rect.left >= innerWidth || rect.top >= innerHeight,
         componentSelector: cssPath(componentRoot),
         ...(modal ? { modalSelector: cssPath(modal) } : {})
       };
@@ -575,6 +576,120 @@ export async function runKeyboardChecks(page: Page, maxTabStops: number): Promis
     }
     seen.add(identity);
     sequence.push(item);
+  }
+
+  const journeys: KeyboardCheckResult['journeys'] = [];
+  if (sequence.length >= 2) {
+    const expected = sequence.slice(0, Math.min(sequence.length, 21)).map((item) => item.selector).reverse().slice(1);
+    const actual: string[] = [];
+    const lastSelector = sequence[Math.min(sequence.length, 21) - 1]!.selector;
+    const focused = await page.locator(lastSelector).first().focus().then(() => true).catch(() => false);
+    if (focused) {
+      for (let index = 0; index < expected.length; index += 1) {
+        await page.keyboard.press('Shift+Tab');
+        actual.push(await page.evaluate(() => {
+          const target = document.activeElement;
+          if (!target || target === document.body) return 'document-body';
+          if (target.id) return `#${CSS.escape(target.id)}`;
+          const parts: string[] = [];
+          let current: Element | null = target;
+          while (current && current !== document.documentElement && current !== document.body && parts.length < 6) {
+            let part = current.tagName.toLowerCase();
+            const stableClasses = [...current.classList].filter((value) => !/\d{3,}/.test(value)).slice(0, 2);
+            if (stableClasses.length) part += `.${stableClasses.map((value) => CSS.escape(value)).join('.')}`;
+            if (current.parentElement) {
+              const siblings = [...current.parentElement.children].filter((sibling) => sibling.tagName === current?.tagName);
+              if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+            }
+            parts.unshift(part);
+            current = current.parentElement;
+          }
+          return parts.join(' > ');
+        }));
+      }
+    }
+    const matches = focused && expected.every((selector, index) => actual[index] === selector);
+    journeys.push({
+      id: 'forward-reverse-focus-order',
+      title: 'Forward and reverse focus order',
+      status: focused ? (matches ? 'passed' : 'failed') : 'inconclusive',
+      steps: [
+        `Recorded ${sequence.length} forward Tab stop${sequence.length === 1 ? '' : 's'}.`,
+        `Replayed ${actual.length} Shift+Tab stop${actual.length === 1 ? '' : 's'} from ${lastSelector}.`
+      ],
+      detail: focused
+        ? matches
+          ? 'The sampled reverse sequence matched the forward sequence in reverse order.'
+          : 'The sampled Shift+Tab sequence did not reverse the recorded Tab sequence; review focus management and dynamic page state.'
+        : 'The last sampled focus target could not be restored for deterministic reverse traversal.'
+    });
+  } else {
+    journeys.push({
+      id: 'forward-reverse-focus-order',
+      title: 'Forward and reverse focus order',
+      status: 'inconclusive',
+      steps: [`Recorded ${sequence.length} forward Tab stops.`],
+      detail: 'At least two stable focus targets are required to compare forward and reverse focus order.'
+    });
+  }
+
+  const bypass = await page.evaluate(() => {
+    const visible = (element: Element): boolean => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    };
+    const link = [...document.querySelectorAll<HTMLAnchorElement>('a[href^="#"]')]
+      .find((candidate) => candidate.hash.length > 1 && visible(candidate));
+    if (!link) return null;
+    const id = decodeURIComponent(link.hash.slice(1));
+    const target = document.getElementById(id) ?? document.getElementsByName(id)[0] ?? null;
+    return {
+      linkSelector: link.id ? `#${CSS.escape(link.id)}` : `a[href="${CSS.escape(link.getAttribute('href') ?? '')}"]`,
+      name: (link.getAttribute('aria-label') ?? link.textContent ?? '').trim(),
+      targetId: id,
+      targetExists: Boolean(target)
+    };
+  });
+  if (!bypass) {
+    journeys.push({
+      id: 'bypass-blocks',
+      title: 'Bypass repeated blocks',
+      status: 'not-applicable',
+      steps: ['Searched the rendered page for a visible in-page fragment link.'],
+      detail: 'No visible in-page bypass link was found; a human must determine whether repeated content requires another bypass mechanism.'
+    });
+  } else if (!bypass.targetExists) {
+    journeys.push({
+      id: 'bypass-blocks',
+      title: 'Bypass repeated blocks',
+      status: 'failed',
+      steps: [`Found “${bypass.name || bypass.linkSelector}”.`, `Resolved fragment target #${bypass.targetId}.`],
+      detail: 'The visible in-page link points to a target that does not exist.'
+    });
+  } else {
+    const activated = await page.locator(bypass.linkSelector).first().focus().then(async () => {
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(50);
+      return page.evaluate((targetId) => {
+        const target = document.getElementById(targetId) ?? document.getElementsByName(targetId)[0] ?? null;
+        const active = document.activeElement;
+        if (!target) return false;
+        const rect = target.getBoundingClientRect();
+        const focusedTarget = active === target || target.contains(active);
+        const targetReached = location.hash === `#${targetId}` && rect.bottom > 0 && rect.top < innerHeight;
+        return focusedTarget || targetReached;
+      }, bypass.targetId);
+    }).catch(() => false);
+    journeys.push({
+      id: 'bypass-blocks',
+      title: 'Bypass repeated blocks',
+      status: activated ? 'passed' : 'failed',
+      steps: [`Focused “${bypass.name || bypass.linkSelector}”.`, 'Pressed Enter.', `Checked target #${bypass.targetId}.`],
+      detail: activated
+        ? 'The bypass link moved focus or the viewport to its declared target.'
+        : 'Activating the bypass link did not move focus or the viewport to its declared target.'
+    });
   }
 
   await page.evaluate(() => {
@@ -599,12 +714,13 @@ export async function runKeyboardChecks(page: Page, maxTabStops: number): Promis
     completedCycle: repeatedAt !== undefined,
     truncated: repeatedAt === undefined && sequence.length >= maxTabStops,
     scope: modalOnly ? 'modal-only' : sequence.length ? 'document' : 'unknown',
+    journeys,
     ...(modalOnly && modalSelector ? { modalSelector } : {})
   };
 }
 
 export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckResult> {
-  const base = await page.evaluate(() => {
+  const snapshot = (phase: 'default' | 'text-spacing') => page.evaluate(({ currentPhase, focusables }) => {
     const cssPath = (element: Element): string => {
       if (element.id) return `#${CSS.escape(element.id)}`;
       const parts: string[] = [];
@@ -622,6 +738,21 @@ export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckRe
       }
       return parts.join(' > ');
     };
+    const visible = (element: Element): boolean => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.contentVisibility !== 'hidden';
+    };
+    const isIntentionalCarouselViewport = (element: Element): boolean => {
+      const identity = [
+        element.id,
+        typeof element.className === 'string' ? element.className : '',
+        element.getAttribute('aria-roledescription') ?? '',
+        element.getAttribute('data-carousel') === null ? '' : 'carousel'
+      ].join(' ');
+      if (!/(?:^|[\s_-])(carousel|slider)(?:$|[\s_-])/i.test(identity)) return false;
+      return element.querySelectorAll('[data-carousel], [class*="carousel-slide" i], [class~="slide" i], [role="group"]').length >= 2;
+    };
     const documentWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
     const overflowElements = [...document.body.querySelectorAll('*')]
       .map((element) => ({ element, rect: element.getBoundingClientRect() }))
@@ -633,8 +764,61 @@ export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckRe
         right: Math.round(rect.right * 10) / 10,
         width: Math.round(rect.width * 10) / 10
       }));
-    return { horizontalOverflow: Math.max(0, documentWidth - innerWidth), overflowElements };
-  });
+    const clippedElements = [...document.body.querySelectorAll('*')]
+      .filter(visible)
+      .filter((element) => !isIntentionalCarouselViewport(element))
+      .flatMap((element) => {
+        const node = element as HTMLElement;
+        const style = getComputedStyle(node);
+        const horizontal = /^(hidden|clip)$/.test(style.overflowX) && node.scrollWidth > node.clientWidth + 2;
+        const vertical = /^(hidden|clip)$/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 2;
+        if (!horizontal && !vertical) return [];
+        return [{
+          selector: cssPath(node),
+          axis: horizontal && vertical ? 'both' as const : horizontal ? 'horizontal' as const : 'vertical' as const,
+          phase: currentPhase,
+          clientWidth: node.clientWidth,
+          clientHeight: node.clientHeight,
+          scrollWidth: node.scrollWidth,
+          scrollHeight: node.scrollHeight
+        }];
+      })
+      .slice(0, 50);
+    const interactive = [...document.querySelectorAll<HTMLElement>(focusables)].filter(visible).slice(0, 100);
+    const overlapPairs: ResponsiveCheckResult['overlapPairs'] = [];
+    for (let firstIndex = 0; firstIndex < interactive.length && overlapPairs.length < 30; firstIndex += 1) {
+      const first = interactive[firstIndex]!;
+      const firstRect = first.getBoundingClientRect();
+      for (let secondIndex = firstIndex + 1; secondIndex < interactive.length && overlapPairs.length < 30; secondIndex += 1) {
+        const second = interactive[secondIndex]!;
+        if (first.contains(second) || second.contains(first)) continue;
+        const secondRect = second.getBoundingClientRect();
+        const overlapWidth = Math.min(firstRect.right, secondRect.right) - Math.max(firstRect.left, secondRect.left);
+        const overlapHeight = Math.min(firstRect.bottom, secondRect.bottom) - Math.max(firstRect.top, secondRect.top);
+        if (overlapWidth <= 4 || overlapHeight <= 4) continue;
+        overlapPairs.push({
+          firstSelector: cssPath(first),
+          secondSelector: cssPath(second),
+          phase: currentPhase,
+          overlapWidth: Math.round(overlapWidth * 10) / 10,
+          overlapHeight: Math.round(overlapHeight * 10) / 10
+        });
+      }
+    }
+    const visibleInteractiveElements = interactive.map((element) => ({
+      selector: cssPath(element),
+      name: (element.getAttribute('aria-label') ?? element.textContent ?? element.getAttribute('title') ?? '').replace(/\s+/g, ' ').trim()
+    }));
+    return {
+      horizontalOverflow: Math.max(0, documentWidth - innerWidth),
+      overflowElements,
+      clippedElements,
+      overlapPairs,
+      visibleInteractiveElements
+    };
+  }, { currentPhase: phase, focusables: focusableSelector });
+
+  const base = await snapshot('default');
 
   const spacingStyle = await page.addStyleTag({
     content: `
@@ -649,11 +833,18 @@ export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckRe
     `
   });
   await page.waitForTimeout(100);
-  const textSpacingOverflow = await page.evaluate(
-    () => Math.max(0, Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - innerWidth)
-  );
+  const spaced = await snapshot('text-spacing');
   await spacingStyle.evaluate((element) => (element as Element).remove());
-  return { ...base, textSpacingOverflow };
+  const spacedSelectors = new Set(spaced.visibleInteractiveElements.map((element) => element.selector));
+  const lostInteractiveElements = base.visibleInteractiveElements.filter((element) => !spacedSelectors.has(element.selector));
+  return {
+    horizontalOverflow: base.horizontalOverflow,
+    overflowElements: base.overflowElements,
+    textSpacingOverflow: spaced.horizontalOverflow,
+    clippedElements: [...base.clippedElements, ...spaced.clippedElements],
+    overlapPairs: [...base.overlapPairs, ...spaced.overlapPairs],
+    lostInteractiveElements
+  };
 }
 
 function locatorDescription(locator: Locator): Promise<{ name: string; selector: string }> {

@@ -2,7 +2,7 @@
 
 `CarlasHub/accessibility-audit-plugin` is a free JavaScript Action for collecting structured WCAG 2.2 accessibility evidence in CI. It runs the same site-independent audit engine as the editor plugins and produces a polished self-contained HTML report, a validated Excel workbook, JSON evidence, screenshots, and a portable ZIP.
 
-It is an automated testing aid, not a WCAG certification. Complete the report's manual checks before making a conformance claim.
+It is an automated testing aid, not a WCAG certification. WCAG 2.2 Level AA is the conformance target; optional AAA checks are advisory. Complete the report's human assessment before making a conformance claim.
 
 ## Minimal workflow
 
@@ -59,7 +59,8 @@ The Action uses the GitHub REST API only to list, create, or update its marked p
 | --- | --- | --- |
 | `urls` | Required | One explicit HTTP(S) URL per line, or a JSON string array. The Action does not crawl. |
 | `auditor` | `GitHub Actions` | Auditor name written into the workbook. |
-| `wcag-level` | `AA` | `AA` runs WCAG 2.2 A/AA rules; `AAA` also enables supported AAA automation and labels the report accordingly. |
+| `wcag-level` | `AA` | WCAG 2.2 Level AA conformance target. Legacy `AAA` values enable advisory AAA automation but do not change the target. |
+| `aaa-advisory` | `false` | Run supported AAA rules as clearly separated advisory evidence. |
 | `output-dir` | `accessibility-audit-results` | Output directory, relative to the workspace unless absolute. |
 | `landing-page-url` | First URL | Report metadata and same-origin link context; it does not expand scope. |
 | `allowed-hosts` | Empty | Comma- or newline-separated hostname allowlist. Strongly recommended. |
@@ -83,6 +84,15 @@ Start with `none` while establishing a baseline. Move to a severity policy after
 ## Outputs
 
 The Action exposes `output-dir`, `html-path`, `report-path`, `json-path`, `archive-path`, `confirmed-findings`, `review-findings`, `blockers`, `requested-pages`, `audited-pages`, `completed-pages`, `partial-pages`, `not-started-pages`, `skipped-pages`, and `gate-result`. An `if: always()` upload step preserves evidence even when the configured gate fails. Download the workflow artifact, extract it, and open `Accessibility_Audit_Report.html` first; the workbook and raw JSON remain beside it for deeper analysis.
+
+## Native screen-reader evidence
+
+The separate **Native screen-reader evidence** workflow can be started from the repository's Actions tab with an explicit target URL and a bounded navigation-step count. It runs Guidepup on the native combinations it supports in CI:
+
+- VoiceOver with WebKit on macOS;
+- NVDA with Firefox on Windows.
+
+Each job uploads JSON, Markdown, HTML, and Playwright artifacts containing the spoken phrase log, browser and operating-system metadata, commands performed, page structure inventory, and limitations. These scripted journeys are supplementary evidence: a qualified tester must still evaluate meaningful announcements, dynamic states, real tasks, supported product combinations, and mobile assistive technology.
 
 ## Security and privacy
 

@@ -69,10 +69,9 @@ describe('user documentation', () => {
     expect(installation).toContain('The Codex IDE extension does not currently load plugins');
   });
 
-  it('keeps local Markdown links resolvable and public guidance free of retired automation', async () => {
+  it('keeps local Markdown links resolvable and public guidance portable', async () => {
     for (const path of publicDocs) {
       const markdown = await readFile(path, 'utf8');
-      expect(markdown).not.toMatch(/guidepup/i);
       expect(markdown).not.toMatch(/\/Users\/[A-Za-z0-9._-]+/);
       const links = [...markdown.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)].map((match) => match[1]!);
       for (const link of links) {

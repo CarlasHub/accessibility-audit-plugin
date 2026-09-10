@@ -26,10 +26,11 @@ describe('embedded audit instructions', () => {
     expect(instructions).toContain('element screenshot');
     expect(instructions).toContain('both the authenticated request context and an in-page fetch agree');
     expect(instructions).toContain('relative hyperlinks in Findings and Evidence');
-    expect(instructions).toContain('six-sheet CarlasHub WCAG 2.2 workbook');
+    expect(instructions).toContain('seven-sheet CarlasHub WCAG 2.2 workbook');
     expect(instructions).toContain('Page Inventory with one structured row per requested or skipped URL');
     expect(instructions).toContain('Evidence with one structured row per retained evidence item');
-    expect(instructions).not.toMatch(/guidepup/i);
+    expect(instructions).toContain('scripted screen-reader journey');
+    expect(instructions).toContain('qualified human assessment is complete');
     expect(instructions).not.toContain('Screen Reader Failures with');
     expect(instructions).toContain('Do not install dependencies in');
     expect(instructions).toContain('Do not mention Jira');

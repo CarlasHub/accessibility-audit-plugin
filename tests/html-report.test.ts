@@ -50,7 +50,7 @@ describe('HTML accessibility report', () => {
         effort: 'Small',
         translationRequired: 'No'
       }],
-      manualChecks: [{ id: 'MAN-001', title: 'Screen reader flow', wcag: ['1.3.1'], procedure: 'Review reading order.', applicableTo: 'All pages' }],
+      manualChecks: [{ id: 'MAN-001', classification: 'manual', title: 'Screen reader flow', wcag: ['1.3.1'], procedure: 'Review reading order.', applicableTo: 'All pages' }],
       limitations: ['Manual assistive-technology testing remains required.']
     };
 

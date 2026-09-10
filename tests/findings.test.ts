@@ -25,8 +25,15 @@ function viewport(overrides: Partial<ViewportAudit> = {}): ViewportAudit {
       tablesForReview: [],
       autoplayMedia: []
     },
-    keyboard: { sequence: [], completedCycle: false, truncated: false, scope: 'unknown' },
-    responsive: { horizontalOverflow: 0, overflowElements: [], textSpacingOverflow: 0 },
+    keyboard: { sequence: [], journeys: [], completedCycle: false, truncated: false, scope: 'unknown' },
+    responsive: {
+      horizontalOverflow: 0,
+      overflowElements: [],
+      textSpacingOverflow: 0,
+      clippedElements: [],
+      overlapPairs: [],
+      lostInteractiveElements: []
+    },
     disclosures: [],
     tabs: [],
     links: [],
@@ -395,6 +402,7 @@ describe('evidence-gated link and tab findings', () => {
       },
       keyboard: {
         sequence: [],
+        journeys: [],
         completedCycle: false,
         truncated: false,
         scope: 'modal-only',
@@ -678,6 +686,7 @@ describe('evidence-gated link and tab findings', () => {
         completedCycle: true,
         truncated: false,
         scope: 'document',
+        journeys: [],
         sequence: [
           {
             index: 1,
@@ -686,7 +695,8 @@ describe('evidence-gated link and tab findings', () => {
             role: 'button',
             name: 'Filter one',
             visibleIndicator: false,
-            obscured: false
+            obscured: false,
+            outsideViewport: false
           },
           {
             index: 2,
@@ -695,7 +705,8 @@ describe('evidence-gated link and tab findings', () => {
             role: 'button',
             name: 'Filter two',
             visibleIndicator: false,
-            obscured: false
+            obscured: false,
+            outsideViewport: false
           },
           {
             index: 3,
@@ -704,7 +715,8 @@ describe('evidence-gated link and tab findings', () => {
             role: 'combobox',
             name: 'Sort jobs',
             visibleIndicator: false,
-            obscured: false
+            obscured: false,
+            outsideViewport: false
           }
         ]
       }

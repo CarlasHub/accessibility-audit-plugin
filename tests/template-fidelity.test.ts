@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import { CANONICAL_TEMPLATE_SHA256, DEFAULT_TEMPLATE, writeExcelReport } from '../src/reporting/excel.js';
-import { EXPECTED_REPORT_HEADERS, EXPECTED_WORKSHEETS } from '../src/reporting/validate.js';
+import { EXPECTED_REPORT_HEADERS, EXPECTED_TEMPLATE_WORKSHEETS, EXPECTED_WORKSHEETS } from '../src/reporting/validate.js';
 import type { AuditSummary } from '../src/types.js';
 
 function summaryWithEvidence(screenshot: string): AuditSummary {
@@ -63,7 +63,7 @@ describe('CarlasHub WCAG workbook template fidelity', () => {
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(DEFAULT_TEMPLATE);
-    expect(workbook.worksheets.map((worksheet) => worksheet.name)).toEqual(EXPECTED_WORKSHEETS);
+    expect(workbook.worksheets.map((worksheet) => worksheet.name)).toEqual(EXPECTED_TEMPLATE_WORKSHEETS);
     expect(workbook.getWorksheet('Findings')?.getRow(6).values).toEqual([undefined, ...EXPECTED_REPORT_HEADERS]);
     expect(workbook.getWorksheet('Page Inventory')?.getRow(4).values).toEqual([
       undefined, 'URL', 'Audit state', 'Viewports planned', 'Viewports completed', 'Consent handling', 'Runtime errors', 'Notes'
@@ -90,7 +90,7 @@ describe('CarlasHub WCAG workbook template fidelity', () => {
     })).rejects.toThrow('does not match the CarlasHub WCAG audit template');
   });
 
-  it('preserves the six-sheet design while extending styled report rows', async () => {
+  it('preserves the canonical sheets while adding the generated criterion ledger', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'a11y-template-fidelity-'));
     const screenshotDirectory = join(directory, 'screenshots', 'elements');
     await mkdir(screenshotDirectory, { recursive: true });

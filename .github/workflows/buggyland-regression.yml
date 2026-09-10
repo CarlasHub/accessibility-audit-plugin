@@ -1,0 +1,39 @@
+name: BuggyLand live regression
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+  release:
+    types: [prereleased]
+
+concurrency:
+  group: buggyland-live-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  live-regression:
+    name: Two-run exact public baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run and verify BuggyLand twice
+        run: npm run test:buggyland:live
+      - name: Upload both exact-regression reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: buggyland-live-regression-${{ github.run_id }}
+          path: buggyland-regression-results/
+          if-no-files-found: error
+          retention-days: 30

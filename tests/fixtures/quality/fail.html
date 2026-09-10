@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deliberately failing regression fixture</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #aaa; background: #fff; font: 16px/1.4 system-ui, sans-serif; }
+    main { width: 900px; }
+    .clip { width: 140px; overflow: hidden; white-space: nowrap; }
+    .overlap { position: absolute; top: 140px; left: 20px; width: 140px; height: 44px; }
+    #offscreen-focus { position: fixed; top: 20px; left: 1000px; }
+  </style>
+</head>
+<body>
+  <a href="#missing-target">Skip content</a>
+  <main>
+    <h1>Deliberately failing regression fixture</h1>
+    <img src="missing-fixture.png">
+    <p class="clip">This content is intentionally clipped rather than allowed to reflow.</p>
+    <label>Email address <input type="email"></label>
+    <input id="unlabelled-input" type="text">
+    <button class="overlap" type="button"></button>
+    <button class="overlap" type="button">Overlapping control</button>
+    <a id="offscreen-focus" href="#main">Off-screen focus target</a>
+    <button id="spacing-loss" type="button">Hidden when text spacing is applied</button>
+  </main>
+  <script>
+    new MutationObserver(() => {
+      const auditSpacingActive = [...document.querySelectorAll('style')]
+        .some((style) => style.textContent.includes('letter-spacing: 0.12em'));
+      document.getElementById('spacing-loss').style.display = auditSpacingActive ? 'none' : '';
+    }).observe(document.head, { childList: true });
+  </script>
+</body>
+</html>

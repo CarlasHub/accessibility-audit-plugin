@@ -150879,18 +150879,18 @@ Execution rules:
 3. Validate same-origin links conservatively. Confirm 404/410 only when both the authenticated request context and an in-page fetch agree. Keep server errors, placeholder destinations, and ambiguous states as review items. Do not request external, download, logout, delete, or unsubscribe destinations.
 4. Capture at most one representative contextual element screenshot per final confirmed, blocker, or review reporting unit when the relevant rendered state can be reproduced. Keep all occurrences traceable in JSON. Use full-page evidence only for page-level failures or an unresolved blocking surface. Store PNGs beside the workbook and add relative hyperlinks in Findings and Evidence. Never embed audit screenshots in the workbook.
 5. Display progress through MCP notifications in Cursor, Claude, Codex, or Copilot and through stderr in terminal runs. The client Stop action or one Ctrl+C requests graceful cancellation: close active browser work, retain completed evidence, and write partial HTML and JSON plus a validated partial XLSX workbook. Label that output cancelled/partial. A second Ctrl+C is an immediate exit and may prevent final report writing.
-6. Do not claim that automation or axe covers all WCAG 2.2 A/AA requirements. Retrieve list_guided_manual_checks and preserve screen-reader, physical-device, content, visual, and judgment-based checks as outstanding until a person performs them.
+6. Treat WCAG 2.2 Level AA as the public conformance target. AAA checks are optional advisory evidence and must never relabel the audit as an AAA conformance assessment. Do not claim that automation, axe, or a scripted screen-reader journey covers all WCAG 2.2 requirements. Retrieve list_guided_manual_checks and preserve screen-reader, physical-device, content, visual, and judgment-based checks as outstanding until a qualified person performs them.
 7. Treat deterministic reproduced failures as confirmed issues. Keep heuristics or unresolved content and visual questions as review issues. Keep unavailable pages as blockers. Keep unexecuted assistive-technology and judgment-based procedures as guided/manual checks.
 8. Use one row for the same reusable component implementation and root cause across all affected pages, and group repeated DOM instances within that component. List every affected page individually in the merged row's Links cell. Keep a page-specific implementation, colour treatment, behaviour, success criterion, or remediation requirement on its own row. Do not merge unrelated findings merely because they share a host or WCAG criterion. Do not report missing aria-controls alone as a WCAG failure or standalone review for an ordinary disclosure/accordion; generic disclosures/accordions do not require Escape to close.
 9. If a modal, consent layer, or other surface cannot be dismissed, record it as an interaction-coverage blocker, skip underlying state-based checks, and never interpret the resulting focus sequence or absence of findings as a page pass. Preserve axe incomplete results, unresolved focus-indicator samples, and incomplete interactions as raw JSON evidence and inconclusive coverage; do not promote them to workbook findings. Record every page/viewport/area outcome in the JSON coverage matrix using confirmed-passed, confirmed-failed, tested-inconclusive, manual-review-required, not-tested, or not-applicable.
 
 Report rules:
-1. Generate the self-contained accessible HTML report, six-sheet CarlasHub WCAG 2.2 workbook, and JSON evidence. Preserve the workbook's worksheet order, tab colours, accessible colour scheme, formulas, validations, filters, and the 25 Findings columns. Remove placeholder values and do not add worksheets or columns.
-2. Populate Page Inventory with one structured row per requested or skipped URL, Evidence with one structured row per retained evidence item, Manual Checks with every outstanding guided procedure, and Findings with one row per reporting unit. Use portable relative links for screenshots and direct links for page URLs. Do not embed screenshots.
+1. Generate the self-contained accessible HTML report, seven-sheet CarlasHub WCAG 2.2 workbook, and JSON evidence. Preserve the six canonical template worksheets in their existing order, tab colours, accessible colour scheme, formulas, validations, filters, and the 25 Findings columns; append only the generated WCAG Criteria ledger. Remove placeholder values and do not add other worksheets or columns.
+2. Populate Page Inventory with one structured row per requested or skipped URL, Evidence with one structured row per retained evidence item, Manual Checks with every outstanding guided procedure, Findings with one row per reporting unit, and WCAG Criteria with every WCAG 2.2 success criterion labelled passed, failed, manual-review-required, not-applicable, or inconclusive. Use portable relative links for screenshots and direct links for page URLs. Do not embed screenshots.
 3. Put only concrete fixes in Notes. Do not mention Jira, ticket workflow, audit narration, or uncertainty in remediation fields.
 4. Put the single landing-page QA URL in Audit Summary, use the supplied auditor name exactly, set every populated Findings row to Open, preserve confirmed, review, blocker, or manual as its Evidence type, and populate Owner and Effort from the finding. Validate the workbook with validate_accessibility_report before delivery.
 5. Report whether the run completed or was cancelled, the exact HTML, workbook, JSON, and portable ZIP paths, pages completed/partial/not started, counts by confirmed/review/blocker/manual classification, Evidence row and linked screenshot counts, and workbook validation result.
-6. Call the result an evidence-backed structured audit, not a certification or complete WCAG conformance verdict. A confirmed pass applies only to the exact executed rule and state; axe incomplete results, truncated link checks, sampled keyboard traversal, and unexercised states are not passes.
+6. Call the result an evidence-backed structured audit, not a certification or complete WCAG conformance verdict. Keep the conformance decision as not determined until qualified human assessment is complete. A confirmed pass applies only to the exact executed rule and state; axe incomplete results, truncated link checks, scripted keyboard or screen-reader journeys, and unexercised states are not passes.
 7. Explain the result in plain language for a user who may not know WCAG. State that only supplied URLs were tested; define the evidence categories that are present; distinguish the workbook's Open workflow status from evidence confidence; identify outstanding guided checks; and tell the user to extract the ZIP and keep the workbook with its screenshots directory so relative evidence links work.`));
 function buildEmbeddedAuditInstructions(options = {}) {
     const targets = options.targets?.trim() || '[ask for URL(s) or an XLSX/CSV/TXT/JSON page-list path]';
@@ -150933,6 +150933,7 @@ const viewportSchema = object({
 const configSchema = object({
     auditor: schemas_string().min(1).default(DEFAULT_AUDITOR),
     wcagLevel: schemas_enum(['AA', 'AAA']).default('AA'),
+    aaaAdvisory: schemas_boolean().default(false),
     outputDir: schemas_string().min(1).default(DEFAULT_OUTPUT_DIR),
     landingPageUrl: schemas_string().url().optional(),
     allowedHosts: array(schemas_string().min(1)).default([]),
@@ -150950,9 +150951,11 @@ const configSchema = object({
 });
 function resolveOptions(input = {}) {
     const parsed = configSchema.parse(input);
+    const aaaAdvisory = parsed.aaaAdvisory || parsed.wcagLevel === 'AAA';
     return {
         auditor: parsed.auditor,
-        wcagLevel: parsed.wcagLevel,
+        wcagLevel: aaaAdvisory ? 'AAA' : 'AA',
+        aaaAdvisory,
         outputDir: (0,external_node_path_.resolve)(parsed.outputDir),
         ...(parsed.landingPageUrl ? { landingPageUrl: parsed.landingPageUrl } : {}),
         allowedHosts: parsed.allowedHosts.map((host) => host.toLowerCase()),
@@ -151003,6 +151006,7 @@ const external_axe_core_namespaceObject = external_axe_core_x({ ["default"]: () 
 const REQUIRED_MANUAL_CHECKS = [
     {
         id: 'manual-keyboard-complete',
+        classification: 'manual',
         title: 'Complete keyboard-only journey',
         wcag: ['2.1.1', '2.1.2', '2.4.3', '2.4.7', '2.4.11'],
         applicableTo: 'Every unique page template and interactive component state',
@@ -151010,6 +151014,7 @@ const REQUIRED_MANUAL_CHECKS = [
     },
     {
         id: 'manual-screen-reader-combinations',
+        classification: 'manual',
         title: 'Supported screen-reader and browser combinations',
         wcag: ['1.3.1', '2.4.3', '2.4.6', '3.2.4', '4.1.2', '4.1.3'],
         applicableTo: 'Navigation, forms, validation, search, tabs, dialogs, carousels, and dynamic status messages',
@@ -151017,6 +151022,7 @@ const REQUIRED_MANUAL_CHECKS = [
     },
     {
         id: 'manual-zoom-reflow',
+        classification: 'manual',
         title: 'Zoom, text resize, and reflow',
         wcag: ['1.4.4', '1.4.10', '1.4.12'],
         applicableTo: 'Every unique responsive template',
@@ -151024,6 +151030,7 @@ const REQUIRED_MANUAL_CHECKS = [
     },
     {
         id: 'manual-contrast-states',
+        classification: 'manual',
         title: 'Contrast in all component states',
         wcag: ['1.4.3', '1.4.11', '2.4.7', '2.4.11'],
         applicableTo: 'Text, icons, controls, validation, hover, focus, selected, disabled, and image backgrounds',
@@ -151031,6 +151038,7 @@ const REQUIRED_MANUAL_CHECKS = [
     },
     {
         id: 'manual-content-meaning',
+        classification: 'manual',
         title: 'Content meaning and alternatives',
         wcag: ['1.1.1', '1.2.1', '1.2.2', '1.2.3', '1.2.5', '2.4.4', '2.4.6', '3.1.2'],
         applicableTo: 'Images, icons, video/audio, headings, labels, link text, and language changes',
@@ -151038,6 +151046,7 @@ const REQUIRED_MANUAL_CHECKS = [
     },
     {
         id: 'manual-cognitive-and-consistency',
+        classification: 'manual',
         title: 'Consistency, error prevention, and cognitive checks',
         wcag: ['3.2.3', '3.2.4', '3.2.6', '3.3.1', '3.3.3', '3.3.7', '3.3.8'],
         applicableTo: 'Repeated navigation, help, authentication, and data-entry flows',
@@ -151045,6 +151054,7 @@ const REQUIRED_MANUAL_CHECKS = [
     },
     {
         id: 'manual-mobile-device',
+        classification: 'manual',
         title: 'Physical mobile and touch testing',
         wcag: ['1.3.4', '2.5.1', '2.5.2', '2.5.4', '2.5.7', '2.5.8'],
         applicableTo: 'Responsive navigation, touch controls, drag interactions, and orientation changes',
@@ -151632,6 +151642,7 @@ async function runKeyboardChecks(page, maxTabStops) {
                 role: element.getAttribute('role') ?? element.tagName.toLowerCase(),
                 visibleIndicator,
                 obscured,
+                outsideViewport: rect.right <= 0 || rect.bottom <= 0 || rect.left >= innerWidth || rect.top >= innerHeight,
                 componentSelector: cssPath(componentRoot),
                 ...(modal ? { modalSelector: cssPath(modal) } : {})
             };
@@ -151645,6 +151656,127 @@ async function runKeyboardChecks(page, maxTabStops) {
         }
         seen.add(identity);
         sequence.push(item);
+    }
+    const journeys = [];
+    if (sequence.length >= 2) {
+        const expected = sequence.slice(0, Math.min(sequence.length, 21)).map((item) => item.selector).reverse().slice(1);
+        const actual = [];
+        const lastSelector = sequence[Math.min(sequence.length, 21) - 1].selector;
+        const focused = await page.locator(lastSelector).first().focus().then(() => true).catch(() => false);
+        if (focused) {
+            for (let index = 0; index < expected.length; index += 1) {
+                await page.keyboard.press('Shift+Tab');
+                actual.push(await page.evaluate(() => {
+                    const target = document.activeElement;
+                    if (!target || target === document.body)
+                        return 'document-body';
+                    if (target.id)
+                        return `#${CSS.escape(target.id)}`;
+                    const parts = [];
+                    let current = target;
+                    while (current && current !== document.documentElement && current !== document.body && parts.length < 6) {
+                        let part = current.tagName.toLowerCase();
+                        const stableClasses = [...current.classList].filter((value) => !/\d{3,}/.test(value)).slice(0, 2);
+                        if (stableClasses.length)
+                            part += `.${stableClasses.map((value) => CSS.escape(value)).join('.')}`;
+                        if (current.parentElement) {
+                            const siblings = [...current.parentElement.children].filter((sibling) => sibling.tagName === current?.tagName);
+                            if (siblings.length > 1)
+                                part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+                        }
+                        parts.unshift(part);
+                        current = current.parentElement;
+                    }
+                    return parts.join(' > ');
+                }));
+            }
+        }
+        const matches = focused && expected.every((selector, index) => actual[index] === selector);
+        journeys.push({
+            id: 'forward-reverse-focus-order',
+            title: 'Forward and reverse focus order',
+            status: focused ? (matches ? 'passed' : 'failed') : 'inconclusive',
+            steps: [
+                `Recorded ${sequence.length} forward Tab stop${sequence.length === 1 ? '' : 's'}.`,
+                `Replayed ${actual.length} Shift+Tab stop${actual.length === 1 ? '' : 's'} from ${lastSelector}.`
+            ],
+            detail: focused
+                ? matches
+                    ? 'The sampled reverse sequence matched the forward sequence in reverse order.'
+                    : 'The sampled Shift+Tab sequence did not reverse the recorded Tab sequence; review focus management and dynamic page state.'
+                : 'The last sampled focus target could not be restored for deterministic reverse traversal.'
+        });
+    }
+    else {
+        journeys.push({
+            id: 'forward-reverse-focus-order',
+            title: 'Forward and reverse focus order',
+            status: 'inconclusive',
+            steps: [`Recorded ${sequence.length} forward Tab stops.`],
+            detail: 'At least two stable focus targets are required to compare forward and reverse focus order.'
+        });
+    }
+    const bypass = await page.evaluate(() => {
+        const visible = (element) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+        };
+        const link = [...document.querySelectorAll('a[href^="#"]')]
+            .find((candidate) => candidate.hash.length > 1 && visible(candidate));
+        if (!link)
+            return null;
+        const id = decodeURIComponent(link.hash.slice(1));
+        const target = document.getElementById(id) ?? document.getElementsByName(id)[0] ?? null;
+        return {
+            linkSelector: link.id ? `#${CSS.escape(link.id)}` : `a[href="${CSS.escape(link.getAttribute('href') ?? '')}"]`,
+            name: (link.getAttribute('aria-label') ?? link.textContent ?? '').trim(),
+            targetId: id,
+            targetExists: Boolean(target)
+        };
+    });
+    if (!bypass) {
+        journeys.push({
+            id: 'bypass-blocks',
+            title: 'Bypass repeated blocks',
+            status: 'not-applicable',
+            steps: ['Searched the rendered page for a visible in-page fragment link.'],
+            detail: 'No visible in-page bypass link was found; a human must determine whether repeated content requires another bypass mechanism.'
+        });
+    }
+    else if (!bypass.targetExists) {
+        journeys.push({
+            id: 'bypass-blocks',
+            title: 'Bypass repeated blocks',
+            status: 'failed',
+            steps: [`Found “${bypass.name || bypass.linkSelector}”.`, `Resolved fragment target #${bypass.targetId}.`],
+            detail: 'The visible in-page link points to a target that does not exist.'
+        });
+    }
+    else {
+        const activated = await page.locator(bypass.linkSelector).first().focus().then(async () => {
+            await page.keyboard.press('Enter');
+            await page.waitForTimeout(50);
+            return page.evaluate((targetId) => {
+                const target = document.getElementById(targetId) ?? document.getElementsByName(targetId)[0] ?? null;
+                const active = document.activeElement;
+                if (!target)
+                    return false;
+                const rect = target.getBoundingClientRect();
+                const focusedTarget = active === target || target.contains(active);
+                const targetReached = location.hash === `#${targetId}` && rect.bottom > 0 && rect.top < innerHeight;
+                return focusedTarget || targetReached;
+            }, bypass.targetId);
+        }).catch(() => false);
+        journeys.push({
+            id: 'bypass-blocks',
+            title: 'Bypass repeated blocks',
+            status: activated ? 'passed' : 'failed',
+            steps: [`Focused “${bypass.name || bypass.linkSelector}”.`, 'Pressed Enter.', `Checked target #${bypass.targetId}.`],
+            detail: activated
+                ? 'The bypass link moved focus or the viewport to its declared target.'
+                : 'Activating the bypass link did not move focus or the viewport to its declared target.'
+        });
     }
     await page.evaluate(() => {
         const body = document.body;
@@ -151668,11 +151800,12 @@ async function runKeyboardChecks(page, maxTabStops) {
         completedCycle: repeatedAt !== undefined,
         truncated: repeatedAt === undefined && sequence.length >= maxTabStops,
         scope: modalOnly ? 'modal-only' : sequence.length ? 'document' : 'unknown',
+        journeys,
         ...(modalOnly && modalSelector ? { modalSelector } : {})
     };
 }
 async function runResponsiveChecks(page) {
-    const base = await page.evaluate(() => {
+    const snapshot = (phase) => page.evaluate(({ currentPhase, focusables }) => {
         const cssPath = (element) => {
             if (element.id)
                 return `#${CSS.escape(element.id)}`;
@@ -151693,6 +151826,22 @@ async function runResponsiveChecks(page) {
             }
             return parts.join(' > ');
         };
+        const visible = (element) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.contentVisibility !== 'hidden';
+        };
+        const isIntentionalCarouselViewport = (element) => {
+            const identity = [
+                element.id,
+                typeof element.className === 'string' ? element.className : '',
+                element.getAttribute('aria-roledescription') ?? '',
+                element.getAttribute('data-carousel') === null ? '' : 'carousel'
+            ].join(' ');
+            if (!/(?:^|[\s_-])(carousel|slider)(?:$|[\s_-])/i.test(identity))
+                return false;
+            return element.querySelectorAll('[data-carousel], [class*="carousel-slide" i], [class~="slide" i], [role="group"]').length >= 2;
+        };
         const documentWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
         const overflowElements = [...document.body.querySelectorAll('*')]
             .map((element) => ({ element, rect: element.getBoundingClientRect() }))
@@ -151704,8 +151853,63 @@ async function runResponsiveChecks(page) {
             right: Math.round(rect.right * 10) / 10,
             width: Math.round(rect.width * 10) / 10
         }));
-        return { horizontalOverflow: Math.max(0, documentWidth - innerWidth), overflowElements };
-    });
+        const clippedElements = [...document.body.querySelectorAll('*')]
+            .filter(visible)
+            .filter((element) => !isIntentionalCarouselViewport(element))
+            .flatMap((element) => {
+            const node = element;
+            const style = getComputedStyle(node);
+            const horizontal = /^(hidden|clip)$/.test(style.overflowX) && node.scrollWidth > node.clientWidth + 2;
+            const vertical = /^(hidden|clip)$/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 2;
+            if (!horizontal && !vertical)
+                return [];
+            return [{
+                    selector: cssPath(node),
+                    axis: horizontal && vertical ? 'both' : horizontal ? 'horizontal' : 'vertical',
+                    phase: currentPhase,
+                    clientWidth: node.clientWidth,
+                    clientHeight: node.clientHeight,
+                    scrollWidth: node.scrollWidth,
+                    scrollHeight: node.scrollHeight
+                }];
+        })
+            .slice(0, 50);
+        const interactive = [...document.querySelectorAll(focusables)].filter(visible).slice(0, 100);
+        const overlapPairs = [];
+        for (let firstIndex = 0; firstIndex < interactive.length && overlapPairs.length < 30; firstIndex += 1) {
+            const first = interactive[firstIndex];
+            const firstRect = first.getBoundingClientRect();
+            for (let secondIndex = firstIndex + 1; secondIndex < interactive.length && overlapPairs.length < 30; secondIndex += 1) {
+                const second = interactive[secondIndex];
+                if (first.contains(second) || second.contains(first))
+                    continue;
+                const secondRect = second.getBoundingClientRect();
+                const overlapWidth = Math.min(firstRect.right, secondRect.right) - Math.max(firstRect.left, secondRect.left);
+                const overlapHeight = Math.min(firstRect.bottom, secondRect.bottom) - Math.max(firstRect.top, secondRect.top);
+                if (overlapWidth <= 4 || overlapHeight <= 4)
+                    continue;
+                overlapPairs.push({
+                    firstSelector: cssPath(first),
+                    secondSelector: cssPath(second),
+                    phase: currentPhase,
+                    overlapWidth: Math.round(overlapWidth * 10) / 10,
+                    overlapHeight: Math.round(overlapHeight * 10) / 10
+                });
+            }
+        }
+        const visibleInteractiveElements = interactive.map((element) => ({
+            selector: cssPath(element),
+            name: (element.getAttribute('aria-label') ?? element.textContent ?? element.getAttribute('title') ?? '').replace(/\s+/g, ' ').trim()
+        }));
+        return {
+            horizontalOverflow: Math.max(0, documentWidth - innerWidth),
+            overflowElements,
+            clippedElements,
+            overlapPairs,
+            visibleInteractiveElements
+        };
+    }, { currentPhase: phase, focusables: focusableSelector });
+    const base = await snapshot('default');
     const spacingStyle = await page.addStyleTag({
         content: `
       html body *:not(svg):not(svg *) {
@@ -151719,9 +151923,18 @@ async function runResponsiveChecks(page) {
     `
     });
     await page.waitForTimeout(100);
-    const textSpacingOverflow = await page.evaluate(() => Math.max(0, Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - innerWidth));
+    const spaced = await snapshot('text-spacing');
     await spacingStyle.evaluate((element) => element.remove());
-    return { ...base, textSpacingOverflow };
+    const spacedSelectors = new Set(spaced.visibleInteractiveElements.map((element) => element.selector));
+    const lostInteractiveElements = base.visibleInteractiveElements.filter((element) => !spacedSelectors.has(element.selector));
+    return {
+        horizontalOverflow: base.horizontalOverflow,
+        overflowElements: base.overflowElements,
+        textSpacingOverflow: spaced.horizontalOverflow,
+        clippedElements: [...base.clippedElements, ...spaced.clippedElements],
+        overlapPairs: [...base.overlapPairs, ...spaced.overlapPairs],
+        lostInteractiveElements
+    };
 }
 function locatorDescription(locator) {
     return locator.evaluate((element) => {
@@ -152526,23 +152739,29 @@ async function visibleConsentSurfaces(frame) {
 /** Returns a visible modal surface that would invalidate page-level interaction coverage. */
 async function detectInteractionBlocker(page) {
     for (const frame of page.frames()) {
-        const candidates = frame.locator([
-            '[role="dialog"][aria-modal="true"]',
-            '[role="alertdialog"]',
-            '[aria-modal="true"]',
-            '#system-ialert'
-        ].join(', '));
-        const count = Math.min(await candidates.count().catch(() => 0), 50);
+        const candidates = frame.locator('body *');
+        const count = Math.min(await candidates.count().catch(() => 0), 500);
         for (let index = 0; index < count; index += 1) {
             const candidate = candidates.nth(index);
             if (!(await candidate.isVisible().catch(() => false)))
                 continue;
             const details = await candidate.evaluate((element) => {
                 const rect = element.getBoundingClientRect();
-                const viewportCoverage = Math.max(0, Math.min(innerWidth, rect.right) - Math.max(0, rect.left))
+                const coveredArea = Math.max(0, Math.min(innerWidth, rect.right) - Math.max(0, rect.left))
                     * Math.max(0, Math.min(innerHeight, rect.bottom) - Math.max(0, rect.top));
                 const viewportArea = Math.max(1, innerWidth * innerHeight);
-                const role = element.getAttribute('role') || (element.id === 'system-ialert' ? 'dialog surface' : element.tagName.toLowerCase());
+                const roleAttribute = element.getAttribute('role') ?? '';
+                const semanticBlocker = ['dialog', 'alertdialog'].includes(roleAttribute)
+                    || element.getAttribute('aria-modal') === 'true'
+                    || element.id === 'system-ialert';
+                const style = getComputedStyle(element);
+                const hasPaintedBackdrop = style.backgroundColor !== 'rgba(0, 0, 0, 0)'
+                    && style.backgroundColor !== 'transparent';
+                const visualBlocker = ['fixed', 'sticky'].includes(style.position)
+                    && style.pointerEvents !== 'none'
+                    && coveredArea / viewportArea >= 0.85
+                    && (hasPaintedBackdrop || style.backdropFilter !== 'none');
+                const role = roleAttribute || (element.id === 'system-ialert' ? 'dialog surface' : element.tagName.toLowerCase());
                 const labelledBy = element.getAttribute('aria-labelledby');
                 const labelledText = labelledBy
                     ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim()
@@ -152554,11 +152773,16 @@ async function detectInteractionBlocker(page) {
                 const selector = element.id
                     ? `#${CSS.escape(element.id)}`
                     : `${element.tagName.toLowerCase()}${[...element.classList].slice(0, 2).map((value) => `.${CSS.escape(value)}`).join('')}`;
-                return { selector, role, name, coversViewport: viewportCoverage / viewportArea >= 0.08 };
+                return {
+                    selector,
+                    role,
+                    name,
+                    qualifies: visualBlocker || (semanticBlocker && (coveredArea / viewportArea >= 0.08 || /dialog/i.test(role)))
+                };
             }).catch(() => null);
             if (!details)
                 continue;
-            if (!details.coversViewport && !/dialog/i.test(details.role))
+            if (!details.qualifies)
                 continue;
             return {
                 selector: details.selector,
@@ -153443,8 +153667,13 @@ function domFindings(audit) {
     const axeEmptyControlSignatures = new Set(audit.axe
         .filter((violation) => axeEmptyControlRules.has(violation.id))
         .flatMap((violation) => violation.nodes.map((node) => openingTagSignature(node.html))));
+    const unlabeledFieldSelectors = new Set(audit.dom.unlabeledFields.map((item) => normalizeComponent(item.selector)));
+    const unlabeledFieldSignatures = new Set(audit.dom.unlabeledFields.map((item) => openingTagSignature(item.html)));
     for (const item of audit.dom.emptyNamedControls) {
         if (axeEmptyControlSignatures.has(openingTagSignature(item.html)))
+            continue;
+        if (unlabeledFieldSelectors.has(normalizeComponent(item.selector))
+            || unlabeledFieldSignatures.has(openingTagSignature(item.html)))
             continue;
         findings.push(makeFinding({
             identity: `empty-name|${normalizeComponent(item.selector)}`,
@@ -153590,6 +153819,76 @@ function domFindings(audit) {
             translationRequired: 'No'
         }));
     }
+    for (const clipped of audit.responsive.clippedElements) {
+        const criteria = clipped.phase === 'text-spacing' ? ['1.4.10', '1.4.12'] : ['1.4.10'];
+        findings.push(makeFinding({
+            identity: `responsive-clipped|${clipped.phase}|${normalizeComponent(clipped.selector)}`,
+            ruleId: 'responsive-content-clipped',
+            classification: 'review',
+            severity: 'Serious',
+            wcag: criteria,
+            summary: `Content may be clipped${clipped.phase === 'text-spacing' ? ' after text spacing' : ' at the narrow viewport'}`,
+            issue: `${clipped.selector} has ${clipped.axis} scroll dimensions larger than its visible box while its overflow styling can clip content.`,
+            impact: 'Users who zoom, reflow content, or increase text spacing may be unable to perceive content or reach functionality.',
+            testing: `At the ${clipped.phase} phase, the element measured ${clipped.clientWidth}×${clipped.clientHeight} CSS pixels with scroll dimensions ${clipped.scrollWidth}×${clipped.scrollHeight}.`,
+            remediation: 'Allow content to wrap and containers to grow. If clipping is intentional, verify that no meaningful content or operable control is hidden at 320 CSS pixels and with WCAG text spacing.',
+            component: normalizeComponent(clipped.selector),
+            urls: [audit.url],
+            viewports: [audit.viewport.name],
+            selectors: [clipped.selector],
+            evidence: [evidence('responsive', clipped.selector, JSON.stringify(clipped))],
+            assignment: 'Development',
+            effort: 'Medium',
+            translationRequired: 'Review'
+        }));
+    }
+    for (const overlap of audit.responsive.overlapPairs) {
+        const selectors = [overlap.firstSelector, overlap.secondSelector];
+        const criteria = overlap.phase === 'text-spacing' ? ['1.4.10', '1.4.12'] : ['1.4.10'];
+        findings.push(makeFinding({
+            identity: `responsive-overlap|${overlap.phase}|${selectors.map(normalizeComponent).sort().join('|')}`,
+            ruleId: 'responsive-controls-overlap',
+            classification: 'review',
+            severity: 'Serious',
+            wcag: criteria,
+            summary: `Interactive elements overlap${overlap.phase === 'text-spacing' ? ' after text spacing' : ' at the narrow viewport'}`,
+            issue: `Two visible interactive elements overlap by ${overlap.overlapWidth}×${overlap.overlapHeight} CSS pixels. Review whether either control, label, or focus indicator is obscured.`,
+            impact: 'Overlapping controls can hide information, make a target difficult to activate, or obscure keyboard focus.',
+            testing: `Rendered bounds were compared during the ${overlap.phase} reflow phase at ${audit.viewport.width} CSS pixels.`,
+            remediation: 'Use responsive layout and wrapping so controls do not cover one another at narrow widths or after text spacing is increased.',
+            component: normalizeComponent(overlap.firstSelector),
+            urls: [audit.url],
+            viewports: [audit.viewport.name],
+            selectors,
+            evidence: [evidence('responsive', overlap.firstSelector, JSON.stringify(overlap))],
+            assignment: 'Development',
+            effort: 'Medium',
+            translationRequired: 'Review'
+        }));
+    }
+    if (audit.responsive.lostInteractiveElements.length > 0) {
+        const selectors = audit.responsive.lostInteractiveElements.map((item) => item.selector);
+        findings.push(makeFinding({
+            identity: `text-spacing-lost-functionality|${selectors.map(normalizeComponent).sort().join('|')}`,
+            ruleId: 'text-spacing-functionality-lost',
+            classification: 'review',
+            severity: 'Serious',
+            wcag: ['1.4.12'],
+            summary: 'Interactive content may disappear after text spacing is increased',
+            issue: `${audit.responsive.lostInteractiveElements.length} control(s) that were visible before the WCAG text-spacing override were no longer visibly rendered afterwards.`,
+            impact: 'People who increase text spacing may lose access to controls or functionality.',
+            testing: 'Visible interactive elements were inventoried before and after applying the WCAG text-spacing values, then compared by stable selector.',
+            remediation: 'Remove fixed-height clipping and layout constraints so controls remain visible, readable, and operable with increased line, paragraph, word, and letter spacing.',
+            component: 'responsive layout',
+            urls: [audit.url],
+            viewports: [audit.viewport.name],
+            selectors,
+            evidence: audit.responsive.lostInteractiveElements.map((item) => evidence('responsive', item.selector, `Previously visible control disappeared: ${item.name || 'unnamed control'}.`)),
+            assignment: 'Development',
+            effort: 'Medium',
+            translationRequired: 'Review'
+        }));
+    }
     const groupKeyboardItems = (items) => {
         const groups = new Map();
         for (const item of items) {
@@ -153621,6 +153920,56 @@ function domFindings(audit) {
             assignment: 'Development',
             effort: 'Medium',
             translationRequired: 'No'
+        }));
+    }
+    const outsideViewport = audit.keyboard.sequence.filter((item) => item.outsideViewport);
+    for (const [component, items] of groupKeyboardItems(outsideViewport)) {
+        findings.push(makeFinding({
+            identity: `focus-outside-viewport|${component}`,
+            ruleId: 'keyboard-focus-outside-viewport',
+            classification: 'review',
+            severity: 'Serious',
+            wcag: ['2.4.11'],
+            summary: 'Keyboard focus may move outside the visible viewport',
+            issue: `Sequential focus reached ${items.length} element(s) whose rendered bounds were outside the visible viewport after focus settled.`,
+            impact: 'Keyboard users may lose track of focus and be unable to identify the currently active control.',
+            testing: `The deterministic keyboard traversal checked focused-element bounds after each Tab step; affected positions: ${items.map((item) => item.index).join(', ')}.`,
+            remediation: 'Scroll focused controls into view, remove hidden elements from the focus order, and ensure overlays do not separate visual and programmatic focus.',
+            component,
+            urls: [audit.url],
+            viewports: [audit.viewport.name],
+            selectors: items.map((item) => item.selector),
+            evidence: items.map((item) => evidence('keyboard', item.selector, `Focus position ${item.index} was outside the viewport.`)),
+            assignment: 'Development',
+            effort: 'Medium',
+            translationRequired: 'No'
+        }));
+    }
+    for (const journey of audit.keyboard.journeys.filter((item) => item.status === 'failed')) {
+        const isBypass = journey.id === 'bypass-blocks';
+        findings.push(makeFinding({
+            identity: `keyboard-journey|${journey.id}|${audit.url}`,
+            ruleId: `keyboard-journey-${journey.id}`,
+            classification: 'review',
+            severity: 'Serious',
+            wcag: [isBypass ? '2.4.1' : '2.4.3'],
+            summary: `${journey.title} did not produce the expected result`,
+            issue: journey.detail,
+            impact: isBypass
+                ? 'Keyboard users may be forced to traverse repeated content before reaching the main page content.'
+                : 'Keyboard users may encounter an unexpected or illogical focus sequence.',
+            testing: `Executed deterministic journey: ${journey.steps.join(' → ') || 'no completed steps'}.`,
+            remediation: isBypass
+                ? 'Provide an operable bypass mechanism whose target exists, becomes visible, and receives or immediately precedes focus.'
+                : 'Keep DOM and visual order aligned and ensure forward and reverse sequential navigation are predictable.',
+            component: 'page keyboard journey',
+            urls: [audit.url],
+            viewports: [audit.viewport.name],
+            selectors: [],
+            evidence: [evidence('keyboard', undefined, JSON.stringify(journey))],
+            assignment: 'Development',
+            effort: 'Medium',
+            translationRequired: 'Review'
         }));
     }
     const axeTargetSelectors = new Set(audit.axe
@@ -153787,23 +154136,8 @@ function domFindings(audit) {
             effort: 'Medium',
             translationRequired: 'No'
         };
-        if (tab.error) {
-            findings.push(makeFinding({
-                ...common,
-                identity: `tabs-test-error|${component}`,
-                ruleId: 'tabs-test-incomplete',
-                classification: 'review',
-                severity: 'Moderate',
-                wcag: ['Best Practice'],
-                summary: 'Tab interaction test did not complete',
-                issue: tab.error,
-                impact: 'The automated result cannot establish whether the tab interaction works correctly.',
-                testing: 'The rendered tablist was exercised in an isolated browser, but the interaction raised an error.',
-                remediation: 'Stabilize the tab interaction and rerun the keyboard and relationship checks before deciding conformance.',
-                evidence: [evidence('keyboard', tab.selector, JSON.stringify(tab))]
-            }));
+        if (tab.error)
             continue;
-        }
         if (!tab.navigationMovedToTab) {
             const otherTabsKeyboardUnreachable = tab.tabbableCount <= 1;
             findings.push(makeFinding({
@@ -153925,7 +154259,47 @@ function domFindings(audit) {
 function findingsFromPage(page) {
     return page.viewports
         .filter((audit) => !audit.cancelled)
-        .flatMap((audit) => [...axeFindings(audit), ...domFindings(audit)].map((finding) => enrichComponent(finding, audit)));
+        .flatMap((audit) => {
+        const failed = (prefix) => audit.errors.some((message) => message.startsWith(prefix));
+        const interactionUnavailable = Boolean(audit.interactionBlocker);
+        const evidenceGatedAudit = {
+            ...audit,
+            ...(failed('DOM checks error:') ? {
+                dom: {
+                    h1Count: 1,
+                    mainCount: 1,
+                    unnamedLandmarks: [],
+                    missingAltImages: [],
+                    linkedImagesForReview: [],
+                    emptyLinks: [],
+                    emptyNamedControls: [],
+                    unlabeledFields: [],
+                    duplicateIds: [],
+                    smallTargets: [],
+                    tablesForReview: [],
+                    autoplayMedia: []
+                }
+            } : {}),
+            ...(interactionUnavailable || failed('Keyboard checks error:') ? {
+                keyboard: { sequence: [], journeys: [], completedCycle: false, truncated: false, scope: 'unknown' }
+            } : {}),
+            ...(interactionUnavailable || failed('Disclosure checks error:') ? { disclosures: [] } : {}),
+            ...(interactionUnavailable || failed('Tab checks error:') ? { tabs: [] } : {}),
+            ...(interactionUnavailable || failed('Link checks error:') ? { links: [] } : {}),
+            ...(failed('Responsive checks error:') ? {
+                responsive: {
+                    horizontalOverflow: 0,
+                    overflowElements: [],
+                    textSpacingOverflow: 0,
+                    clippedElements: [],
+                    overlapPairs: [],
+                    lostInteractiveElements: []
+                }
+            } : {})
+        };
+        return [...axeFindings(audit), ...domFindings(evidenceGatedAudit)]
+            .map((finding) => enrichComponent(finding, audit));
+    });
 }
 //# sourceMappingURL=findings.js.map
 ;// CONCATENATED MODULE: ./dist/audit/coverage.js
@@ -153948,7 +154322,7 @@ function resultForFindings(area, findings, predicate, noFailureDetail) {
 }
 function viewportCoverage(audit, findings) {
     const loaded = ((audit.status !== null && audit.status < 400)
-        || (/^(file|data):/i.test(audit.finalUrl) && audit.errors.length === 0));
+        || /^(file|data):/i.test(audit.finalUrl));
     if (!loaded) {
         return [
             assessment('viewport-render', 'confirmed-failed', `The page did not load successfully: HTTP ${audit.status ?? 'no response'}.`),
@@ -153983,11 +154357,22 @@ function viewportCoverage(audit, findings) {
                 reason: 'Sequential focus remained inside one modal surface.'
             }
             : null);
+    const checkError = (prefix) => audit.errors.find((message) => message.startsWith(prefix));
+    const domError = checkError('DOM checks error:');
+    const keyboardError = checkError('Keyboard checks error:');
+    const disclosureError = checkError('Disclosure checks error:');
+    const tabError = checkError('Tab checks error:');
+    const responsiveError = checkError('Responsive checks error:');
+    const contextError = checkError('Element context check error:');
+    const screenshotError = checkError('Screenshot check error:');
+    const journeyResults = audit.keyboard.journeys.map((journey) => `${journey.title}: ${journey.status}`).join('; ');
     const keyboardDetail = blocker
         ? `Interaction coverage was blocked by ${blocker.selector}: ${blocker.reason}`
-        : audit.keyboard.truncated
-            ? `The keyboard sequence reached its configured limit after ${audit.keyboard.sequence.length} controls.`
-            : `Automated Tab traversal recorded ${audit.keyboard.sequence.length} controls; complete task-based keyboard testing still requires manual review.`;
+        : keyboardError
+            ? `Keyboard checks did not complete: ${keyboardError.slice('Keyboard checks error:'.length).trim()}`
+            : audit.keyboard.truncated
+                ? `The keyboard sequence reached its configured limit after ${audit.keyboard.sequence.length} controls.`
+                : `Deterministic forward/reverse and bypass journeys accompanied ${audit.keyboard.sequence.length} focus samples${journeyResults ? ` (${journeyResults})` : ''}; complete task-based keyboard testing still requires manual review.`;
     const relevant = affectingFindings(findings, audit);
     const autoplayPresent = audit.dom.autoplayMedia.length > 0;
     const axeStatus = !audit.axeRun.completed
@@ -153998,24 +154383,42 @@ function viewportCoverage(audit, findings) {
                 ? 'tested-inconclusive'
                 : 'confirmed-passed';
     return [
-        assessment('viewport-render', 'confirmed-passed', `The page returned HTTP ${audit.status ?? 'local document'} and the viewport audit started.`),
+        assessment('viewport-render', screenshotError || contextError ? 'tested-inconclusive' : 'confirmed-passed', screenshotError
+            ? `The page rendered, but visual evidence capture did not complete: ${screenshotError.slice('Screenshot check error:'.length).trim()}`
+            : contextError
+                ? `The page rendered, but element context collection did not complete: ${contextError.slice('Element context check error:'.length).trim()}`
+                : `The page returned HTTP ${audit.status ?? 'local document'} and the viewport audit started.`),
         assessment('keyboard-only', 'tested-inconclusive', keyboardDetail),
         assessment('focus-order-and-visibility', 'tested-inconclusive', blocker
             ? keyboardDetail
             : 'Automated focus samples were collected, but complete order, visibility, obscuration and task operation require manual verification.'),
-        resultForFindings('names-roles-states-relationships', relevant, (finding) => finding.wcag.includes('4.1.2') || /name|role|state|relationship|aria/i.test(finding.ruleId), 'Initial-state DOM, axe and selected interaction checks ran; unexercised states and assistive-technology output remain inconclusive.'),
-        resultForFindings('structure-headings-landmarks', relevant, (finding) => /heading|landmark|region|main|list|table/i.test(finding.ruleId), 'Initial headings and landmarks were inspected; semantic meaning and complete landmark navigation require manual review.'),
+        resultForFindings('names-roles-states-relationships', relevant, (finding) => finding.wcag.includes('4.1.2') || /name|role|state|relationship|aria/i.test(finding.ruleId), domError
+            ? `DOM checks did not complete: ${domError.slice('DOM checks error:'.length).trim()}`
+            : 'Initial-state DOM, axe and selected interaction checks ran; unexercised states and assistive-technology output remain inconclusive.'),
+        resultForFindings('structure-headings-landmarks', relevant, (finding) => /heading|landmark|region|main|list|table/i.test(finding.ruleId), domError
+            ? `DOM structure checks did not complete: ${domError.slice('DOM checks error:'.length).trim()}`
+            : 'Initial headings and landmarks were inspected; semantic meaning and complete landmark navigation require manual review.'),
         resultForFindings('navigation-and-bypass', relevant, (finding) => /navigation|skip|main-menu|focus-order/i.test(`${finding.ruleId} ${finding.componentName ?? ''}`), blocker
             ? keyboardDetail
-            : 'Navigation controls were included in structural and disclosure checks; a complete skip-link and keyboard journey remains inconclusive.'),
-        resultForFindings('links-and-buttons', relevant, (finding) => /link|button|command-name|control-no-name/i.test(finding.ruleId), 'Initial names and desktop same-origin destinations were checked; responsive-only, external and action-style controls remain incomplete.'),
-        resultForFindings('images-and-alternatives', relevant, (finding) => /image|alt/i.test(finding.ruleId), 'Image-alt presence was checked automatically; purpose, equivalence and decorative treatment require manual review.'),
-        resultForFindings('forms-errors-and-validation', relevant, (finding) => /form|field|label|error|validation/i.test(finding.ruleId), 'Initial field labels were inspected, but forms were not submitted with valid and invalid data; errors and status announcements are inconclusive.'),
+            : 'A deterministic bypass-blocks journey accompanied structural and disclosure checks; alternative bypass mechanisms and complete navigation still require review.'),
+        resultForFindings('links-and-buttons', relevant, (finding) => /link|button|command-name|control-no-name/i.test(finding.ruleId), domError
+            ? `DOM name checks did not complete: ${domError.slice('DOM checks error:'.length).trim()}`
+            : 'Initial names and desktop same-origin destinations were checked; responsive-only, external and action-style controls remain incomplete.'),
+        resultForFindings('images-and-alternatives', relevant, (finding) => /image|alt/i.test(finding.ruleId), domError
+            ? `DOM image checks did not complete: ${domError.slice('DOM checks error:'.length).trim()}`
+            : 'Image-alt presence was checked automatically; purpose, equivalence and decorative treatment require manual review.'),
+        resultForFindings('forms-errors-and-validation', relevant, (finding) => /form|field|label|error|validation/i.test(finding.ruleId), domError
+            ? `DOM form checks did not complete: ${domError.slice('DOM checks error:'.length).trim()}`
+            : 'Initial field labels were inspected, but forms were not submitted with valid and invalid data; errors and status announcements are inconclusive.'),
         resultForFindings('interactive-components', relevant, (finding) => /disclosure|tabs|dialog|menu|carousel|filter/i.test(`${finding.ruleId} ${finding.component}`), blocker
             ? keyboardDetail
-            : 'Disclosures and tab patterns were sampled; every open/closed/validated state and other widget pattern still requires completion.'),
+            : disclosureError || tabError
+                ? `Interactive component checks did not complete: ${(disclosureError ?? tabError)?.replace(/^(?:Disclosure|Tab) checks error:\s*/, '')}`
+                : 'Disclosures and tab patterns were sampled; every open/closed/validated state and other widget pattern still requires completion.'),
         assessment('dynamic-content-and-status', 'not-tested', 'No complete status-message or asynchronous-update announcement test was recorded.'),
-        resultForFindings('zoom-text-spacing-and-responsive', relevant, (finding) => /reflow|overflow|text-spacing/i.test(finding.ruleId), 'Viewport width and document overflow were measured, but 200% zoom and visual clipping/overlap/loss require manual review.'),
+        resultForFindings('zoom-text-spacing-and-responsive', relevant, (finding) => /reflow|responsive|overflow|text-spacing/i.test(finding.ruleId), responsiveError
+            ? `Responsive checks did not complete: ${responsiveError.slice('Responsive checks error:'.length).trim()}`
+            : 'At 320 CSS pixels, overflow, clipping, interactive-element overlap, focus visibility, and functionality retained after text spacing were sampled; permitted exceptions and complete content loss still require human review.'),
         resultForFindings('contrast-and-non-colour-cues', relevant, (finding) => /contrast|use-of-color|colour/i.test(finding.ruleId), 'Axe inspected supported initial-state text contrast; non-text contrast, colour-only cues and all interaction states remain inconclusive.'),
         assessment('motion-autoplay-and-controls', autoplayPresent ? 'manual-review-required' : 'tested-inconclusive', autoplayPresent
             ? 'Autoplay media was detected; duration, audio, motion and pause/stop/hide controls require timed manual testing.'
@@ -154047,6 +154450,209 @@ function buildCoverageMatrix(pages, findings) {
     }));
 }
 //# sourceMappingURL=coverage.js.map
+;// CONCATENATED MODULE: ./dist/reporting/finding-id.js
+function findingId(finding, index) {
+    return finding.id ?? `A11Y${String(index + 1).padStart(3, '0')}`;
+}
+function assignFindingIds(findings) {
+    return findings.map((finding, index) => ({
+        ...finding,
+        id: findingId(finding, index)
+    }));
+}
+//# sourceMappingURL=finding-id.js.map
+;// CONCATENATED MODULE: ./dist/audit/wcag-criteria.js
+
+const definitions = [
+    ['1.1.1', 'A', 'Non-text Content', 'non-text-content'],
+    ['1.2.1', 'A', 'Audio-only and Video-only (Prerecorded)', 'audio-only-and-video-only-prerecorded'],
+    ['1.2.2', 'A', 'Captions (Prerecorded)', 'captions-prerecorded'],
+    ['1.2.3', 'A', 'Audio Description or Media Alternative (Prerecorded)', 'audio-description-or-media-alternative-prerecorded'],
+    ['1.2.4', 'AA', 'Captions (Live)', 'captions-live'],
+    ['1.2.5', 'AA', 'Audio Description (Prerecorded)', 'audio-description-prerecorded'],
+    ['1.2.6', 'AAA', 'Sign Language (Prerecorded)', 'sign-language-prerecorded'],
+    ['1.2.7', 'AAA', 'Extended Audio Description (Prerecorded)', 'extended-audio-description-prerecorded'],
+    ['1.2.8', 'AAA', 'Media Alternative (Prerecorded)', 'media-alternative-prerecorded'],
+    ['1.2.9', 'AAA', 'Audio-only (Live)', 'audio-only-live'],
+    ['1.3.1', 'A', 'Info and Relationships', 'info-and-relationships'],
+    ['1.3.2', 'A', 'Meaningful Sequence', 'meaningful-sequence'],
+    ['1.3.3', 'A', 'Sensory Characteristics', 'sensory-characteristics'],
+    ['1.3.4', 'AA', 'Orientation', 'orientation'],
+    ['1.3.5', 'AA', 'Identify Input Purpose', 'identify-input-purpose'],
+    ['1.3.6', 'AAA', 'Identify Purpose', 'identify-purpose'],
+    ['1.4.1', 'A', 'Use of Color', 'use-of-color'],
+    ['1.4.2', 'A', 'Audio Control', 'audio-control'],
+    ['1.4.3', 'AA', 'Contrast (Minimum)', 'contrast-minimum'],
+    ['1.4.4', 'AA', 'Resize Text', 'resize-text'],
+    ['1.4.5', 'AA', 'Images of Text', 'images-of-text'],
+    ['1.4.6', 'AAA', 'Contrast (Enhanced)', 'contrast-enhanced'],
+    ['1.4.7', 'AAA', 'Low or No Background Audio', 'low-or-no-background-audio'],
+    ['1.4.8', 'AAA', 'Visual Presentation', 'visual-presentation'],
+    ['1.4.9', 'AAA', 'Images of Text (No Exception)', 'images-of-text-no-exception'],
+    ['1.4.10', 'AA', 'Reflow', 'reflow'],
+    ['1.4.11', 'AA', 'Non-text Contrast', 'non-text-contrast'],
+    ['1.4.12', 'AA', 'Text Spacing', 'text-spacing'],
+    ['1.4.13', 'AA', 'Content on Hover or Focus', 'content-on-hover-or-focus'],
+    ['2.1.1', 'A', 'Keyboard', 'keyboard'],
+    ['2.1.2', 'A', 'No Keyboard Trap', 'no-keyboard-trap'],
+    ['2.1.3', 'AAA', 'Keyboard (No Exception)', 'keyboard-no-exception'],
+    ['2.1.4', 'A', 'Character Key Shortcuts', 'character-key-shortcuts'],
+    ['2.2.1', 'A', 'Timing Adjustable', 'timing-adjustable'],
+    ['2.2.2', 'A', 'Pause, Stop, Hide', 'pause-stop-hide'],
+    ['2.2.3', 'AAA', 'No Timing', 'no-timing'],
+    ['2.2.4', 'AAA', 'Interruptions', 'interruptions'],
+    ['2.2.5', 'AAA', 'Re-authenticating', 're-authenticating'],
+    ['2.2.6', 'AAA', 'Timeouts', 'timeouts'],
+    ['2.3.1', 'A', 'Three Flashes or Below Threshold', 'three-flashes-or-below-threshold'],
+    ['2.3.2', 'AAA', 'Three Flashes', 'three-flashes'],
+    ['2.3.3', 'AAA', 'Animation from Interactions', 'animation-from-interactions'],
+    ['2.4.1', 'A', 'Bypass Blocks', 'bypass-blocks'],
+    ['2.4.2', 'A', 'Page Titled', 'page-titled'],
+    ['2.4.3', 'A', 'Focus Order', 'focus-order'],
+    ['2.4.4', 'A', 'Link Purpose (In Context)', 'link-purpose-in-context'],
+    ['2.4.5', 'AA', 'Multiple Ways', 'multiple-ways'],
+    ['2.4.6', 'AA', 'Headings and Labels', 'headings-and-labels'],
+    ['2.4.7', 'AA', 'Focus Visible', 'focus-visible'],
+    ['2.4.8', 'AAA', 'Location', 'location'],
+    ['2.4.9', 'AAA', 'Link Purpose (Link Only)', 'link-purpose-link-only'],
+    ['2.4.10', 'AAA', 'Section Headings', 'section-headings'],
+    ['2.4.11', 'AA', 'Focus Not Obscured (Minimum)', 'focus-not-obscured-minimum'],
+    ['2.4.12', 'AAA', 'Focus Not Obscured (Enhanced)', 'focus-not-obscured-enhanced'],
+    ['2.4.13', 'AAA', 'Focus Appearance', 'focus-appearance'],
+    ['2.5.1', 'A', 'Pointer Gestures', 'pointer-gestures'],
+    ['2.5.2', 'A', 'Pointer Cancellation', 'pointer-cancellation'],
+    ['2.5.3', 'A', 'Label in Name', 'label-in-name'],
+    ['2.5.4', 'A', 'Motion Actuation', 'motion-actuation'],
+    ['2.5.5', 'AAA', 'Target Size (Enhanced)', 'target-size-enhanced'],
+    ['2.5.6', 'AAA', 'Concurrent Input Mechanisms', 'concurrent-input-mechanisms'],
+    ['2.5.7', 'AA', 'Dragging Movements', 'dragging-movements'],
+    ['2.5.8', 'AA', 'Target Size (Minimum)', 'target-size-minimum'],
+    ['3.1.1', 'A', 'Language of Page', 'language-of-page'],
+    ['3.1.2', 'AA', 'Language of Parts', 'language-of-parts'],
+    ['3.1.3', 'AAA', 'Unusual Words', 'unusual-words'],
+    ['3.1.4', 'AAA', 'Abbreviations', 'abbreviations'],
+    ['3.1.5', 'AAA', 'Reading Level', 'reading-level'],
+    ['3.1.6', 'AAA', 'Pronunciation', 'pronunciation'],
+    ['3.2.1', 'A', 'On Focus', 'on-focus'],
+    ['3.2.2', 'A', 'On Input', 'on-input'],
+    ['3.2.3', 'AA', 'Consistent Navigation', 'consistent-navigation'],
+    ['3.2.4', 'AA', 'Consistent Identification', 'consistent-identification'],
+    ['3.2.5', 'AAA', 'Change on Request', 'change-on-request'],
+    ['3.2.6', 'A', 'Consistent Help', 'consistent-help'],
+    ['3.3.1', 'A', 'Error Identification', 'error-identification'],
+    ['3.3.2', 'A', 'Labels or Instructions', 'labels-or-instructions'],
+    ['3.3.3', 'AA', 'Error Suggestion', 'error-suggestion'],
+    ['3.3.4', 'AA', 'Error Prevention (Legal, Financial, Data)', 'error-prevention-legal-financial-data'],
+    ['3.3.5', 'AAA', 'Help', 'help'],
+    ['3.3.6', 'AAA', 'Error Prevention (All)', 'error-prevention-all'],
+    ['3.3.7', 'A', 'Redundant Entry', 'redundant-entry'],
+    ['3.3.8', 'AA', 'Accessible Authentication (Minimum)', 'accessible-authentication-minimum'],
+    ['3.3.9', 'AAA', 'Accessible Authentication (Enhanced)', 'accessible-authentication-enhanced'],
+    ['4.1.2', 'A', 'Name, Role, Value', 'name-role-value'],
+    ['4.1.3', 'AA', 'Status Messages', 'status-messages']
+].map(([criterion, level, title, slug]) => ({ criterion, level, title, slug }));
+function wcag_criteria_criterionFromTag(tag) {
+    const match = /^wcag(\d)(\d)(\d+)$/.exec(tag.toLowerCase());
+    return match ? `${match[1]}.${match[2]}.${match[3]}` : undefined;
+}
+function axeEvidence(pages) {
+    const result = new Map();
+    const entry = (criterion) => {
+        const existing = result.get(criterion) ?? { passes: new Set(), incomplete: new Set() };
+        result.set(criterion, existing);
+        return existing;
+    };
+    for (const page of pages) {
+        for (const viewport of page.viewports) {
+            for (const pass of viewport.axeRun.passes) {
+                for (const tag of pass.tags) {
+                    const criterion = wcag_criteria_criterionFromTag(tag);
+                    if (criterion)
+                        entry(criterion).passes.add(`${pass.id} passed on ${page.url} (${viewport.viewport.name}; ${pass.nodeCount} node${pass.nodeCount === 1 ? '' : 's'})`);
+                }
+            }
+            for (const resultItem of viewport.axe.filter((item) => item.resultType === 'incomplete')) {
+                for (const tag of resultItem.tags) {
+                    const criterion = wcag_criteria_criterionFromTag(tag);
+                    if (criterion)
+                        entry(criterion).incomplete.add(`${resultItem.id} needs review on ${page.url} (${viewport.viewport.name})`);
+                }
+            }
+        }
+    }
+    return result;
+}
+function findingMap(findings) {
+    const result = new Map();
+    findings.forEach((finding, index) => {
+        const id = findingId(finding, index);
+        for (const criterion of finding.wcag)
+            result.set(criterion, [...(result.get(criterion) ?? []), { id, finding }]);
+    });
+    return result;
+}
+function buildWcagCriterionLedger(pages, findings, manualChecks, aaaAdvisory) {
+    const evidence = axeEvidence(pages);
+    const mappedFindings = findingMap(findings);
+    const manualCriteria = new Set(manualChecks.flatMap((check) => check.wcag));
+    return definitions.map((definition) => {
+        const scope = definition.level === 'AAA' ? 'advisory' : 'standard';
+        if (definition.level === 'AAA' && !aaaAdvisory) {
+            return {
+                ...definition,
+                understandingUrl: `https://www.w3.org/WAI/WCAG22/Understanding/${definition.slug}.html`,
+                scope,
+                status: 'not-applicable',
+                findingIds: [],
+                automatedEvidence: [],
+                detail: 'AAA is outside the WCAG 2.2 AA conformance target; optional AAA advisory checks were not enabled.'
+            };
+        }
+        const related = mappedFindings.get(definition.criterion) ?? [];
+        const failed = related.filter(({ finding }) => finding.classification === 'confirmed' || finding.classification === 'blocker');
+        const review = related.filter(({ finding }) => finding.classification === 'review');
+        const axe = evidence.get(definition.criterion);
+        const automatedEvidence = [
+            ...(axe?.passes ?? []),
+            ...(axe?.incomplete ?? []),
+            ...related.map(({ id, finding }) => `${id}: ${finding.summary}`)
+        ].slice(0, 40);
+        if (failed.length) {
+            return {
+                ...definition,
+                understandingUrl: `https://www.w3.org/WAI/WCAG22/Understanding/${definition.slug}.html`,
+                scope,
+                status: 'failed',
+                findingIds: failed.map(({ id }) => id),
+                automatedEvidence,
+                detail: `${failed.length} evidence-backed finding${failed.length === 1 ? '' : 's'} mapped to this criterion; a human conformance decision remains required.`
+            };
+        }
+        const requiresManualReview = manualCriteria.has(definition.criterion);
+        return {
+            ...definition,
+            understandingUrl: `https://www.w3.org/WAI/WCAG22/Understanding/${definition.slug}.html`,
+            scope,
+            status: review.length || axe?.incomplete.size ? 'inconclusive' : requiresManualReview ? 'manual-review-required' : 'inconclusive',
+            findingIds: related.map(({ id }) => id),
+            automatedEvidence,
+            detail: review.length || axe?.incomplete.size
+                ? 'One or more automated or heuristic results need qualified human review.'
+                : requiresManualReview
+                    ? 'The mandatory manual test plan includes this criterion; record the reviewer decision before making a conformance claim.'
+                    : axe?.passes.size
+                        ? 'The implemented automated rules passed, but automated coverage alone does not establish criterion-level conformance.'
+                        : 'No complete machine-verifiable determination is available; assess applicability and outcome manually.'
+        };
+    });
+}
+function ledgerStatusCounts(criteria = []) {
+    return criteria.reduce((counts, criterion) => {
+        counts[criterion.status] = (counts[criterion.status] ?? 0) + 1;
+        return counts;
+    }, {});
+}
+//# sourceMappingURL=wcag-criteria.js.map
 ;// CONCATENATED MODULE: ./dist/reporting/consolidate.js
 function uniqueSorted(values) {
     return [...new Set(values.filter(Boolean))].sort();
@@ -154072,11 +154678,74 @@ function conciseMergedText(first, second, limit = 6) {
 function canonicalRule(ruleId) {
     if (['axe-image-alt', 'image-missing-alt'].includes(ruleId))
         return 'image-alt';
-    if (['axe-label', 'form-field-no-label'].includes(ruleId))
+    if (['axe-label', 'axe-select-name', 'axe-textarea-name', 'form-field-no-label'].includes(ruleId))
         return 'form-label';
-    if (['axe-button-name', 'axe-link-name', 'interactive-control-no-name'].includes(ruleId))
+    if (['axe-aria-command-name', 'axe-button-name', 'axe-input-button-name', 'axe-link-name', 'interactive-control-no-name'].includes(ruleId))
         return 'control-name';
     return ruleId;
+}
+function equivalentAxeDomFamily(ruleId) {
+    if (['axe-image-alt', 'image-missing-alt'].includes(ruleId))
+        return 'image-alt';
+    if (['axe-label', 'axe-select-name', 'axe-textarea-name', 'form-field-no-label'].includes(ruleId))
+        return 'form-label';
+    if (['axe-aria-command-name', 'axe-button-name', 'axe-input-button-name', 'axe-link-name', 'interactive-control-no-name'].includes(ruleId))
+        return 'control-name';
+    return null;
+}
+function normalizedSelector(selector) {
+    return selector.trim().replace(/\s+/g, ' ');
+}
+function normalizedEvidenceDetail(detail) {
+    return detail.trim().replace(/\s+/g, ' ');
+}
+function sharesRenderedElement(first, second) {
+    const firstSelectors = new Set(first.selectors.map(normalizedSelector));
+    if (second.selectors.some((selector) => firstSelectors.has(normalizedSelector(selector))))
+        return true;
+    return first.evidence.some((firstEvidence) => second.evidence.some((secondEvidence) => (firstEvidence.pageUrl === secondEvidence.pageUrl
+        && Boolean(normalizedEvidenceDetail(firstEvidence.detail))
+        && normalizedEvidenceDetail(firstEvidence.detail) === normalizedEvidenceDetail(secondEvidence.detail))));
+}
+function mergeEquivalentAxeDomFindings(findings) {
+    const working = findings.map((finding) => ({
+        ...finding,
+        wcag: [...finding.wcag],
+        urls: [...finding.urls],
+        viewports: [...finding.viewports],
+        selectors: [...finding.selectors],
+        evidence: [...finding.evidence]
+    }));
+    const consumed = new Set();
+    for (let axeIndex = 0; axeIndex < working.length; axeIndex += 1) {
+        const axe = working[axeIndex];
+        const family = axe.ruleId.startsWith('axe-') ? equivalentAxeDomFamily(axe.ruleId) : null;
+        if (!family)
+            continue;
+        for (let domIndex = 0; domIndex < working.length; domIndex += 1) {
+            if (domIndex === axeIndex || consumed.has(domIndex))
+                continue;
+            const dom = working[domIndex];
+            if (dom.ruleId.startsWith('axe-') || equivalentAxeDomFamily(dom.ruleId) !== family)
+                continue;
+            if (!axe.urls.some((url) => dom.urls.includes(url)))
+                continue;
+            if (!sharesRenderedElement(axe, dom))
+                continue;
+            const context = mergeFindingContext([axe, dom]);
+            axe.wcag = uniqueSorted([...axe.wcag, ...dom.wcag]);
+            axe.urls = context.urls;
+            axe.viewports = context.viewports;
+            axe.selectors = context.selectors;
+            axe.evidence = context.evidence;
+            if (context.componentName)
+                axe.componentName = context.componentName;
+            if (context.componentLocation)
+                axe.componentLocation = context.componentLocation;
+            consumed.add(domIndex);
+        }
+    }
+    return working.filter((_, index) => !consumed.has(index));
 }
 function rootCause(finding) {
     return JSON.stringify({
@@ -154274,7 +154943,7 @@ function consolidateFindings(findings) {
             existing.componentLocation = context.componentLocation;
     };
     const localFindings = new Map();
-    const ordered = [...findings].sort((a, b) => JSON.stringify([
+    const ordered = mergeEquivalentAxeDomFindings(findings).sort((a, b) => JSON.stringify([
         a.ruleId,
         a.key,
         uniqueSorted(a.urls),
@@ -154349,6 +155018,39 @@ function assertRemediationOnlyNotes(findings) {
     }
 }
 //# sourceMappingURL=consolidate.js.map
+;// CONCATENATED MODULE: ./dist/reporting/json.js
+
+
+
+function portablePath(value, outputPath) {
+    if (!value)
+        return value;
+    const path = (0,external_node_path_.isAbsolute)(value) ? (0,external_node_path_.relative)((0,external_node_path_.dirname)(outputPath), value) : value;
+    return path.replaceAll('\\', '/');
+}
+function portableJsonSummary(summary, outputPath) {
+    const portable = structuredClone(summary);
+    portable.findings = assignFindingIds(portable.findings);
+    for (const page of portable.pages) {
+        for (const viewport of page.viewports) {
+            viewport.screenshot = portablePath(viewport.screenshot, outputPath);
+            for (const item of viewport.elementScreenshots)
+                item.path = portablePath(item.path, outputPath);
+        }
+    }
+    for (const finding of portable.findings) {
+        for (const evidence of finding.evidence) {
+            if (evidence.screenshot)
+                evidence.screenshot = portablePath(evidence.screenshot, outputPath);
+        }
+    }
+    return portable;
+}
+async function writeJsonReport(summary, outputPath) {
+    await (0,promises_.writeFile)(outputPath, `${JSON.stringify(portableJsonSummary(summary, outputPath), null, 2)}\n`, 'utf8');
+    return outputPath;
+}
+//# sourceMappingURL=json.js.map
 ;// CONCATENATED MODULE: ./dist/text.js
 function singleLineText(value, maxLength = Number.POSITIVE_INFINITY) {
     const visible = Array.from(value, (character) => {
@@ -154374,7 +155076,6 @@ function normalizeUrl(value) {
         if (parsed.username || parsed.password) {
             throw new Error('URLs containing embedded usernames or passwords are not supported.');
         }
-        parsed.hash = '';
         return parsed.toString();
     }
     catch (error) {
@@ -154477,7 +155178,7 @@ async function collectUrls(inputs, options = {}) {
         }
         const filePath = (0,external_node_path_.resolve)(input);
         const extension = (0,external_node_path_.extname)(filePath).toLowerCase();
-        sources.push(filePath);
+        sources.push((0,external_node_path_.basename)(filePath));
         if (extension === '.xlsx') {
             found.push(...(await urlsFromWorkbook(filePath)));
             continue;
@@ -154504,6 +155205,9 @@ async function collectUrls(inputs, options = {}) {
 }
 //# sourceMappingURL=urls.js.map
 ;// CONCATENATED MODULE: ./dist/audit/runner.js
+
+
+
 
 
 
@@ -154835,7 +155539,30 @@ function emptyConsent() {
         frameUrl: ''
     };
 }
-async function auditViewport(browser, url, options, viewport, signal) {
+const defaultAuditViewportDependencies = {
+    runAxe,
+    runDomChecks: runDomChecks,
+    runKeyboardChecks: runKeyboardChecks,
+    runDisclosureChecks: runDisclosureChecks,
+    runTabChecks: runTabChecks,
+    runResponsiveChecks: runResponsiveChecks,
+    runLinkChecks: runLinkChecks,
+    collectElementContexts: collectElementContexts,
+    captureElementScreenshots,
+    dismissConsentBanner: dismissConsentBanner,
+    detectInteractionBlocker: detectInteractionBlocker,
+    capturePageScreenshot: async (page, path) => {
+        await (0,promises_.mkdir)((0,external_node_path_.resolve)(path, '..'), { recursive: true });
+        await page.screenshot({ path, fullPage: true, animations: 'disabled', caret: 'hide' });
+    }
+};
+function isPartialAudit(errors, axeRun, blocker) {
+    return Boolean(blocker)
+        || !axeRun.completed
+        || errors.some((message) => /^(?:DOM|Keyboard|Disclosure|Tab|Responsive|Link|Element context|Screenshot) checks? error:/i.test(message));
+}
+async function auditViewport(browser, url, options, viewport, signal, dependencyOverrides = {}) {
+    const dependencies = { ...defaultAuditViewportDependencies, ...dependencyOverrides };
     const errors = [];
     let status = null;
     let finalUrl = url;
@@ -154861,10 +155588,15 @@ async function auditViewport(browser, url, options, viewport, signal) {
     let axeResults = [];
     let dom = emptyDom();
     let keyboard = {
-        sequence: [], completedCycle: false, truncated: false, scope: 'unknown'
+        sequence: [], completedCycle: false, truncated: false, scope: 'unknown', journeys: []
     };
     let responsive = {
-        horizontalOverflow: 0, overflowElements: [], textSpacingOverflow: 0
+        horizontalOverflow: 0,
+        overflowElements: [],
+        textSpacingOverflow: 0,
+        clippedElements: [],
+        overlapPairs: [],
+        lostInteractiveElements: []
     };
     let disclosures = [];
     let tabs = [];
@@ -154943,17 +155675,17 @@ async function auditViewport(browser, url, options, viewport, signal) {
             throw new Error(`Navigation blocked: ${finalUrlRestriction}`);
         }
         title = await page.title();
-        consent = await dismissConsentBanner(page);
+        consent = await dependencies.dismissConsentBanner(page);
         if (consent.error)
             errors.push(`Consent handling error: ${consent.error}`);
         if (consent.found && !consent.dismissed) {
             errors.push('A visible consent banner could not be dismissed before accessibility interaction testing.');
         }
-        interactionBlocker = await detectInteractionBlocker(page);
+        interactionBlocker = await dependencies.detectInteractionBlocker(page);
         if (interactionBlocker)
             errors.push(`${interactionBlocker.reason} ${interactionBlocker.selector}`);
         try {
-            const axeOutput = await runAxe(page, options.wcagLevel);
+            const axeOutput = await dependencies.runAxe(page, options.wcagLevel);
             axeResults = axeOutput.results;
             axeRun = axeOutput.metadata;
         }
@@ -154973,16 +155705,18 @@ async function auditViewport(browser, url, options, viewport, signal) {
             .filter((result) => result.id === 'target-size')
             .flatMap((result) => result.nodes.flatMap((node) => node.target));
         try {
-            dom = await runDomChecks(page, axeTargetSizeSelectors);
+            dom = await dependencies.runDomChecks(page, axeTargetSizeSelectors);
         }
         catch (error) {
             errors.push(`DOM checks error: ${error instanceof Error ? error.message : String(error)}`);
         }
-        try {
-            keyboard = await runKeyboardChecks(page, options.maxTabStops);
-        }
-        catch (error) {
-            errors.push(`Keyboard checks error: ${error instanceof Error ? error.message : String(error)}`);
+        if (!interactionBlocker) {
+            try {
+                keyboard = await dependencies.runKeyboardChecks(page, options.maxTabStops);
+            }
+            catch (error) {
+                errors.push(`Keyboard checks error: ${error instanceof Error ? error.message : String(error)}`);
+            }
         }
         if (!interactionBlocker && keyboard.scope === 'modal-only') {
             interactionBlocker = {
@@ -154995,7 +155729,7 @@ async function auditViewport(browser, url, options, viewport, signal) {
         }
         if (!interactionBlocker) {
             try {
-                disclosures = await runDisclosureChecks(page);
+                disclosures = await dependencies.runDisclosureChecks(page);
             }
             catch (error) {
                 errors.push(`Disclosure checks error: ${error instanceof Error ? error.message : String(error)}`);
@@ -155006,21 +155740,21 @@ async function auditViewport(browser, url, options, viewport, signal) {
         }
         if (!interactionBlocker) {
             try {
-                tabs = await runTabChecks(page);
+                tabs = await dependencies.runTabChecks(page);
             }
             catch (error) {
                 errors.push(`Tab checks error: ${error instanceof Error ? error.message : String(error)}`);
             }
         }
         try {
-            responsive = await runResponsiveChecks(page);
+            responsive = await dependencies.runResponsiveChecks(page);
         }
         catch (error) {
             errors.push(`Responsive checks error: ${error instanceof Error ? error.message : String(error)}`);
         }
         if (!interactionBlocker && viewport.name === 'desktop') {
             try {
-                const linkOutput = await runLinkChecks(page, options.maxLinksPerPage);
+                const linkOutput = await dependencies.runLinkChecks(page, options.maxLinksPerPage);
                 links = linkOutput.results;
                 linkRun = linkOutput.metadata;
             }
@@ -155072,31 +155806,40 @@ async function auditViewport(browser, url, options, viewport, signal) {
             errors
         };
         const allViewportFindings = findingsFromPage({ url, viewports: [preliminaryAudit] });
-        preliminaryAudit.elementContexts = await collectElementContexts(page, allViewportFindings.flatMap((finding) => finding.selectors));
+        try {
+            preliminaryAudit.elementContexts = await dependencies.collectElementContexts(page, allViewportFindings.flatMap((finding) => finding.selectors));
+        }
+        catch (error) {
+            errors.push(`Element context check error: ${error instanceof Error ? error.message : String(error)}`);
+        }
         const screenshotFindings = allViewportFindings
             .filter((finding) => finding.classification !== 'manual');
         if (options.captureScreenshots && screenshotFindings.length > 0) {
             await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => undefined);
             await page.waitForLoadState('networkidle', { timeout: Math.min(options.timeoutMs, 5_000) }).catch(() => undefined);
-            const captureConsent = await dismissConsentBanner(page);
-            const captureBlocker = await detectInteractionBlocker(page);
+            const captureConsent = await dependencies.dismissConsentBanner(page);
+            const captureBlocker = await dependencies.detectInteractionBlocker(page);
             const evidenceSurfaceClear = (!captureConsent.found || captureConsent.dismissed) && !captureBlocker;
-            if (!evidenceSurfaceClear) {
-                errors.push(`Component screenshot capture was blocked by a visible surface${captureBlocker ? `: ${captureBlocker.selector}` : '.'}`);
-                await (0,promises_.mkdir)((0,external_node_path_.resolve)(options.outputDir, 'screenshots'), { recursive: true });
-                await page.screenshot({ path: screenshot, fullPage: true, animations: 'disabled', caret: 'hide' });
-                preliminaryAudit.screenshot = screenshot;
-            }
-            else {
-                await prepareEvidenceStates(page, screenshotFindings);
-                preliminaryAudit.elementScreenshots = await captureElementScreenshots(page, url, viewport.name, options.outputDir, screenshotCandidatesForFindings(screenshotFindings), preliminaryAudit.elementContexts);
-                if (needsFullPageScreenshotFallback(screenshotFindings, preliminaryAudit.elementScreenshots)) {
-                    await (0,promises_.mkdir)((0,external_node_path_.resolve)(options.outputDir, 'screenshots'), { recursive: true });
-                    await page.screenshot({ path: screenshot, fullPage: true, animations: 'disabled', caret: 'hide' });
+            try {
+                if (!evidenceSurfaceClear) {
+                    errors.push(`Component screenshot capture was blocked by a visible surface${captureBlocker ? `: ${captureBlocker.selector}` : '.'}`);
+                    await dependencies.capturePageScreenshot(page, screenshot);
                     preliminaryAudit.screenshot = screenshot;
                 }
+                else {
+                    await prepareEvidenceStates(page, screenshotFindings);
+                    preliminaryAudit.elementScreenshots = await dependencies.captureElementScreenshots(page, url, viewport.name, options.outputDir, screenshotCandidatesForFindings(screenshotFindings), preliminaryAudit.elementContexts);
+                    if (needsFullPageScreenshotFallback(screenshotFindings, preliminaryAudit.elementScreenshots)) {
+                        await dependencies.capturePageScreenshot(page, screenshot);
+                        preliminaryAudit.screenshot = screenshot;
+                    }
+                }
+            }
+            catch (error) {
+                errors.push(`Screenshot check error: ${error instanceof Error ? error.message : String(error)}`);
             }
         }
+        preliminaryAudit.partial = isPartialAudit(errors, axeRun, interactionBlocker);
         return preliminaryAudit;
     }
     catch (error) {
@@ -155123,6 +155866,7 @@ async function auditViewport(browser, url, options, viewport, signal) {
             screenshot: '',
             elementScreenshots: [],
             errors,
+            partial: true,
             ...(cancelled ? { cancelled: true } : {})
         };
     }
@@ -155157,7 +155901,12 @@ async function auditPageBrowser(browser, url, options, execution, pageNumber, pa
             viewport: viewport.name
         });
     }
-    return { url, viewports };
+    return {
+        url,
+        viewports,
+        partial: viewports.length !== options.viewports.length
+            || viewports.some((viewport) => viewport.cancelled || viewport.partial)
+    };
 }
 async function runPool(items, concurrency, signal, worker) {
     const results = new Array(items.length);
@@ -155223,7 +155972,7 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}) {
             await browser?.close().catch(() => undefined);
         }
     }
-    const findings = consolidateFindings(pages.flatMap(findingsFromPage));
+    const findings = assignFindingIds(consolidateFindings(pages.flatMap(findingsFromPage)));
     retainRepresentativeScreenshotPerFinding(findings);
     assertRemediationOnlyNotes(findings);
     const startedUrls = new Set(pages.map((page) => page.url));
@@ -155232,6 +155981,7 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}) {
         : [];
     const cancelled = Boolean(execution.signal?.aborted);
     const generatedAt = new Date().toISOString();
+    const aaaAdvisory = Boolean(options.aaaAdvisory || options.wcagLevel === 'AAA');
     const summary = {
         status: cancelled ? 'cancelled' : 'completed',
         ...(cancelled ? { cancelledAt: generatedAt } : {}),
@@ -155239,6 +155989,10 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}) {
         auditor: options.auditor,
         source,
         wcagLevel: options.wcagLevel,
+        conformanceTarget: 'AA',
+        aaaAdvisory,
+        humanAssessmentRequired: true,
+        conformanceDecision: 'not-determined',
         landingPageUrl: options.landingPageUrl ?? urls[0] ?? '',
         requestedUrls: urls,
         auditedUrls: pages.filter((page) => page.viewports.some((viewport) => !viewport.cancelled && viewport.axeRun.completed && ((viewport.status !== null && viewport.status < 400) ||
@@ -155247,17 +156001,19 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}) {
         pages,
         findings,
         coverage: buildCoverageMatrix(pages, findings),
+        criteria: buildWcagCriterionLedger(pages, findings, REQUIRED_MANUAL_CHECKS, aaaAdvisory),
         manualChecks: REQUIRED_MANUAL_CHECKS,
         limitations: [
             'This output is an evidence-backed test result, not a WCAG conformance certification.',
             'Automated checks cannot establish content meaning, complete contrast over imagery, correct reading order in every assistive technology, or all WCAG exceptions.',
             ...(cancelled ? [CANCELLED_REASON] : []),
-            'Screen-reader, physical-device, content-meaning, and judgment-based WCAG checks remain guided manual work.'
+            'Native screen-reader workflow evidence supplements this report when run, but screen-reader, physical-device, content-meaning, and judgment-based WCAG checks still require qualified human assessment.',
+            'A qualified reviewer must decide applicability and sign off every WCAG 2.2 A and AA criterion before this evidence can support a conformance claim.'
         ]
     };
     await pruneUnreferencedScreenshots(summary, options.outputDir);
     const jsonPath = (0,external_node_path_.resolve)(options.outputDir, 'audit-results.json');
-    await (0,promises_.writeFile)(jsonPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+    await writeJsonReport(summary, jsonPath);
     await emitProgress(execution, {
         phase: cancelled ? 'cancelled' : 'reporting',
         message: cancelled
@@ -155270,6 +156026,7 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}) {
 // EXTERNAL MODULE: external "node:url"
 var external_node_url_ = __nccwpck_require__(73136);
 ;// CONCATENATED MODULE: ./dist/reporting/excel.js
+
 
 
 
@@ -155437,15 +156194,12 @@ function writeStyledRow(worksheet, rowNumber, values, template) {
             row.getCell(column).dataValidation = excel_clone(validation);
     }
 }
-function findingId(index) {
-    return `A11Y${String(index + 1).padStart(3, '0')}`;
-}
 function pageStatus(page, skipped) {
     if (skipped || !page)
         return 'Not started';
     if (page.viewports.some((viewport) => viewport.cancelled))
         return 'Cancelled';
-    if (page.viewports.some((viewport) => viewport.interactionBlocker || !viewport.axeRun.completed))
+    if (page.partial || page.viewports.some((viewport) => viewport.partial || viewport.interactionBlocker || !viewport.axeRun.completed))
         return 'Partial';
     return 'Completed';
 }
@@ -155488,7 +156242,7 @@ function populateEvidence(worksheet, summary, outputPath) {
             const path = evidence.screenshot ? workbookRelativePath(outputPath, evidence.screenshot) : '';
             writeStyledRow(worksheet, rowNumber, [
                 path ? { text: path, hyperlink: path, tooltip: 'Open the evidence file stored beside this workbook.' } : 'Not captured',
-                findingId(findingIndex),
+                findingId(finding, findingIndex),
                 { text: evidence.pageUrl, hyperlink: evidence.pageUrl },
                 evidence.viewport ? viewportLabel(evidence.viewport) : 'Not specified',
                 finding.ruleId,
@@ -155517,6 +156271,82 @@ function populateManualChecks(worksheet, summary) {
     });
     worksheet.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(5, summary.manualChecks.length + 4), column: 7 } };
 }
+function populateCriteria(workbook, summary) {
+    const worksheet = workbook.addWorksheet('WCAG Criteria', {
+        properties: { tabColor: { argb: 'FF7030A0' } }
+    });
+    worksheet.mergeCells('A1:H1');
+    worksheet.getCell('A1').value = 'WCAG 2.2 criterion-by-criterion ledger';
+    worksheet.getCell('A1').font = { name: 'Arial', size: 18, bold: true, color: { argb: 'FFFFFFFF' } };
+    worksheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF17365D' } };
+    worksheet.getCell('A1').alignment = { vertical: 'middle' };
+    worksheet.getRow(1).height = 32;
+    worksheet.mergeCells('A2:H2');
+    worksheet.getCell('A2').value = 'The conformance target is WCAG 2.2 Level AA. Level AAA entries are optional advisory checks. Automated evidence does not replace qualified human assessment or establish conformance.';
+    worksheet.getCell('A2').font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF595959' } };
+    worksheet.getCell('A2').alignment = { wrapText: true, vertical: 'middle' };
+    worksheet.getRow(2).height = 32;
+    const headers = ['Criterion', 'Level', 'Scope', 'Status', 'Finding IDs', 'Automated evidence', 'Decision note', 'Understanding'];
+    worksheet.getRow(4).values = headers;
+    worksheet.getRow(4).height = 26;
+    worksheet.getRow(4).eachCell((cell) => {
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+        cell.alignment = { vertical: 'middle', wrapText: true };
+        cell.border = { bottom: { style: 'thin', color: { argb: 'FFB4C6E7' } } };
+    });
+    const statusColours = {
+        passed: 'FFE2F0D9',
+        failed: 'FFF4CCCC',
+        'manual-review-required': 'FFFFF2CC',
+        inconclusive: 'FFFCE5CD',
+        'not-applicable': 'FFE7E6E6'
+    };
+    (summary.criteria ?? []).forEach((criterion, index) => {
+        const row = worksheet.getRow(index + 5);
+        row.values = [
+            `${criterion.criterion} ${criterion.title}`,
+            criterion.level,
+            criterion.scope === 'standard' ? 'AA conformance target' : 'AAA advisory',
+            criterion.status,
+            criterion.findingIds.join('\n') || 'None',
+            criterion.automatedEvidence.join('\n') || 'No automated evidence mapped',
+            criterion.detail,
+            { text: criterion.understandingUrl, hyperlink: criterion.understandingUrl, tooltip: `Open WCAG Understanding ${criterion.criterion}` }
+        ];
+        row.height = 48;
+        row.eachCell((cell, column) => {
+            cell.font = { name: 'Arial', size: 10, color: { argb: 'FF202124' } };
+            cell.alignment = { vertical: 'top', wrapText: true };
+            cell.border = {
+                bottom: { style: 'hair', color: { argb: 'FFD9E2F3' } },
+                right: { style: 'hair', color: { argb: 'FFE7E6E6' } }
+            };
+            if (column === 4)
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: statusColours[criterion.status] ?? 'FFFFFFFF' } };
+        });
+        row.getCell(1).font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF202124' } };
+        row.getCell(4).dataValidation = {
+            type: 'list',
+            allowBlank: false,
+            formulae: ['"passed,failed,manual-review-required,not-applicable,inconclusive"'],
+            showErrorMessage: true,
+            errorTitle: 'Choose a WCAG status',
+            error: 'Select one of the five supported criterion statuses.',
+            showInputMessage: true,
+            promptTitle: 'Human assessment decision',
+            prompt: 'Change this status only after recording qualified human evidence in the decision note.'
+        };
+        row.getCell(8).font = { name: 'Arial', size: 10, color: { argb: 'FF0563C1' }, underline: true };
+    });
+    worksheet.columns = [
+        { width: 34 }, { width: 9 }, { width: 22 }, { width: 24 },
+        { width: 18 }, { width: 42 }, { width: 48 }, { width: 46 }
+    ];
+    worksheet.views = [{ state: 'frozen', ySplit: 4 }];
+    worksheet.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(5, (summary.criteria?.length ?? 0) + 4), column: 8 } };
+    worksheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+}
 function populateSummary(worksheet, summary) {
     const allViewports = summary.pages.flatMap((page) => page.viewports);
     const classifications = (classification) => summary.findings.filter((finding) => finding.classification === classification).length;
@@ -155524,9 +156354,8 @@ function populateSummary(worksheet, summary) {
     worksheet.getCell('B4').value = summary.status === 'completed' ? 'Completed' : 'Cancelled';
     worksheet.getCell('B5').value = new Date(summary.generatedAt);
     worksheet.getCell('B6').value = summary.auditor;
-    worksheet.getCell('B7').value = summary.wcagLevel === 'AAA'
-        ? 'WCAG 2.2 Level A, AA, and AAA'
-        : 'WCAG 2.2 Level A and AA';
+    const aaaAdvisory = summary.aaaAdvisory ?? summary.wcagLevel === 'AAA';
+    worksheet.getCell('B7').value = `WCAG 2.2 Level A and AA${aaaAdvisory ? '; separate Level AAA advisory checks enabled' : ''}`;
     const landingUrl = summary.landingPageUrl || summary.requestedUrls[0] || '';
     worksheet.getCell('B8').value = /^https?:\/\//i.test(landingUrl) ? { text: landingUrl, hyperlink: landingUrl } : landingUrl;
     worksheet.getCell('B9').value = summary.requestedUrls.length;
@@ -155543,8 +156372,11 @@ function populateSummary(worksheet, summary) {
     worksheet.getCell('A14').value = [
         `Requested URLs: ${summary.requestedUrls.length}`,
         `Audited URLs: ${summary.auditedUrls.length}`,
+        `Partial pages: ${summary.pages.filter((page) => page.partial).length}`,
         `Skipped URLs: ${summary.skippedUrls.length}`,
         `Viewports run: ${allViewports.length}`,
+        `Conformance target: WCAG 2.2 Level AA`,
+        `AAA advisory checks: ${aaaAdvisory ? 'Enabled' : 'Disabled'}`,
         `Source: ${summary.source}`
     ].join('\n');
     const unresolvedCoverage = summary.coverage.flatMap((page) => page.viewports)
@@ -155552,7 +156384,9 @@ function populateSummary(worksheet, summary) {
         .filter((item) => !['confirmed-passed', 'confirmed-failed', 'not-applicable'].includes(item.status)).length;
     worksheet.getCell('A19').value = [
         ...summary.limitations,
+        'Conformance decision: Not determined. Qualified human assessment and sign-off are mandatory.',
         `Coverage matrix contains ${unresolvedCoverage} inconclusive, manual-review-required, or not-tested result(s); these are not passes.`,
+        `Criterion ledger contains ${(summary.criteria ?? []).filter((criterion) => ['manual-review-required', 'inconclusive'].includes(criterion.status)).length} unresolved criterion outcome(s).`,
         summary.manualChecks.length
             ? `${summary.manualChecks.length} guided manual check(s) remain in the Manual Checks sheet.`
             : 'No additional guided manual checks were generated.'
@@ -155575,7 +156409,7 @@ async function writeExcelReport(summary, options) {
     const lookup = getLookup(lookupSheet);
     const findingTemplate = prepareRows(findingsSheet, 7, 7, 25);
     summary.findings.forEach((finding, index) => {
-        writeStyledRow(findingsSheet, index + 7, reportRowValues(finding, findingId(index), criterionEntries(finding, lookup), options.outputPath), findingTemplate);
+        writeStyledRow(findingsSheet, index + 7, reportRowValues(finding, findingId(finding, index), criterionEntries(finding, lookup), options.outputPath), findingTemplate);
     });
     findingsSheet.autoFilter = {
         from: { row: 6, column: 1 },
@@ -155585,6 +156419,7 @@ async function writeExcelReport(summary, options) {
     populatePageInventory(pageSheet, summary);
     populateEvidence(evidenceSheet, summary, options.outputPath);
     populateManualChecks(manualSheet, summary);
+    populateCriteria(workbook, summary);
     workbook.creator = summary.auditor;
     workbook.lastModifiedBy = summary.auditor;
     workbook.created = new Date(summary.generatedAt);
@@ -155640,7 +156475,7 @@ const EXPECTED_REPORT_HEADERS = [
     'Technical locator', 'Test method', 'Actual result', 'Expected result', 'Recommendation', 'Owner',
     'Effort', 'Screenshot', 'Rule ID', 'Labels', 'Translation review'
 ];
-const EXPECTED_WORKSHEETS = [
+const EXPECTED_TEMPLATE_WORKSHEETS = [
     'Audit Summary',
     'Findings',
     'Page Inventory',
@@ -155648,12 +156483,17 @@ const EXPECTED_WORKSHEETS = [
     'Manual Checks',
     'WCAG 2.2 Reference'
 ];
+const EXPECTED_WORKSHEETS = [
+    ...EXPECTED_TEMPLATE_WORKSHEETS,
+    'WCAG Criteria'
+];
 const expectedHeaders = new Map([
     ['Findings', { row: 6, values: EXPECTED_REPORT_HEADERS }],
     ['Page Inventory', { row: 4, values: ['URL', 'Audit state', 'Viewports planned', 'Viewports completed', 'Consent handling', 'Runtime errors', 'Notes'] }],
     ['Evidence', { row: 4, values: ['Evidence path', 'Finding ID', 'Page URL', 'Viewport', 'Rule ID', 'Component', 'Technical locator', 'Evidence type', 'Detail'] }],
     ['Manual Checks', { row: 4, values: ['Check ID', 'Manual check', 'WCAG criterion', 'Applies to', 'Procedure', 'Status', 'Reviewer notes'] }],
-    ['WCAG 2.2 Reference', { row: 3, values: ['Success criterion', 'Level', 'Title', 'Understanding link'] }]
+    ['WCAG 2.2 Reference', { row: 3, values: ['Success criterion', 'Level', 'Title', 'Understanding link'] }],
+    ['WCAG Criteria', { row: 4, values: ['Criterion', 'Level', 'Scope', 'Status', 'Finding IDs', 'Automated evidence', 'Decision note', 'Understanding'] }]
 ]);
 const expectedTabColors = new Map([
     ['Audit Summary', 'FF17365D'],
@@ -155661,11 +156501,13 @@ const expectedTabColors = new Map([
     ['Page Inventory', 'FF4472C4'],
     ['Evidence', 'FF548235'],
     ['Manual Checks', 'FFBF9000'],
-    ['WCAG 2.2 Reference', 'FF7F7F7F']
+    ['WCAG 2.2 Reference', 'FF7F7F7F'],
+    ['WCAG Criteria', 'FF7030A0']
 ]);
 const allowedClassifications = new Set(['confirmed', 'review', 'blocker', 'manual']);
 const allowedStatuses = new Set(['Open', 'In progress', 'Resolved', 'Risk accepted', 'Not applicable']);
 const allowedSeverities = new Set(['Critical', 'Serious', 'Moderate', 'Minor', 'Advisory']);
+const allowedCriterionStatuses = new Set(['passed', 'failed', 'manual-review-required', 'not-applicable', 'inconclusive']);
 function cellHyperlink(value) {
     return typeof value === 'object' && value !== null && 'hyperlink' in value
         ? String(value.hyperlink ?? '').trim()
@@ -155801,6 +156643,25 @@ async function validateExcelReport(path) {
     const embeddedImages = workbook.worksheets.reduce((total, worksheet) => total + worksheet.getImages().length, 0);
     if (embeddedImages)
         errors.push(`Workbook contains ${embeddedImages} embedded image(s); evidence must remain linked to keep it portable and lightweight.`);
+    const criteria = workbook.getWorksheet('WCAG Criteria');
+    if (criteria) {
+        let criterionRows = 0;
+        for (let rowNumber = 5; rowNumber <= criteria.rowCount; rowNumber += 1) {
+            const row = criteria.getRow(rowNumber);
+            if (!cellText(row.getCell(1)))
+                continue;
+            criterionRows += 1;
+            for (let column = 1; column <= 8; column += 1) {
+                if (!cellText(row.getCell(column)))
+                    errors.push(`Required criterion cell ${row.getCell(column).address} is empty.`);
+            }
+            if (!allowedCriterionStatuses.has(cellText(row.getCell(4))))
+                errors.push(`WCAG Criteria!D${rowNumber} contains an unsupported status.`);
+            validateHttpCell(row.getCell(8), `WCAG Criteria!H${rowNumber}`, errors);
+        }
+        if (!criterionRows)
+            warnings.push('The workbook contains no WCAG criterion rows.');
+    }
     const summary = workbook.getWorksheet('Audit Summary');
     const auditor = summary ? cellText(summary.getCell('B6')) : '';
     if (!auditor)
@@ -155851,7 +156712,11 @@ async function createAuditArchive(outputDir, reportPath, htmlPath, jsonPath) {
 ;// CONCATENATED MODULE: ./dist/reporting/html.js
 
 
+
 const STATUS_LABELS = {
+    passed: 'Passed by available evidence',
+    failed: 'Failed',
+    inconclusive: 'Inconclusive',
     'confirmed-passed': 'Passed',
     'confirmed-failed': 'Failed',
     'tested-inconclusive': 'Inconclusive',
@@ -155907,7 +156772,8 @@ function findingRows(summary, outputPath) {
             .join('');
         const pages = finding.urls.map((url) => `<li>${html_link(url)}</li>`).join('');
         const selectors = finding.selectors.map((selector) => `<li><code>${escapeHtml(selector)}</code></li>`).join('');
-        return `<tr data-search="${escapeHtml([
+        const id = findingId(finding, index);
+        return `<tr id="finding-${escapeHtml(id)}" data-search="${escapeHtml([
             finding.ruleId,
             finding.summary,
             finding.issue,
@@ -155918,17 +156784,17 @@ function findingRows(summary, outputPath) {
             ...finding.wcag,
             ...finding.urls
         ].filter(Boolean).join(' ').toLowerCase())}" data-classification="${escapeHtml(finding.classification)}" data-severity="${escapeHtml(finding.severity)}">
-      <td><span class="finding-id">A11Y-${String(index + 1).padStart(3, '0')}</span><br><span class="muted">${escapeHtml(finding.ruleId)}</span></td>
+      <td><span class="finding-id">${escapeHtml(id)}</span><br><span class="muted">${escapeHtml(finding.ruleId)}</span></td>
       <td><span class="badge badge-${escapeHtml(finding.classification)}">${escapeHtml(finding.classification)}</span></td>
       <td><span class="badge severity-${escapeHtml(finding.severity.toLowerCase())}">${escapeHtml(finding.severity)}</span></td>
       <td><strong>${escapeHtml(finding.summary)}</strong><p>${escapeHtml(finding.issue)}</p>
         <details><summary>Impact, testing and remediation</summary>
-          <h4>Impact</h4><p>${escapeHtml(finding.impact)}</p>
-          <h4>How to verify</h4><p>${escapeHtml(finding.testing)}</p>
-          <h4>Recommended remediation</h4><p>${escapeHtml(finding.remediation)}</p>
-          <h4>Component</h4><p>${escapeHtml(finding.componentName || finding.component)}${finding.componentLocation ? ` — ${escapeHtml(finding.componentLocation)}` : ''}</p>
-          ${selectors ? `<h4>Selectors</h4><ul>${selectors}</ul>` : ''}
-          ${screenshots ? `<h4>Evidence</h4><ul>${screenshots}</ul>` : ''}
+          <h3>Impact</h3><p>${escapeHtml(finding.impact)}</p>
+          <h3>How to verify</h3><p>${escapeHtml(finding.testing)}</p>
+          <h3>Recommended remediation</h3><p>${escapeHtml(finding.remediation)}</p>
+          <h3>Component</h3><p>${escapeHtml(finding.componentName || finding.component)}${finding.componentLocation ? ` — ${escapeHtml(finding.componentLocation)}` : ''}</p>
+          ${selectors ? `<h3>Selectors</h3><ul>${selectors}</ul>` : ''}
+          ${screenshots ? `<h3>Evidence</h3><ul>${screenshots}</ul>` : ''}
         </details>
       </td>
       <td>${finding.wcag.length ? finding.wcag.map((criterion) => `<span class="criterion">${escapeHtml(criterion)}</span>`).join(' ') : '<span class="muted">Advisory</span>'}</td>
@@ -155945,7 +156811,7 @@ function pageRows(summary) {
         const viewports = page?.viewports.map((item) => item.viewport.name) ?? [];
         const errors = page?.viewports.flatMap((item) => item.errors) ?? [];
         const blockers = page?.viewports.flatMap((item) => item.interactionBlocker?.reason ? [item.interactionBlocker.reason] : []) ?? [];
-        const status = skipped.has(url) ? 'Skipped' : page ? 'Audited' : 'Not started';
+        const status = skipped.has(url) ? 'Skipped' : page?.partial ? 'Partial' : page ? 'Audited' : 'Not started';
         return `<tr><td>${html_link(url)}</td><td><span class="status-dot status-${status.toLowerCase().replace(' ', '-')}"></span>${status}</td><td>${escapeHtml(viewports.join(', ') || '—')}</td><td>${list([skipped.get(url) || '', ...errors, ...blockers], 'None')}</td></tr>`;
     }).join('');
 }
@@ -155955,6 +156821,17 @@ function coverageRows(summary) {
 function manualRows(summary) {
     return summary.manualChecks.map((check) => `<tr><td><span class="finding-id">${escapeHtml(check.id)}</span></td><td><strong>${escapeHtml(check.title)}</strong></td><td>${check.wcag.map((criterion) => `<span class="criterion">${escapeHtml(criterion)}</span>`).join(' ') || 'Advisory'}</td><td>${escapeHtml(check.applicableTo)}</td><td>${escapeHtml(check.procedure)}</td><td><span class="coverage coverage-manual-review-required">Not tested</span></td></tr>`).join('') || '<tr><td colspan="6" class="empty">No guided manual checks were generated.</td></tr>';
 }
+function criterionRows(summary) {
+    const criteria = summary.criteria ?? [];
+    return criteria.map((criterion) => {
+        const evidence = [
+            ...criterion.findingIds.map((id) => `<a href="#finding-${escapeHtml(id)}">${escapeHtml(id)}</a>`),
+            ...criterion.automatedEvidence.map((item) => escapeHtml(item))
+        ];
+        const evidenceList = evidence.length ? `<ul>${evidence.map((item) => `<li>${item}</li>`).join('')}</ul>` : '<p>No automated evidence mapped.</p>';
+        return `<tr><td><a href="${escapeHtml(criterion.understandingUrl)}" target="_blank" rel="noopener noreferrer"><span class="finding-id">${escapeHtml(criterion.criterion)}</span></a><br><span class="muted">${escapeHtml(criterion.title)}</span></td><td>${escapeHtml(criterion.level)}</td><td>${escapeHtml(criterion.scope === 'standard' ? 'AA conformance target' : 'AAA advisory')}</td><td><span class="coverage coverage-${escapeHtml(criterion.status)}">${escapeHtml(STATUS_LABELS[criterion.status] || criterion.status)}</span></td><td>${evidenceList}</td><td>${escapeHtml(criterion.detail)}</td></tr>`;
+    }).join('') || '<tr><td colspan="6" class="empty">No criterion ledger was generated.</td></tr>';
+}
 function renderReport(summary, outputPath) {
     const confirmed = count(summary, (finding) => finding.classification === 'confirmed');
     const reviews = count(summary, (finding) => finding.classification === 'review');
@@ -155962,7 +156839,10 @@ function renderReport(summary, outputPath) {
     const serious = count(summary, (finding) => finding.severity === 'Critical' || finding.severity === 'Serious');
     const generated = Number.isNaN(Date.parse(summary.generatedAt)) ? summary.generatedAt : new Date(summary.generatedAt).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' });
     const target = summary.landingPageUrl || summary.requestedUrls[0] || 'Not specified';
-    const conformance = summary.wcagLevel === 'AAA' ? 'WCAG 2.2 Level A, AA and AAA' : 'WCAG 2.2 Level A and AA';
+    const aaaAdvisory = summary.aaaAdvisory ?? summary.wcagLevel === 'AAA';
+    const conformance = `WCAG 2.2 Level A and AA${aaaAdvisory ? ', with separate Level AAA advisory checks' : ''}`;
+    const criteria = summary.criteria ?? [];
+    const unresolvedCriteria = criteria.filter((criterion) => ['manual-review-required', 'inconclusive'].includes(criterion.status)).length;
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -155971,7 +156851,7 @@ function renderReport(summary, outputPath) {
   <title>Accessibility audit report — ${escapeHtml(target)}</title>
   <style>
     :root{--blue:#1a73e8;--blue-dark:#174ea6;--ink:#202124;--muted:#5f6368;--line:#dadce0;--surface:#f8f9fa;--red:#c5221f;--amber:#b06000;--green:#137333;--shadow:0 1px 2px rgba(60,64,67,.12),0 1px 3px 1px rgba(60,64,67,.08)}
-    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--ink);background:#fff;font:15px/1.55 Arial,"Helvetica Neue",sans-serif}a{color:var(--blue-dark);text-underline-offset:2px}a:hover{text-decoration-thickness:2px}.skip{position:absolute;left:16px;top:-60px;background:#fff;padding:12px 16px;border:2px solid var(--blue);z-index:10}.skip:focus{top:12px}.masthead{border-bottom:1px solid var(--line);background:#fff}.masthead-inner,.page{max-width:1440px;margin:auto;padding-left:32px;padding-right:32px}.masthead-inner{height:72px;display:flex;align-items:center;gap:14px}.mark{width:36px;height:36px;border-radius:9px;background:var(--blue);color:#fff;display:grid;place-items:center;font-weight:700}.brand{font-size:18px;font-weight:600}.brand span{display:block;color:var(--muted);font-size:12px;font-weight:400}.page{padding-top:38px;padding-bottom:64px}.eyebrow{color:var(--blue-dark);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}h1{font-size:38px;line-height:1.15;letter-spacing:-.6px;margin:8px 0 12px}h2{font-size:24px;margin:42px 0 14px;letter-spacing:-.2px}h3{font-size:17px;margin:0 0 10px}h4{font-size:14px;margin:16px 0 4px}.lede{font-size:17px;color:var(--muted);max-width:850px}.meta{display:flex;flex-wrap:wrap;gap:10px 26px;color:var(--muted);margin:20px 0 28px}.meta strong{color:var(--ink)}.notice{border-left:4px solid var(--blue);background:#e8f0fe;border-radius:0 8px 8px 0;padding:15px 18px;margin:26px 0}.notice.warning{border-color:var(--amber);background:#fef7e0}.metrics{display:grid;grid-template-columns:repeat(6,minmax(135px,1fr));gap:14px;margin:28px 0}.metric{border:1px solid var(--line);border-radius:12px;padding:18px;background:#fff;box-shadow:var(--shadow)}.metric strong{display:block;font-size:28px;line-height:1.1;margin-top:6px}.metric span{color:var(--muted);font-size:13px}.metric.attention strong{color:var(--red)}nav{position:sticky;top:0;z-index:5;background:rgba(255,255,255,.96);border-bottom:1px solid var(--line);margin:28px calc(50% - 50vw);padding:0 max(32px,calc((100vw - 1440px)/2 + 32px));display:flex;gap:22px;overflow:auto}nav a{display:block;padding:14px 0;color:var(--muted);font-weight:600;text-decoration:none;white-space:nowrap}nav a:hover,nav a:focus{color:var(--blue-dark);border-bottom:2px solid var(--blue)}.toolbar{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:16px 0}.field{display:grid;gap:5px}.field label{font-size:12px;font-weight:700;color:var(--muted)}input,select{min-height:42px;border:1px solid #9aa0a6;border-radius:6px;background:#fff;color:var(--ink);padding:8px 11px;font:inherit}input{width:min(420px,80vw)}input:focus,select:focus{outline:3px solid #d2e3fc;border-color:var(--blue)}.result-count{margin-left:auto;color:var(--muted);padding-bottom:10px}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}table{width:100%;border-collapse:collapse;min-width:900px}caption{text-align:left;padding:14px 16px;background:var(--surface);font-weight:600}th{position:sticky;top:0;background:#f1f3f4;text-align:left;font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:#3c4043}th,td{padding:13px 14px;border-bottom:1px solid var(--line);vertical-align:top}tr:last-child td{border-bottom:0}tbody tr:hover{background:#f8fbff}td p{margin:5px 0}td ul{margin:0;padding-left:18px}.finding-id{font-weight:700;white-space:nowrap}.muted{color:var(--muted);font-size:13px}.badge,.criterion,.coverage{display:inline-block;border-radius:999px;font-size:12px;font-weight:700;line-height:1.4;padding:3px 8px;white-space:nowrap}.badge-confirmed,.severity-critical,.severity-serious,.coverage-confirmed-failed{color:#a50e0e;background:#fce8e6}.badge-review,.severity-moderate,.coverage-tested-inconclusive,.coverage-manual-review-required,.coverage-not-tested{color:#8a4b00;background:#fef7e0}.badge-blocker{color:#fff;background:var(--red)}.badge-manual,.severity-minor,.severity-advisory,.coverage-not-applicable{color:#3c4043;background:#f1f3f4}.coverage-confirmed-passed{color:#0d652d;background:#e6f4ea}.criterion{margin:1px;color:#174ea6;background:#e8f0fe}details{margin-top:9px}summary{cursor:pointer;color:var(--blue-dark);font-weight:600}code{white-space:normal;overflow-wrap:anywhere;background:#f1f3f4;border-radius:3px;padding:1px 4px}.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:#9aa0a6}.status-audited{background:var(--green)}.status-skipped{background:var(--amber)}.empty{text-align:center;color:var(--muted);padding:32px}.limitations{display:grid;grid-template-columns:1fr 1fr;gap:16px}.panel{border:1px solid var(--line);border-radius:10px;padding:18px;background:var(--surface)}.panel ul{margin:8px 0;padding-left:20px}.footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--ink);background:#fff;font:15px/1.55 Arial,"Helvetica Neue",sans-serif}a{color:var(--blue-dark);text-underline-offset:2px}a:hover{text-decoration-thickness:2px}:focus-visible{outline:3px solid #8ab4f8;outline-offset:3px}.skip{position:absolute;left:16px;top:-60px;background:#fff;padding:12px 16px;border:2px solid var(--blue);z-index:10}.skip:focus{top:12px}.masthead{border-bottom:1px solid var(--line);background:#fff}.masthead-inner,.page{max-width:1440px;margin:auto;padding-left:32px;padding-right:32px}.masthead-inner{height:72px;display:flex;align-items:center;gap:14px}.mark{width:36px;height:36px;border-radius:9px;background:var(--blue);color:#fff;display:grid;place-items:center;font-weight:700}.brand{font-size:18px;font-weight:600}.brand span{display:block;color:var(--muted);font-size:12px;font-weight:400}.page{padding-top:38px;padding-bottom:64px}.eyebrow{color:var(--blue-dark);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}h1{font-size:38px;line-height:1.15;letter-spacing:-.6px;margin:8px 0 12px}h2{font-size:24px;margin:42px 0 14px;letter-spacing:-.2px}h3{font-size:14px;margin:16px 0 4px}.lede{font-size:17px;color:var(--muted);max-width:850px}.meta{display:flex;flex-wrap:wrap;gap:10px 26px;color:var(--muted);margin:20px 0 28px}.meta strong{color:var(--ink)}.notice{border-left:4px solid var(--blue);background:#e8f0fe;border-radius:0 8px 8px 0;padding:15px 18px;margin:26px 0}.notice.warning{border-color:var(--amber);background:#fef7e0}.metrics{display:grid;grid-template-columns:repeat(6,minmax(135px,1fr));gap:14px;margin:28px 0}.metric{border:1px solid var(--line);border-radius:12px;padding:18px;background:#fff;box-shadow:var(--shadow)}.metric strong{display:block;font-size:28px;line-height:1.1;margin-top:6px}.metric span{color:var(--muted);font-size:13px}.metric.attention strong{color:var(--red)}nav{position:sticky;top:0;z-index:5;background:rgba(255,255,255,.96);border-bottom:1px solid var(--line);margin:28px calc(50% - 50vw);padding:0 max(32px,calc((100vw - 1440px)/2 + 32px));display:flex;gap:22px;overflow:auto}nav a{display:block;padding:14px 0;color:var(--muted);font-weight:600;text-decoration:none;white-space:nowrap}nav a:hover,nav a:focus{color:var(--blue-dark);border-bottom:2px solid var(--blue)}.toolbar{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:16px 0}.field{display:grid;gap:5px}.field label{font-size:12px;font-weight:700;color:var(--muted)}input,select{min-height:42px;border:1px solid #9aa0a6;border-radius:6px;background:#fff;color:var(--ink);padding:8px 11px;font:inherit}input{width:min(420px,80vw)}input:focus,select:focus{outline:3px solid #d2e3fc;border-color:var(--blue)}.result-count{margin-left:auto;color:var(--muted);padding-bottom:10px}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}table{width:100%;border-collapse:collapse;min-width:900px}caption{text-align:left;padding:14px 16px;background:var(--surface);font-weight:600}th{position:sticky;top:0;background:#f1f3f4;text-align:left;font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:#3c4043}th,td{padding:13px 14px;border-bottom:1px solid var(--line);vertical-align:top}tr:last-child td{border-bottom:0}tbody tr:hover{background:#f8fbff}td p{margin:5px 0}td ul{margin:0;padding-left:18px}.finding-id{font-weight:700;white-space:nowrap}.muted{color:var(--muted);font-size:13px}.badge,.criterion,.coverage{display:inline-block;border-radius:999px;font-size:12px;font-weight:700;line-height:1.4;padding:3px 8px;white-space:nowrap}.badge-confirmed,.severity-critical,.severity-serious,.coverage-confirmed-failed,.coverage-failed{color:#a50e0e;background:#fce8e6}.badge-review,.severity-moderate,.coverage-tested-inconclusive,.coverage-manual-review-required,.coverage-not-tested,.coverage-inconclusive{color:#8a4b00;background:#fef7e0}.badge-blocker{color:#fff;background:var(--red)}.badge-manual,.severity-minor,.severity-advisory,.coverage-not-applicable{color:#3c4043;background:#f1f3f4}.coverage-confirmed-passed,.coverage-passed{color:#0d652d;background:#e6f4ea}.criterion{margin:1px;color:#174ea6;background:#e8f0fe}details{margin-top:9px}summary{cursor:pointer;color:var(--blue-dark);font-weight:600}code{white-space:normal;overflow-wrap:anywhere;background:#f1f3f4;border-radius:3px;padding:1px 4px}.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:#9aa0a6}.status-audited{background:var(--green)}.status-partial,.status-skipped{background:var(--amber)}.empty{text-align:center;color:var(--muted);padding:32px}.limitations{display:grid;grid-template-columns:1fr 1fr;gap:16px}.panel{border:1px solid var(--line);border-radius:10px;padding:18px;background:var(--surface)}.panel ul{margin:8px 0;padding-left:20px}.footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
     @media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}.limitations{grid-template-columns:1fr}.masthead-inner,.page{padding-left:18px;padding-right:18px}h1{font-size:31px}.result-count{width:100%;margin-left:0}}
     @media print{nav,.toolbar,.skip{display:none}.page{max-width:none;padding:20px}.metrics{grid-template-columns:repeat(3,1fr)}.metric{box-shadow:none}details{display:block}details>summary{display:none}.table-wrap{overflow:visible}table{min-width:0;font-size:10px}th{position:static}a{color:inherit;text-decoration:none}}
   </style>
@@ -155984,7 +156864,7 @@ function renderReport(summary, outputPath) {
     <h1>Accessibility audit report</h1>
     <p class="lede">A structured review of ${html_link(target)} against ${escapeHtml(conformance)}, combining automated browser evidence with a defined manual-assessment plan.</p>
     <div class="meta"><span><strong>Generated:</strong> ${escapeHtml(generated)} UTC</span><span><strong>Auditor:</strong> ${escapeHtml(summary.auditor)}</span><span><strong>Source:</strong> ${escapeHtml(sourceLabel(summary.source))}</span></div>
-    <div class="notice warning"><strong>Conformance note:</strong> Automated testing cannot certify WCAG conformance. Confirmed failures require remediation, review findings require a human decision, and every manual check below remains part of the audit.</div>
+    <div class="notice warning"><strong>Conformance decision: ${escapeHtml(summary.conformanceDecision === 'not-determined' || !summary.conformanceDecision ? 'Not determined' : summary.conformanceDecision)}.</strong> Automated evidence cannot certify WCAG conformance. A qualified human assessment and sign-off remain mandatory; failures require remediation and unresolved outcomes are not passes.</div>
     <section class="metrics" aria-label="Audit summary">
       <div class="metric"><span>Pages audited</span><strong>${summary.auditedUrls.length}</strong></div>
       <div class="metric"><span>Total findings</span><strong>${summary.findings.length}</strong></div>
@@ -155994,17 +156874,19 @@ function renderReport(summary, outputPath) {
       <div class="metric"><span>Manual checks</span><strong>${summary.manualChecks.length}</strong></div>
     </section>
     ${blockers ? `<div class="notice"><strong>${blockers} audit blocker${blockers === 1 ? '' : 's'}:</strong> review the findings before treating coverage as complete.</div>` : ''}
-    <nav aria-label="Report sections"><a href="#findings">Findings</a><a href="#pages">Pages</a><a href="#coverage">Coverage</a><a href="#manual">Manual checks</a><a href="#method">Method and limitations</a></nav>
+    <nav aria-label="Report sections"><a href="#findings">Findings</a><a href="#criteria">WCAG criteria</a><a href="#pages">Pages</a><a href="#coverage">Coverage</a><a href="#manual">Manual checks</a><a href="#method">Method and limitations</a></nav>
 
     <section id="findings" aria-labelledby="findings-title"><h2 id="findings-title">Findings</h2><p class="lede">Search and filter the evidence. Expand a finding for its impact, verification steps, remediation and linked screenshots.</p>
       <div class="toolbar"><div class="field"><label for="finding-search">Search findings</label><input id="finding-search" type="search" placeholder="Rule, issue, page or WCAG criterion"></div><div class="field"><label for="classification-filter">Classification</label><select id="classification-filter"><option value="">All classifications</option><option value="confirmed">Confirmed</option><option value="review">Review</option><option value="blocker">Blocker</option><option value="manual">Manual</option></select></div><div class="field"><label for="severity-filter">Severity</label><select id="severity-filter"><option value="">All severities</option><option>Critical</option><option>Serious</option><option>Moderate</option><option>Minor</option><option>Advisory</option></select></div><div id="result-count" class="result-count" aria-live="polite"></div></div>
       <div class="table-wrap"><table><caption>Automated and evidence-backed findings</caption><thead><tr><th scope="col">ID / rule</th><th scope="col">Class</th><th scope="col">Severity</th><th scope="col">Finding</th><th scope="col">WCAG</th><th scope="col">Pages</th></tr></thead><tbody id="finding-rows">${findingRows(summary, outputPath)}</tbody></table></div>
     </section>
 
+    <section id="criteria" aria-labelledby="criteria-title"><h2 id="criteria-title">WCAG 2.2 criterion ledger</h2><p class="lede">Every success criterion is accounted for. The AA conformance target covers Levels A and AA; Level AAA appears only as optional advisory scope. ${unresolvedCriteria} criterion outcome${unresolvedCriteria === 1 ? '' : 's'} still require a human decision or more evidence.</p><div class="table-wrap"><table><caption>Criterion-by-criterion status and evidence</caption><thead><tr><th scope="col">Criterion</th><th scope="col">Level</th><th scope="col">Scope</th><th scope="col">Status</th><th scope="col">Evidence</th><th scope="col">Decision note</th></tr></thead><tbody>${criterionRows(summary)}</tbody></table></div></section>
+
     <section id="pages" aria-labelledby="pages-title"><h2 id="pages-title">Page inventory</h2><div class="table-wrap"><table><caption>Requested targets and audit status</caption><thead><tr><th scope="col">URL</th><th scope="col">Status</th><th scope="col">Viewports</th><th scope="col">Notes</th></tr></thead><tbody>${pageRows(summary)}</tbody></table></div></section>
     <section id="coverage" aria-labelledby="coverage-title"><h2 id="coverage-title">Test coverage</h2><p class="lede">“Manual review”, “inconclusive” and “not tested” are unresolved outcomes—not passes.</p><div class="table-wrap"><table><caption>Coverage by page, viewport and audit area</caption><thead><tr><th scope="col">Page</th><th scope="col">Viewport</th><th scope="col">Area</th><th scope="col">Outcome</th><th scope="col">Evidence note</th></tr></thead><tbody>${coverageRows(summary)}</tbody></table></div></section>
     <section id="manual" aria-labelledby="manual-title"><h2 id="manual-title">Guided manual checks</h2><p class="lede">Complete these checks with keyboard, screen reader, zoom/reflow and human judgement as applicable.</p><div class="table-wrap"><table><caption>Required human assessment plan</caption><thead><tr><th scope="col">ID</th><th scope="col">Check</th><th scope="col">WCAG</th><th scope="col">Applies to</th><th scope="col">Procedure</th><th scope="col">Status</th></tr></thead><tbody>${manualRows(summary)}</tbody></table></div></section>
-    <section id="method" aria-labelledby="method-title"><h2 id="method-title">Method and limitations</h2><div class="limitations"><div class="panel"><h3>Audit scope</h3><ul><li>${escapeHtml(conformance)}</li><li>${summary.requestedUrls.length} requested URL${summary.requestedUrls.length === 1 ? '' : 's'}; ${summary.auditedUrls.length} audited</li><li>${summary.pages.flatMap((page) => page.viewports).length} page-and-viewport runs</li><li>Automated axe rules plus DOM, keyboard, responsive, disclosure, tab and link checks</li></ul></div><div class="panel"><h3>Known limitations</h3>${list([...summary.limitations, `${summary.manualChecks.length} guided manual check(s) require human completion.`], 'No limitations recorded.')}</div></div></section>
+    <section id="method" aria-labelledby="method-title"><h2 id="method-title">Method and limitations</h2><div class="limitations"><div class="panel"><h3>Audit scope</h3><ul><li>${escapeHtml(conformance)}</li><li>${summary.requestedUrls.length} requested URL${summary.requestedUrls.length === 1 ? '' : 's'}; ${summary.auditedUrls.length} audited</li><li>${summary.pages.flatMap((page) => page.viewports).length} page-and-viewport runs</li><li>Automated axe rules plus DOM, deterministic keyboard journeys, responsive/reflow, disclosure, tab and link checks</li><li>Native screen-reader transcripts, when supplied, are supporting evidence and do not replace expert assessment</li></ul></div><div class="panel"><h3>Known limitations</h3>${list([...summary.limitations, `${summary.manualChecks.length} guided manual check(s) require human completion.`, 'A qualified human must complete applicable checks and make the final conformance decision.'], 'No limitations recorded.')}</div></div></section>
     <footer class="footer">Generated by CarlasHub Accessibility Audit. Keep this file beside the <code>screenshots</code> folder so evidence links continue to work.</footer>
   </main>
   <script>
@@ -156039,6 +156921,7 @@ async function writeHtmlReport(summary, outputPath) {
 }
 //# sourceMappingURL=html.js.map
 ;// CONCATENATED MODULE: ./dist/service.js
+
 
 
 
@@ -156102,7 +156985,7 @@ async function executeAudit(request) {
         summary.status = 'cancelled';
         summary.cancelledAt = cancelledAt;
         summary.limitations.push('The audit was stopped by the user. Results include only work completed before cancellation.');
-        await (0,promises_.writeFile)(jsonPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+        await writeJsonReport(summary, jsonPath);
         return true;
     };
     await applyLateCancellation();
@@ -156140,6 +157023,7 @@ async function executeAudit(request) {
     });
     const archivePath = await createAuditArchive(options.outputDir, reportPath, htmlPath, jsonPath);
     const completedPageCount = summary.pages.filter((page) => page.viewports.length === options.viewports.length &&
+        !page.partial &&
         page.viewports.every((viewport) => (!viewport.cancelled
             && !viewport.interactionBlocker
             && viewport.axeRun.completed
@@ -156230,12 +157114,14 @@ function parseWcagLevel(value) {
     }
     return normalized;
 }
-function parsePositiveInteger(value, fallback, name) {
+function parsePositiveInteger(value, fallback, name, maximum) {
     if (!value.trim())
         return fallback;
     const parsed = Number(value);
     if (!Number.isInteger(parsed) || parsed < 1)
         throw new Error(`${name} must be a positive integer.`);
+    if (maximum !== undefined && parsed > maximum)
+        throw new Error(`${name} must be between 1 and ${maximum}.`);
     return parsed;
 }
 function evaluateGate(policy, findings = []) {
@@ -156366,7 +157252,7 @@ async function readStoredFindings(jsonPath) {
     const stored = JSON.parse(await (0,promises_.readFile)(jsonPath, 'utf8'));
     return stored.findings ?? [];
 }
-async function runGitHubAction(environment = process.env) {
+async function runGitHubAction(environment = process.env, signal) {
     const inputs = parseListInput(getInput(environment, 'URLS'));
     if (!inputs.length)
         throw new Error('The urls input must include at least one URL, with one URL per line.');
@@ -156382,6 +157268,7 @@ async function runGitHubAction(environment = process.env) {
         options: {
             auditor: getInput(environment, 'AUDITOR') || 'GitHub Actions',
             wcagLevel: parseWcagLevel(getInput(environment, 'WCAG-LEVEL')),
+            aaaAdvisory: parseBooleanInput(getInput(environment, 'AAA-ADVISORY'), false),
             outputDir,
             ...(getInput(environment, 'LANDING-PAGE-URL') ? { landingPageUrl: getInput(environment, 'LANDING-PAGE-URL') } : {}),
             allowedHosts,
@@ -156389,12 +157276,13 @@ async function runGitHubAction(environment = process.env) {
             headless: true,
             autoInstallBrowser: parseBooleanInput(getInput(environment, 'AUTO-INSTALL-BROWSER'), true),
             timeoutMs: parsePositiveInteger(getInput(environment, 'TIMEOUT-MS'), 30_000, 'timeout-ms'),
-            concurrency: parsePositiveInteger(getInput(environment, 'CONCURRENCY'), 2, 'concurrency'),
+            concurrency: parsePositiveInteger(getInput(environment, 'CONCURRENCY'), 2, 'concurrency', 8),
             captureScreenshots: parseBooleanInput(getInput(environment, 'CAPTURE-SCREENSHOTS'), true),
             ...(getInput(environment, 'BROWSER-CHANNEL') ? { channel: getInput(environment, 'BROWSER-CHANNEL') } : {}),
             ...(templatePath ? { templatePath } : {})
         },
         execution: {
+            ...(signal ? { signal } : {}),
             onProgress: (event) => { process.stdout.write(`${formatProgress(event)}\n`); }
         }
     });
@@ -156449,5 +157337,27 @@ function reportActionFailure(error) {
 //# sourceMappingURL=github-action.js.map
 ;// CONCATENATED MODULE: ./dist/action-entry.js
 
-runGitHubAction().catch(reportActionFailure);
+const abortController = new AbortController();
+let stopRequested = false;
+const stopGracefully = () => {
+    if (stopRequested) {
+        process.stderr.write('Second interrupt received; exiting immediately.\n');
+        process.exit(130);
+    }
+    stopRequested = true;
+    process.stderr.write('Stop requested. Closing browser work and writing partial audit artifacts.\n');
+    abortController.abort('GitHub Action cancelled');
+};
+process.on('SIGINT', stopGracefully);
+process.on('SIGTERM', stopGracefully);
+runGitHubAction(process.env, abortController.signal)
+    .then((result) => {
+    if (result.status === 'cancelled')
+        process.exitCode = 130;
+})
+    .catch(reportActionFailure)
+    .finally(() => {
+    process.off('SIGINT', stopGracefully);
+    process.off('SIGTERM', stopGracefully);
+});
 //# sourceMappingURL=action-entry.js.map

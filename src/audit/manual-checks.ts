@@ -3,6 +3,7 @@ import type { ManualCheck } from '../types.js';
 export const REQUIRED_MANUAL_CHECKS: ManualCheck[] = [
   {
     id: 'manual-keyboard-complete',
+    classification: 'manual',
     title: 'Complete keyboard-only journey',
     wcag: ['2.1.1', '2.1.2', '2.4.3', '2.4.7', '2.4.11'],
     applicableTo: 'Every unique page template and interactive component state',
@@ -10,6 +11,7 @@ export const REQUIRED_MANUAL_CHECKS: ManualCheck[] = [
   },
   {
     id: 'manual-screen-reader-combinations',
+    classification: 'manual',
     title: 'Supported screen-reader and browser combinations',
     wcag: ['1.3.1', '2.4.3', '2.4.6', '3.2.4', '4.1.2', '4.1.3'],
     applicableTo: 'Navigation, forms, validation, search, tabs, dialogs, carousels, and dynamic status messages',
@@ -17,6 +19,7 @@ export const REQUIRED_MANUAL_CHECKS: ManualCheck[] = [
   },
   {
     id: 'manual-zoom-reflow',
+    classification: 'manual',
     title: 'Zoom, text resize, and reflow',
     wcag: ['1.4.4', '1.4.10', '1.4.12'],
     applicableTo: 'Every unique responsive template',
@@ -24,6 +27,7 @@ export const REQUIRED_MANUAL_CHECKS: ManualCheck[] = [
   },
   {
     id: 'manual-contrast-states',
+    classification: 'manual',
     title: 'Contrast in all component states',
     wcag: ['1.4.3', '1.4.11', '2.4.7', '2.4.11'],
     applicableTo: 'Text, icons, controls, validation, hover, focus, selected, disabled, and image backgrounds',
@@ -31,6 +35,7 @@ export const REQUIRED_MANUAL_CHECKS: ManualCheck[] = [
   },
   {
     id: 'manual-content-meaning',
+    classification: 'manual',
     title: 'Content meaning and alternatives',
     wcag: ['1.1.1', '1.2.1', '1.2.2', '1.2.3', '1.2.5', '2.4.4', '2.4.6', '3.1.2'],
     applicableTo: 'Images, icons, video/audio, headings, labels, link text, and language changes',
@@ -38,6 +43,7 @@ export const REQUIRED_MANUAL_CHECKS: ManualCheck[] = [
   },
   {
     id: 'manual-cognitive-and-consistency',
+    classification: 'manual',
     title: 'Consistency, error prevention, and cognitive checks',
     wcag: ['3.2.3', '3.2.4', '3.2.6', '3.3.1', '3.3.3', '3.3.7', '3.3.8'],
     applicableTo: 'Repeated navigation, help, authentication, and data-entry flows',
@@ -45,6 +51,7 @@ export const REQUIRED_MANUAL_CHECKS: ManualCheck[] = [
   },
   {
     id: 'manual-mobile-device',
+    classification: 'manual',
     title: 'Physical mobile and touch testing',
     wcag: ['1.3.4', '2.5.1', '2.5.2', '2.5.4', '2.5.7', '2.5.8'],
     applicableTo: 'Responsive navigation, touch controls, drag interactions, and orientation changes',

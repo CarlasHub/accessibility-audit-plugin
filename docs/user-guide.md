@@ -183,6 +183,8 @@ Target-size reviews are deliberately conservative. A control is not added to the
 
 The JSON `coverage` matrix is the execution record for every started page and viewport. Read it before claiming an area passed. `tested-inconclusive`, `manual-review-required`, `not-tested`, and `not-applicable` are not passes. In particular, sampled keyboard traversal, a non-empty title, an axe incomplete result, a configured link-limit truncation, or the absence of a finding does not prove conformance.
 
+The generated `WCAG Criteria` worksheet and matching HTML section show every WCAG 2.2 criterion, not only criteria with findings. Level AA is the conformance target; enabled AAA checks remain advisory. Use the ledger to see failures, required manual work, non-applicable AAA criteria, and inconclusive automated evidence before a qualified reviewer records a final decision.
+
 ## Step 7: decide what happens next
 
 Use this triage sequence:

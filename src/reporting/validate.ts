@@ -21,7 +21,7 @@ export const EXPECTED_REPORT_HEADERS = [
   'Effort', 'Screenshot', 'Rule ID', 'Labels', 'Translation review'
 ];
 
-export const EXPECTED_WORKSHEETS = [
+export const EXPECTED_TEMPLATE_WORKSHEETS = [
   'Audit Summary',
   'Findings',
   'Page Inventory',
@@ -30,12 +30,18 @@ export const EXPECTED_WORKSHEETS = [
   'WCAG 2.2 Reference'
 ] as const;
 
+export const EXPECTED_WORKSHEETS = [
+  ...EXPECTED_TEMPLATE_WORKSHEETS,
+  'WCAG Criteria'
+] as const;
+
 const expectedHeaders = new Map<string, { row: number; values: string[] }>([
   ['Findings', { row: 6, values: EXPECTED_REPORT_HEADERS }],
   ['Page Inventory', { row: 4, values: ['URL', 'Audit state', 'Viewports planned', 'Viewports completed', 'Consent handling', 'Runtime errors', 'Notes'] }],
   ['Evidence', { row: 4, values: ['Evidence path', 'Finding ID', 'Page URL', 'Viewport', 'Rule ID', 'Component', 'Technical locator', 'Evidence type', 'Detail'] }],
   ['Manual Checks', { row: 4, values: ['Check ID', 'Manual check', 'WCAG criterion', 'Applies to', 'Procedure', 'Status', 'Reviewer notes'] }],
-  ['WCAG 2.2 Reference', { row: 3, values: ['Success criterion', 'Level', 'Title', 'Understanding link'] }]
+  ['WCAG 2.2 Reference', { row: 3, values: ['Success criterion', 'Level', 'Title', 'Understanding link'] }],
+  ['WCAG Criteria', { row: 4, values: ['Criterion', 'Level', 'Scope', 'Status', 'Finding IDs', 'Automated evidence', 'Decision note', 'Understanding'] }]
 ]);
 
 const expectedTabColors = new Map<string, string>([
@@ -44,12 +50,14 @@ const expectedTabColors = new Map<string, string>([
   ['Page Inventory', 'FF4472C4'],
   ['Evidence', 'FF548235'],
   ['Manual Checks', 'FFBF9000'],
-  ['WCAG 2.2 Reference', 'FF7F7F7F']
+  ['WCAG 2.2 Reference', 'FF7F7F7F'],
+  ['WCAG Criteria', 'FF7030A0']
 ]);
 
 const allowedClassifications = new Set(['confirmed', 'review', 'blocker', 'manual']);
 const allowedStatuses = new Set(['Open', 'In progress', 'Resolved', 'Risk accepted', 'Not applicable']);
 const allowedSeverities = new Set(['Critical', 'Serious', 'Moderate', 'Minor', 'Advisory']);
+const allowedCriterionStatuses = new Set(['passed', 'failed', 'manual-review-required', 'not-applicable', 'inconclusive']);
 
 function cellHyperlink(value: unknown): string {
   return typeof value === 'object' && value !== null && 'hyperlink' in value
@@ -176,6 +184,21 @@ export async function validateExcelReport(path: string): Promise<WorkbookValidat
 
   const embeddedImages = workbook.worksheets.reduce((total, worksheet) => total + worksheet.getImages().length, 0);
   if (embeddedImages) errors.push(`Workbook contains ${embeddedImages} embedded image(s); evidence must remain linked to keep it portable and lightweight.`);
+  const criteria = workbook.getWorksheet('WCAG Criteria');
+  if (criteria) {
+    let criterionRows = 0;
+    for (let rowNumber = 5; rowNumber <= criteria.rowCount; rowNumber += 1) {
+      const row = criteria.getRow(rowNumber);
+      if (!cellText(row.getCell(1))) continue;
+      criterionRows += 1;
+      for (let column = 1; column <= 8; column += 1) {
+        if (!cellText(row.getCell(column))) errors.push(`Required criterion cell ${row.getCell(column).address} is empty.`);
+      }
+      if (!allowedCriterionStatuses.has(cellText(row.getCell(4)))) errors.push(`WCAG Criteria!D${rowNumber} contains an unsupported status.`);
+      validateHttpCell(row.getCell(8), `WCAG Criteria!H${rowNumber}`, errors);
+    }
+    if (!criterionRows) warnings.push('The workbook contains no WCAG criterion rows.');
+  }
   const summary = workbook.getWorksheet('Audit Summary');
   const auditor = summary ? cellText(summary.getCell('B6')) : '';
   if (!auditor) errors.push('Auditor is empty in Audit Summary!B6.');

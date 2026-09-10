@@ -31,8 +31,15 @@ function viewport(overrides: Partial<ViewportAudit> = {}): ViewportAudit {
       tablesForReview: [],
       autoplayMedia: []
     },
-    keyboard: { sequence: [], completedCycle: false, truncated: false, scope: 'unknown' },
-    responsive: { horizontalOverflow: 0, overflowElements: [], textSpacingOverflow: 0 },
+    keyboard: { sequence: [], journeys: [], completedCycle: false, truncated: false, scope: 'unknown' },
+    responsive: {
+      horizontalOverflow: 0,
+      overflowElements: [],
+      textSpacingOverflow: 0,
+      clippedElements: [],
+      overlapPairs: [],
+      lostInteractiveElements: []
+    },
     disclosures: [],
     tabs: [],
     links: [],

@@ -68,22 +68,28 @@ async function visibleConsentSurfaces(frame: Frame): Promise<Locator[]> {
 /** Returns a visible modal surface that would invalidate page-level interaction coverage. */
 export async function detectInteractionBlocker(page: Page): Promise<InteractionBlocker | null> {
   for (const frame of page.frames()) {
-    const candidates = frame.locator([
-      '[role="dialog"][aria-modal="true"]',
-      '[role="alertdialog"]',
-      '[aria-modal="true"]',
-      '#system-ialert'
-    ].join(', '));
-    const count = Math.min(await candidates.count().catch(() => 0), 50);
+    const candidates = frame.locator('body *');
+    const count = Math.min(await candidates.count().catch(() => 0), 500);
     for (let index = 0; index < count; index += 1) {
       const candidate = candidates.nth(index);
       if (!(await candidate.isVisible().catch(() => false))) continue;
       const details = await candidate.evaluate((element) => {
         const rect = element.getBoundingClientRect();
-        const viewportCoverage = Math.max(0, Math.min(innerWidth, rect.right) - Math.max(0, rect.left))
+        const coveredArea = Math.max(0, Math.min(innerWidth, rect.right) - Math.max(0, rect.left))
           * Math.max(0, Math.min(innerHeight, rect.bottom) - Math.max(0, rect.top));
         const viewportArea = Math.max(1, innerWidth * innerHeight);
-        const role = element.getAttribute('role') || (element.id === 'system-ialert' ? 'dialog surface' : element.tagName.toLowerCase());
+        const roleAttribute = element.getAttribute('role') ?? '';
+        const semanticBlocker = ['dialog', 'alertdialog'].includes(roleAttribute)
+          || element.getAttribute('aria-modal') === 'true'
+          || element.id === 'system-ialert';
+        const style = getComputedStyle(element);
+        const hasPaintedBackdrop = style.backgroundColor !== 'rgba(0, 0, 0, 0)'
+          && style.backgroundColor !== 'transparent';
+        const visualBlocker = ['fixed', 'sticky'].includes(style.position)
+          && style.pointerEvents !== 'none'
+          && coveredArea / viewportArea >= 0.85
+          && (hasPaintedBackdrop || style.backdropFilter !== 'none');
+        const role = roleAttribute || (element.id === 'system-ialert' ? 'dialog surface' : element.tagName.toLowerCase());
         const labelledBy = element.getAttribute('aria-labelledby');
         const labelledText = labelledBy
           ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim()
@@ -97,10 +103,15 @@ export async function detectInteractionBlocker(page: Page): Promise<InteractionB
         const selector = element.id
           ? `#${CSS.escape(element.id)}`
           : `${element.tagName.toLowerCase()}${[...element.classList].slice(0, 2).map((value) => `.${CSS.escape(value)}`).join('')}`;
-        return { selector, role, name, coversViewport: viewportCoverage / viewportArea >= 0.08 };
+        return {
+          selector,
+          role,
+          name,
+          qualifies: visualBlocker || (semanticBlocker && (coveredArea / viewportArea >= 0.08 || /dialog/i.test(role)))
+        };
       }).catch(() => null);
       if (!details) continue;
-      if (!details.coversViewport && !/dialog/i.test(details.role)) continue;
+      if (!details.qualifies) continue;
       return {
         selector: details.selector,
         role: details.role,

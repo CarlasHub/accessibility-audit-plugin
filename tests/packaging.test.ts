@@ -25,9 +25,8 @@ describe('plugin packaging', () => {
     expect(marketplace.plugins?.[0]?.version).toBe(VERSION);
   });
 
-  it('contains no retired screen-reader execution option in public manifests or MCP definitions', async () => {
+  it('keeps native screen-reader execution separate from public plugin runtime options', async () => {
     const paths = [
-      'package.json',
       'plugin.json',
       '.codex-plugin/plugin.json',
       '.cursor-plugin/plugin.json',
@@ -38,6 +37,13 @@ describe('plugin packaging', () => {
     ];
     const publicConfiguration = (await Promise.all(paths.map((path) => readFile(path, 'utf8')))).join('\n');
     expect(publicConfiguration).not.toMatch(/guidepup|screenReader/i);
+    const packageJson = await readFile('package.json', 'utf8');
+    const workflow = await readFile('.github/workflows/native-screen-readers.yml', 'utf8');
+    expect(packageJson).toContain('test:screen-reader:voiceover');
+    expect(packageJson).toContain('test:screen-reader:nvda');
+    expect(packageJson).toContain('"@guidepup/playwright": "0.19.1"');
+    expect(workflow).toContain('runs-on: macos-latest');
+    expect(workflow).toContain('runs-on: windows-latest');
   });
 
   it('provides portable plugin and marketplace metadata', async () => {

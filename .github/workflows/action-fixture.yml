@@ -1,0 +1,73 @@
+name: GitHub Action fixture
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: action-fixture-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fixture:
+    name: Use the committed Action bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Start the local audit fixture
+        run: |
+          python3 -m http.server 4173 --bind 127.0.0.1 --directory tests/fixtures/quality > fixture-server.log 2>&1 &
+          echo $! > fixture-server.pid
+          for attempt in {1..20}; do
+            curl --fail --silent http://127.0.0.1:4173/pass.html >/dev/null && exit 0
+            sleep 1
+          done
+          exit 1
+      - id: audit
+        name: Run this repository's built Action
+        uses: ./
+        with:
+          urls: http://127.0.0.1:4173/pass.html
+          allowed-hosts: 127.0.0.1
+          staging-only: 'true'
+          capture-screenshots: 'false'
+          browser-channel: chromium
+          auto-install-browser: 'false'
+          fail-on: confirmed
+          comment-on-pr: 'false'
+      - name: Assert the public outputs and evidence
+        env:
+          OUTPUT_DIR: ${{ steps.audit.outputs.output-dir }}
+          JSON_PATH: ${{ steps.audit.outputs.json-path }}
+          HTML_PATH: ${{ steps.audit.outputs.html-path }}
+          REPORT_PATH: ${{ steps.audit.outputs.report-path }}
+          ARCHIVE_PATH: ${{ steps.audit.outputs.archive-path }}
+          GATE_RESULT: ${{ steps.audit.outputs.gate-result }}
+        run: |
+          test "$GATE_RESULT" = passed
+          test -f "$JSON_PATH"
+          test -f "$HTML_PATH"
+          test -f "$REPORT_PATH"
+          test -f "$ARCHIVE_PATH"
+          node -e 'const r=require(process.env.JSON_PATH); if(r.pages?.[0]?.viewports?.length!==3) process.exit(1)'
+          test -d "$OUTPUT_DIR"
+      - name: Upload fixture evidence
+        if: always() && steps.audit.outputs.output-dir != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: built-action-fixture-evidence
+          path: |
+            ${{ steps.audit.outputs.output-dir }}
+            fixture-server.log
+          if-no-files-found: error
+          retention-days: 14
