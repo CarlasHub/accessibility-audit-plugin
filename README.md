@@ -14,7 +14,15 @@ You do not need to know WCAG terminology to run the plugin. Start with the workf
 
 > **Important:** this plugin is an automated testing aid, not a WCAG certification. A report with no automated findings does not prove that a page is accessible. Screen-reader, physical-device, content-meaning, visual-judgment, and other guided checks remain manual. W3C likewise states that no evaluation tool alone can determine whether a site meets accessibility standards.
 
-## Live BuggyLand demonstration
+## GitHub Actions: start-to-results tutorial
+
+[![Start-to-results tutorial for auditing a different repository with GitHub Actions](https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/a11y-test-cases-github-actions-tutorial-poster.png)](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.1/A11y_Test_Cases_GitHub_Actions_Tutorial.mp4)
+
+[Watch or download the complete captioned walkthrough](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.1/A11y_Test_Cases_GitHub_Actions_Tutorial.mp4). It starts in a separate repository, creates the workflow, runs it from the Actions tab, follows the job, downloads the artifact, and opens both report formats. You can also follow the [click-by-click written tutorial](docs/a11y-test-cases-github-actions-tutorial.md), read the [video transcript](docs/a11y-test-cases-github-actions-tutorial-transcript.md), or inspect the [successful public run](https://github.com/CarlasHub/a11y-test-cases/actions/runs/34448319858).
+
+The demonstrated audit of [A11y Test Cases](https://carlashub.github.io/a11y-test-cases/) completed one page and produced 52 findings: 51 confirmed and 1 requiring review, plus 7 guided manual checks. No secret or paid marketplace installation is required for a public URL.
+
+## Deeper BuggyLand benchmark
 
 [![Captioned walkthrough of the CarlasHub Action auditing BuggyLand](https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/buggyland-github-action-tutorial-poster.png)](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.0/BuggyLand_GitHub_Action_Tutorial.mp4)
 
