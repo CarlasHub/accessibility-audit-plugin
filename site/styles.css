@@ -574,11 +574,20 @@ input[type="url"][aria-invalid="true"] {
   font-size: 0.8rem;
 }
 
-.copy-status {
+.copy-feedback {
   min-height: 1.5em;
   margin: 0.8rem 0;
+}
+
+.copy-status,
+.copy-error {
+  margin: 0;
   color: var(--success);
   font-weight: 700;
+}
+
+.copy-error {
+  color: var(--error);
 }
 
 details {

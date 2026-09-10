@@ -24,6 +24,7 @@ const workflowCode = requiredElement<HTMLElement>('#workflow-code');
 const copyButton = requiredElement<HTMLButtonElement>('#copy-workflow');
 const downloadButton = requiredElement<HTMLButtonElement>('#download-again');
 const copyStatus = requiredElement<HTMLParagraphElement>('#copy-status');
+const copyError = requiredElement<HTMLParagraphElement>('#copy-error');
 const progress = requiredElement<HTMLDivElement>('#setup-progress');
 const progressStatus = requiredElement<HTMLOutputElement>('#quest-status');
 
@@ -56,24 +57,42 @@ function setProgress(stage: 1 | 2): void {
 
 function clearFieldErrors(): void {
   errorMessage.textContent = '';
+  errorMessage.hidden = true;
   getInputs().forEach((input) => {
     input.removeAttribute('aria-invalid');
+    input.removeAttribute('aria-errormessage');
+    input.setAttribute('aria-describedby', 'url-hint');
     input.setCustomValidity('');
   });
 }
 
 function showFieldError(input: HTMLInputElement, message: string): void {
   input.setAttribute('aria-invalid', 'true');
+  input.setAttribute('aria-errormessage', 'url-error');
+  input.setAttribute('aria-describedby', 'url-hint url-error');
   input.setCustomValidity(message);
   errorMessage.textContent = message;
+  errorMessage.hidden = false;
   input.focus();
+}
+
+function clearActionFeedback(): void {
+  copyStatus.textContent = '';
+  copyError.textContent = '';
+  copyError.hidden = true;
+}
+
+function showActionError(message: string): void {
+  copyStatus.textContent = '';
+  copyError.textContent = message;
+  copyError.hidden = false;
 }
 
 function invalidatePreparedWorkflow(): void {
   if (!currentWorkflow) return;
   currentWorkflow = '';
   workflowCode.textContent = '';
-  copyStatus.textContent = '';
+  clearActionFeedback();
   result.hidden = true;
   setProgress(1);
 }
@@ -115,7 +134,7 @@ function createUrlRow(): HTMLDivElement {
   input.spellcheck = false;
   input.required = true;
   input.placeholder = 'https://example.com/page';
-  input.setAttribute('aria-describedby', 'url-hint url-error');
+  input.setAttribute('aria-describedby', 'url-hint');
 
   removeButton.className = 'remove-url';
   removeButton.type = 'button';
@@ -149,6 +168,7 @@ function locateInvalidInput(message: string): HTMLInputElement {
 
 function downloadWorkflow(): void {
   if (!currentWorkflow) return;
+  clearActionFeedback();
   const blob = new Blob([currentWorkflow], { type: 'text/yaml;charset=utf-8' });
   const href = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -158,6 +178,7 @@ function downloadWorkflow(): void {
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
+  copyStatus.textContent = 'Workflow download started.';
 }
 
 function prepareWorkflow(): void {
@@ -180,7 +201,7 @@ function prepareWorkflow(): void {
 
   currentWorkflow = buildWorkflow(targets);
   workflowCode.textContent = currentWorkflow;
-  copyStatus.textContent = '';
+  clearActionFeedback();
   const hostCount = new Set(targets.map((target) => target.hostname)).size;
   resultDescription.textContent = `Configured for ${targets.length} ${targets.length === 1 ? 'page' : 'pages'} across ${hostCount} ${hostCount === 1 ? 'host' : 'hosts'}, with one combined report.`;
   result.hidden = false;
@@ -231,6 +252,7 @@ urlList.addEventListener('input', () => {
 
 copyButton.addEventListener('click', async () => {
   if (!currentWorkflow) return;
+  clearActionFeedback();
   try {
     await navigator.clipboard.writeText(currentWorkflow);
     copyStatus.textContent = 'Workflow copied. Create the file in your repository and paste it there.';
@@ -239,7 +261,7 @@ copyButton.addEventListener('click', async () => {
       copyButton.textContent = 'Copy workflow code';
     }, 1800);
   } catch {
-    copyStatus.textContent = 'Copy was blocked by your browser. Open the workflow preview and copy the code manually.';
+    showActionError('Copy was blocked by your browser. Open the workflow preview and copy the code manually.');
   }
 });
 

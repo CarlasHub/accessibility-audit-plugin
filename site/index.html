@@ -35,7 +35,7 @@
       </nav>
     </header>
 
-    <main id="main">
+    <main id="main" tabindex="-1">
       <section class="hero" id="top">
         <div class="hero-copy">
           <img
@@ -83,7 +83,7 @@
                   <div class="url-field">
                     <label for="target-url-1">Page 1 URL</label>
                     <div class="url-input-row">
-                      <input id="target-url-1" name="urls" type="url" value="https://example.com" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="url-hint url-error" required />
+                      <input id="target-url-1" name="urls" type="url" value="https://example.com" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="url-hint" required />
                       <button class="remove-url" type="button" aria-label="Remove page 1 URL" hidden>Remove</button>
                     </div>
                   </div>
@@ -92,7 +92,7 @@
                   <button class="add-url" id="add-url" type="button"><span aria-hidden="true">＋</span> Add another page</button>
                   <span id="url-count" aria-live="polite">1 of 20 pages</span>
                 </div>
-                <p id="url-error" class="field-error" role="alert"></p>
+                <p id="url-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
               </fieldset>
               <button class="primary-button build-button" type="submit">Build my workflow <span aria-hidden="true">→</span></button>
             </form>
@@ -106,14 +106,14 @@
         <div class="result-heading">
           <div>
             <p class="eyebrow success-label"><span aria-hidden="true"></span> Checkpoint reached</p>
-            <h2 id="workflow-result-title" tabindex="-1">Your multi-page workflow is ready</h2>
+            <h2 id="workflow-result-title" tabindex="-1" aria-describedby="result-description">Your multi-page workflow is ready</h2>
             <p id="result-description">The workflow is configured for your pages.</p>
           </div>
           <button class="text-button" id="download-again" type="button">Download <code>.yml</code></button>
         </div>
 
         <ol class="action-steps">
-          <li class="is-current"><span>1</span><div><strong>Copy the workflow</strong><p>Use the button below to copy the generated file.</p></div></li>
+          <li class="is-current" aria-current="step"><span>1</span><div><strong>Copy the workflow</strong><p>Use the button below to copy the generated file.</p></div></li>
           <li><span>2</span><div><strong>Add one file</strong><p>In your repository, create <code>.github/workflows/accessibility-audit.yml</code> and paste.</p></div></li>
           <li><span>3</span><div><strong>Run the audit</strong><p>Open <b>Actions → Accessibility audit → Run workflow</b>.</p></div></li>
           <li><span>4</span><div><strong>Get the evidence</strong><p>Download the combined report from the run summary.</p></div></li>
@@ -121,9 +121,12 @@
 
         <div class="result-actions">
           <button class="primary-button" id="copy-workflow" type="button">Copy workflow code</button>
-          <a class="secondary-button" href="https://github.com" target="_blank" rel="noreferrer">Open GitHub <span aria-hidden="true">↗</span></a>
+          <a class="secondary-button" href="https://github.com" target="_blank" rel="noreferrer" aria-label="Open GitHub (opens in a new tab)">Open GitHub <span aria-hidden="true">↗</span></a>
         </div>
-        <p class="copy-status" id="copy-status" role="status" aria-live="polite"></p>
+        <div class="copy-feedback">
+          <p class="copy-status" id="copy-status" role="status" aria-live="polite" aria-atomic="true"></p>
+          <p class="copy-error" id="copy-error" role="alert" aria-atomic="true" hidden></p>
+        </div>
         <details>
           <summary>Preview the workflow file</summary>
           <pre tabindex="0"><code id="workflow-code"></code></pre>
