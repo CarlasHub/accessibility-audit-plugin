@@ -93,6 +93,8 @@ The artifact contains:
 
 Keep the workbook beside the `screenshots` folder so its evidence links continue to work.
 
+GitHub Actions artifacts expire according to their retention setting. Permanent demonstration copies are attached to the plugin release: [HTML report](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.1/Accessibility_Audit_Report.html), [Excel workbook](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.1/Accessibility_Audit_Report.xlsx), [JSON evidence](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.1/audit-results.json), and the [complete report bundle](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.1/a11y-test-cases-audit-results.zip).
+
 ## 4. Review the evidence
 
 Open `Accessibility_Audit_Report.html` in a browser. Use its search and filters, then expand a finding for its impact, verification steps, remediation guidance, WCAG mapping, and available screenshot evidence.
