@@ -3,78 +3,110 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Prepare a reliable WCAG 2.2 accessibility audit workflow for any public website, powered by the open-source CarlasHub GitHub Action." />
+    <meta name="description" content="Create one GitHub Actions workflow that audits up to 20 public pages and produces review-ready WCAG 2.2 accessibility evidence." />
     <meta property="og:title" content="CarlasHub Accessibility Audit" />
-    <meta property="og:description" content="One URL, one GitHub workflow, and an evidence-rich accessibility report." />
+    <meta property="og:description" content="Add your pages, generate one workflow, and collect an evidence-rich accessibility report." />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/accessibility-audit-demo-poster.png" />
     <meta property="og:url" content="https://carlashub-accessibility-audit.carlawlondon.chatgpt.site/" />
-    <meta name="theme-color" content="#174ea6" />
+    <meta name="theme-color" content="#111111" />
     <link rel="canonical" href="https://carlashub-accessibility-audit.carlawlondon.chatgpt.site/" />
     <meta name="twitter:card" content="summary_large_image" />
     <title>CarlasHub Accessibility Audit</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23174ea6'/%3E%3Cpath d='M18 32l9 9 19-20' fill='none' stroke='%23ffffff' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2315151a'/%3E%3Cpath d='M18 32l9 9 19-20' fill='none' stroke='%2393f6b2' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to main content</a>
+
     <header class="site-header">
       <a class="brand" href="#top" aria-label="CarlasHub Accessibility Audit home">
-        <svg aria-hidden="true" viewBox="0 0 48 48" width="40" height="40">
-          <rect width="48" height="48" rx="13" fill="currentColor" />
-          <path d="m13 24 7 7 15-17" fill="none" stroke="var(--mint)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <span><strong>CarlasHub</strong><small>Accessibility Audit</small></span>
+        <span class="brand-mark" aria-hidden="true">C</span>
+        <span><strong>CarlasHub</strong><small>Accessibility audit</small></span>
       </a>
       <nav aria-label="Main navigation">
-        <a href="#how-it-works">How it works</a>
-        <a href="#coverage">Coverage</a>
-        <a href="https://github.com/CarlasHub/accessibility-audit-plugin">View on GitHub</a>
+        <a class="github-link" href="https://github.com/CarlasHub/accessibility-audit-plugin">GitHub <span aria-hidden="true">↗</span></a>
       </nav>
     </header>
 
     <main id="main">
       <section class="hero" id="top">
         <div class="hero-copy">
-          <p class="eyebrow">Open-source WCAG 2.2 audit evidence</p>
-          <h1>One URL. One workflow. A report your team can use.</h1>
-          <p class="lede">Create a ready-to-run GitHub Actions workflow for any public website—without sharing a password or installing software on your computer.</p>
-          <div class="trust-row" aria-label="Key qualities">
-            <span>WCAG 2.2</span><span>Keyboard</span><span>Reflow</span><span>Evidence</span>
+          <span class="hero-mark" aria-hidden="true">C</span>
+          <p class="eyebrow">Open-source accessibility testing</p>
+          <h1>Audit every page.<br /><em>Remove barriers before release.</em></h1>
+          <p class="lede">Add up to 20 public pages. Get one ready-to-run GitHub Actions workflow and one evidence pack for your team.</p>
+          <div class="trust-row" aria-label="Audit capabilities">
+            <span>WCAG 2.2</span>
+            <span>Keyboard</span>
+            <span>Reflow</span>
+            <span>Evidence</span>
           </div>
         </div>
 
-        <div class="generator-card" aria-labelledby="generator-title">
-          <div class="step-badge" aria-hidden="true">01</div>
-          <p class="card-kicker">Start here</p>
-          <h2 id="generator-title">Which page do you want to audit?</h2>
-          <form id="workflow-form" novalidate>
-            <label for="target-url">Public website URL</label>
-            <div class="url-row">
-              <input id="target-url" name="target-url" type="url" value="https://example.com/" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="url-hint url-error" required />
-              <button class="primary-button" type="submit">Prepare workflow</button>
+        <div class="generator-shell">
+          <div class="generator-card" aria-labelledby="generator-title">
+            <div class="card-topline">
+              <p class="card-kicker">Create an audit</p>
+              <span class="no-login">No login</span>
             </div>
-            <p id="url-hint" class="field-hint">Use a full address beginning with https:// or http://. Do not use a URL containing secrets.</p>
-            <p id="url-error" class="field-error" role="alert"></p>
-          </form>
-          <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg>The audit runs in your GitHub account. This page never asks for your GitHub token.</p>
+            <h2 id="generator-title">Which pages do you want to audit?</h2>
+
+            <div class="quest" aria-labelledby="quest-label">
+              <div class="quest-heading">
+                <p id="quest-label">Setup progress</p>
+                <output id="quest-status" aria-live="polite">Stage 1 of 4: add pages</output>
+              </div>
+              <div class="pixel-progress" id="setup-progress" role="progressbar" aria-labelledby="quest-label" aria-valuemin="1" aria-valuemax="4" aria-valuenow="1" aria-valuetext="Stage 1 of 4: add pages">
+                <span class="pixel-block is-active"></span><span class="pixel-block is-active"></span><span class="pixel-block"></span><span class="pixel-block"></span><span class="pixel-block"></span><span class="pixel-block"></span><span class="pixel-block"></span><span class="pixel-block"></span>
+                <span class="goal-flag" aria-hidden="true"></span>
+              </div>
+            </div>
+
+            <form id="workflow-form" novalidate>
+              <fieldset>
+                <legend>Pages to audit</legend>
+                <p id="url-hint" class="field-hint">Use complete public addresses beginning with <code>https://</code> or <code>http://</code>. Add up to 20 pages.</p>
+                <div class="url-list" id="url-list">
+                  <div class="url-field">
+                    <label for="target-url-1">Page 1 URL</label>
+                    <div class="url-input-row">
+                      <input id="target-url-1" name="urls" type="url" value="https://example.com" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="url-hint url-error" required />
+                      <button class="remove-url" type="button" aria-label="Remove page 1 URL" hidden>Remove</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="list-controls">
+                  <button class="add-url" id="add-url" type="button"><span aria-hidden="true">＋</span> Add another page</button>
+                  <span id="url-count" aria-live="polite">1 of 20 pages</span>
+                </div>
+                <p id="url-error" class="field-error" role="alert"></p>
+              </fieldset>
+              <button class="primary-button build-button" type="submit">Build my workflow <span aria-hidden="true">→</span></button>
+            </form>
+
+            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>The audit runs in your GitHub account. This page never asks for your token.</span></p>
+          </div>
         </div>
       </section>
 
       <section class="workflow-result" id="workflow-result" aria-labelledby="workflow-result-title" hidden>
         <div class="result-heading">
           <div>
-            <p class="eyebrow">Your workflow is ready</p>
-            <h2 id="workflow-result-title" tabindex="-1">Add one file to your GitHub project</h2>
-            <p id="result-description">The workflow is already configured for your page.</p>
+            <p class="eyebrow success-label"><span aria-hidden="true"></span> Checkpoint reached</p>
+            <h2 id="workflow-result-title" tabindex="-1">Your multi-page workflow is ready</h2>
+            <p id="result-description">The workflow is configured for your pages.</p>
           </div>
-          <button class="text-button" id="download-again" type="button">Download file instead</button>
+          <button class="text-button" id="download-again" type="button">Download <code>.yml</code></button>
         </div>
+
         <ol class="action-steps">
-          <li><span>1</span><div><strong>Copy the workflow</strong><p>Use the button below to copy the prepared code.</p></div></li>
-          <li><span>2</span><div><strong>Create one file on GitHub</strong><p>Select <b>Add file → Create new file</b>, name it <code>.github/workflows/accessibility-audit.yml</code>, paste, and commit.</p></div></li>
-          <li><span>3</span><div><strong>Run your audit</strong><p>Open <b>Actions → Accessibility audit → Run workflow</b>. The report link appears in the run summary.</p></div></li>
+          <li class="is-current"><span>1</span><div><strong>Copy the workflow</strong><p>Use the button below to copy the generated file.</p></div></li>
+          <li><span>2</span><div><strong>Add one file</strong><p>In your repository, create <code>.github/workflows/accessibility-audit.yml</code> and paste.</p></div></li>
+          <li><span>3</span><div><strong>Run the audit</strong><p>Open <b>Actions → Accessibility audit → Run workflow</b>.</p></div></li>
+          <li><span>4</span><div><strong>Get the evidence</strong><p>Download the combined report from the run summary.</p></div></li>
         </ol>
+
         <div class="result-actions">
           <button class="primary-button" id="copy-workflow" type="button">Copy workflow code</button>
           <a class="secondary-button" href="https://github.com" target="_blank" rel="noreferrer">Open GitHub <span aria-hidden="true">↗</span></a>
@@ -87,37 +119,37 @@
       </section>
 
       <section class="proof-strip" aria-label="Report formats">
-        <p>One run gives you</p>
-        <ul><li>HTML report</li><li>Excel workbook</li><li>JSON data</li><li>Screenshots</li><li>ZIP archive</li></ul>
+        <p>One run. One evidence pack.</p>
+        <ul><li>Accessible HTML</li><li>Excel workbook</li><li>JSON data</li><li>Screenshots</li><li>ZIP archive</li></ul>
       </section>
 
       <section class="section" id="how-it-works">
         <div class="section-heading">
-          <p class="eyebrow">A shorter setup</p>
-          <h2>From a URL to evidence in three steps</h2>
-          <p>The generator handles the technical file. You add it to your project once, then run it whenever you need a fresh audit.</p>
+          <p class="eyebrow"><span aria-hidden="true"></span> A shorter setup</p>
+          <h2>From a page list to useful evidence.</h2>
+          <p>The builder writes the technical workflow for you. Add it to a repository once, then rerun it whenever your site changes.</p>
         </div>
         <ol class="steps">
-          <li><span>1</span><h3>Enter the page</h3><p>Paste one public page you are authorised to test.</p></li>
-          <li><span>2</span><h3>Add the workflow</h3><p>Create one file in your repository and paste the prepared code.</p></li>
-          <li><span>3</span><h3>Run and download</h3><p>Start it in GitHub Actions and open the report link in the run summary.</p></li>
+          <li><span aria-hidden="true">01</span><h3>Add your pages</h3><p>Enter one or several public pages that you are authorised to test.</p></li>
+          <li><span aria-hidden="true">02</span><h3>Commit one file</h3><p>Copy the generated workflow into your project’s <code>.github/workflows</code> folder.</p></li>
+          <li><span aria-hidden="true">03</span><h3>Run and review</h3><p>Start the Action and download one combined evidence pack for every page.</p></li>
         </ol>
       </section>
 
       <section class="section coverage" id="coverage">
         <div class="section-heading">
-          <p class="eyebrow">Honest by design</p>
-          <h2>Automation that shows its evidence—and its limits</h2>
+          <p class="eyebrow"><span aria-hidden="true"></span> Honest by design</p>
+          <h2>Broad automated testing, with the limits made visible.</h2>
         </div>
         <div class="coverage-grid">
-          <article><h3>Automated browser checks</h3><p>Semantics, names, contrast signals, page structure, component states, links, responsive reflow, and keyboard interaction evidence.</p></article>
-          <article><h3>Review-ready outputs</h3><p>Each run keeps structured findings, screenshots, an accessible HTML report, and a native Excel workbook together.</p></article>
-          <article><h3>Human checks stay visible</h3><p>No automated tool can certify full WCAG conformance. Screen-reader experience, meaning, usability, and exceptions still require expert review.</p></article>
+          <article><span class="feature-icon" aria-hidden="true">⌁</span><h3>Browser checks</h3><p>Semantics, accessible names, contrast signals, structure, component states, links, responsive reflow, and keyboard interaction evidence.</p></article>
+          <article><span class="feature-icon" aria-hidden="true">▦</span><h3>Review-ready outputs</h3><p>Structured findings, screenshots, an accessible HTML report, and a native Excel workbook stay together.</p></article>
+          <article><span class="feature-icon" aria-hidden="true">◎</span><h3>Human review remains</h3><p>No automated tool can certify WCAG conformance. Screen-reader experience, meaning, usability, and exceptions still require expert review.</p></article>
         </div>
       </section>
 
       <section class="cta-section">
-        <div><p class="eyebrow">Built in public</p><h2>Inspect it, improve it, use it.</h2><p>The action and its test methodology are open source under the MIT licence.</p></div>
+        <div><p class="eyebrow"><span aria-hidden="true"></span> Built in public</p><h2>Inspect it. Improve it. Use it.</h2><p>The Action and its test methodology are open source under the MIT licence.</p></div>
         <a class="secondary-button" href="https://github.com/CarlasHub/accessibility-audit-plugin">Explore the GitHub project <span aria-hidden="true">→</span></a>
       </section>
     </main>

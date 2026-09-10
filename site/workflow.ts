@@ -6,6 +6,8 @@ export interface AuditTarget {
   url: string;
 }
 
+export const MAX_AUDIT_TARGETS = 20;
+
 export function normalizeTargetUrl(rawValue: string): AuditTarget {
   const trimmed = rawValue.trim();
   let parsed: URL;
@@ -36,20 +38,48 @@ function yamlSingleQuoted(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-export function buildWorkflow(target: AuditTarget): string {
-  const targetUrl = yamlSingleQuoted(target.url);
-  const allowedHost = yamlSingleQuoted(target.hostname);
+export function normalizeTargetUrls(rawValues: string[]): AuditTarget[] {
+  const populatedValues = rawValues.map((value) => value.trim()).filter(Boolean);
+
+  if (populatedValues.length === 0) {
+    throw new Error('Add at least one complete URL beginning with https:// or http://.');
+  }
+  if (populatedValues.length > MAX_AUDIT_TARGETS) {
+    throw new Error(`Add no more than ${MAX_AUDIT_TARGETS} URLs to one audit.`);
+  }
+
+  const targets = populatedValues.map(normalizeTargetUrl);
+  const seenUrls = new Set<string>();
+
+  for (const target of targets) {
+    if (seenUrls.has(target.url)) {
+      throw new Error(`Remove the duplicate URL: ${target.url}`);
+    }
+    seenUrls.add(target.url);
+  }
+
+  return targets;
+}
+
+export function buildWorkflow(targets: AuditTarget | AuditTarget[]): string {
+  const auditTargets = Array.isArray(targets) ? targets : [targets];
+  if (auditTargets.length === 0) throw new Error('Add at least one URL to build a workflow.');
+
+  const targetLines = auditTargets.map((target) => `          ${target.url}`).join('\n');
+  const allowedHosts = [...new Set(auditTargets.map((target) => target.hostname))].join(',');
+  const targetLabel = auditTargets.length === 1 ? 'Public page to audit' : 'Public pages to audit, one per line';
 
   return `name: Accessibility audit
 
 on:
   workflow_dispatch:
     inputs:
-      url:
-        description: Public page to audit
+      urls:
+        description: ${targetLabel}
         required: true
         type: string
-        default: ${targetUrl}
+        default: |-
+${targetLines}
 
 permissions:
   contents: read
@@ -64,8 +94,8 @@ jobs:
         name: Run WCAG 2.2 audit
         uses: CarlasHub/accessibility-audit-plugin@${ACTION_VERSION}
         with:
-          urls: \${{ inputs.url }}
-          allowed-hosts: ${allowedHost}
+          urls: \${{ inputs.urls }}
+          allowed-hosts: ${yamlSingleQuoted(allowedHosts)}
           fail-on: none
           comment-on-pr: 'false'
 
