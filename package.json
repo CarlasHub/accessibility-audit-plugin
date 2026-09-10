@@ -59,7 +59,7 @@
     "audit.config.example.json"
   ],
   "scripts": {
-    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/verify-site-neutrality.mjs --require-dist",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/verify-site-neutrality.mjs --require-dist && npm run site:build",
     "build:action": "npm run build && node scripts/clean-action-dist.mjs && ncc build dist/action-entry.js -o action/dist --no-source-map-register -e axe-core -e playwright -e playwright-core && node scripts/finalize-action-dist.mjs",
     "build:marketplace": "npm run build && node scripts/build-marketplace-payload.mjs",
     "site:dev": "vite site --host 127.0.0.1",
