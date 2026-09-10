@@ -35,7 +35,10 @@ function sameValues(actual, expected) {
   return JSON.stringify(uniqueSorted(actual)) === JSON.stringify(uniqueSorted(expected));
 }
 
-function normalizedFindingIdentities(report) {
+function normalizedFindingIdentities(report, { includeSelectors = false } = {}) {
+  // Rendered overflow can add an axe selector on one OS but not another. Keep the
+  // cross-platform baseline structural, then require selector stability between
+  // the two independent runs made on the same runner below.
   return report.findings.map((finding) => ({
     id: finding.id,
     classification: finding.classification,
@@ -43,7 +46,7 @@ function normalizedFindingIdentities(report) {
     severity: finding.severity,
     wcag: uniqueSorted(finding.wcag),
     urls: uniqueSorted(finding.urls),
-    selectors: uniqueSorted(finding.selectors)
+    ...(includeSelectors ? { selectors: uniqueSorted(finding.selectors) } : {})
   })).sort((first, second) => first.id.localeCompare(second.id));
 }
 
@@ -185,8 +188,9 @@ function assertReport(report, label) {
 
 reports.forEach((report, index) => assertReport(report, `run ${index + 1}`));
 assert(
-  JSON.stringify(normalizedFindingIdentities(reports[0])) === JSON.stringify(normalizedFindingIdentities(reports[1])),
-  'The two BuggyLand runs produced different normalized finding identities.'
+  JSON.stringify(normalizedFindingIdentities(reports[0], { includeSelectors: true }))
+    === JSON.stringify(normalizedFindingIdentities(reports[1], { includeSelectors: true })),
+  'The two BuggyLand runs produced different normalized finding identities or selectors.'
 );
 
 if (!skipLive) {
