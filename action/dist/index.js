@@ -157091,6 +157091,24 @@ function parseListInput(value, allowCommas = false) {
     const separator = allowCommas ? /[\r\n,]+/ : /[\r\n]+/;
     return trimmed.split(separator).map((item) => item.trim()).filter(Boolean);
 }
+function resolveAllowedHosts(inputs, configuredHosts) {
+    if (configuredHosts.length > 0)
+        return configuredHosts;
+    const hosts = inputs.map((input) => {
+        let parsed;
+        try {
+            parsed = new URL(input);
+        }
+        catch {
+            throw new Error('The GitHub Action urls input accepts explicit HTTP(S) URLs only.');
+        }
+        if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+            throw new Error('The GitHub Action urls input accepts explicit HTTP(S) URLs without embedded credentials only.');
+        }
+        return parsed.hostname.toLowerCase().replace(/\.+$/, '');
+    });
+    return [...new Set(hosts)];
+}
 function parseBooleanInput(value, fallback) {
     if (!value.trim())
         return fallback;
@@ -157257,7 +157275,7 @@ async function runGitHubAction(environment = process.env, signal) {
     if (!inputs.length)
         throw new Error('The urls input must include at least one URL, with one URL per line.');
     const outputDir = resolveOutputDirectory(environment, getInput(environment, 'OUTPUT-DIR'));
-    const allowedHosts = parseListInput(getInput(environment, 'ALLOWED-HOSTS'), true);
+    const allowedHosts = resolveAllowedHosts(inputs, parseListInput(getInput(environment, 'ALLOWED-HOSTS'), true));
     const failurePolicy = parseFailurePolicy(getInput(environment, 'FAIL-ON'));
     const templatePath = environment.GITHUB_ACTION_PATH
         ? (0,external_node_path_.resolve)(environment.GITHUB_ACTION_PATH, 'assets', 'accessibility-report-template.xlsx')

@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Prepare a reliable WCAG 2.2 accessibility audit workflow for any public website, powered by the open-source CarlasHub GitHub Action." />
+    <meta property="og:title" content="CarlasHub Accessibility Audit" />
+    <meta property="og:description" content="One URL, one GitHub workflow, and an evidence-rich accessibility report." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/accessibility-audit-demo-poster.png" />
+    <meta property="og:url" content="https://carlashub-accessibility-audit.sugary-brook-5320.chatgpt.site" />
+    <link rel="canonical" href="https://carlashub-accessibility-audit.sugary-brook-5320.chatgpt.site" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <title>CarlasHub Accessibility Audit</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230f2942'/%3E%3Cpath d='M18 32l9 9 19-20' fill='none' stroke='%236de2d1' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="CarlasHub Accessibility Audit home">
+        <svg aria-hidden="true" viewBox="0 0 48 48" width="40" height="40">
+          <rect width="48" height="48" rx="13" fill="currentColor" />
+          <path d="m13 24 7 7 15-17" fill="none" stroke="var(--mint)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span><strong>CarlasHub</strong><small>Accessibility Audit</small></span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="#how-it-works">How it works</a>
+        <a href="#coverage">Coverage</a>
+        <a href="https://github.com/CarlasHub/accessibility-audit-plugin">View on GitHub</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow">Open-source WCAG 2.2 audit evidence</p>
+          <h1>One URL. One workflow. A report your team can use.</h1>
+          <p class="lede">Create a ready-to-run GitHub Actions workflow for any public website—without sharing a password or installing software on your computer.</p>
+          <div class="trust-row" aria-label="Key qualities">
+            <span>WCAG 2.2</span><span>Keyboard</span><span>Reflow</span><span>Evidence</span>
+          </div>
+        </div>
+
+        <div class="generator-card" aria-labelledby="generator-title">
+          <div class="step-badge" aria-hidden="true">01</div>
+          <p class="card-kicker">Start here</p>
+          <h2 id="generator-title">Which page do you want to audit?</h2>
+          <form id="workflow-form" novalidate>
+            <label for="target-url">Public website URL</label>
+            <div class="url-row">
+              <input id="target-url" name="target-url" type="url" value="https://example.com/" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="url-hint url-error" required />
+              <button class="primary-button" type="submit">Prepare workflow</button>
+            </div>
+            <p id="url-hint" class="field-hint">Use a full address beginning with https:// or http://. Do not use a URL containing secrets.</p>
+            <p id="url-error" class="field-error" role="alert"></p>
+          </form>
+          <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg>The audit runs in your GitHub account. This page never asks for your GitHub token.</p>
+        </div>
+      </section>
+
+      <section class="workflow-result" id="workflow-result" aria-labelledby="workflow-result-title" hidden>
+        <div class="result-heading">
+          <div>
+            <p class="eyebrow">Your workflow is ready</p>
+            <h2 id="workflow-result-title" tabindex="-1">Add one file to your GitHub project</h2>
+            <p id="result-description">The workflow is already configured for your page.</p>
+          </div>
+          <button class="text-button" id="download-again" type="button">Download file instead</button>
+        </div>
+        <ol class="action-steps">
+          <li><span>1</span><div><strong>Copy the workflow</strong><p>Use the button below to copy the prepared code.</p></div></li>
+          <li><span>2</span><div><strong>Create one file on GitHub</strong><p>Select <b>Add file → Create new file</b>, name it <code>.github/workflows/accessibility-audit.yml</code>, paste, and commit.</p></div></li>
+          <li><span>3</span><div><strong>Run your audit</strong><p>Open <b>Actions → Accessibility audit → Run workflow</b>. The report link appears in the run summary.</p></div></li>
+        </ol>
+        <div class="result-actions">
+          <button class="primary-button" id="copy-workflow" type="button">Copy workflow code</button>
+          <a class="secondary-button" href="https://github.com" target="_blank" rel="noreferrer">Open GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+        <p class="copy-status" id="copy-status" role="status" aria-live="polite"></p>
+        <details>
+          <summary>Preview the workflow file</summary>
+          <pre tabindex="0"><code id="workflow-code"></code></pre>
+        </details>
+      </section>
+
+      <section class="proof-strip" aria-label="Report formats">
+        <p>One run gives you</p>
+        <ul><li>HTML report</li><li>Excel workbook</li><li>JSON data</li><li>Screenshots</li><li>ZIP archive</li></ul>
+      </section>
+
+      <section class="section" id="how-it-works">
+        <div class="section-heading">
+          <p class="eyebrow">A shorter setup</p>
+          <h2>From a URL to evidence in three steps</h2>
+          <p>The generator handles the technical file. You add it to your project once, then run it whenever you need a fresh audit.</p>
+        </div>
+        <ol class="steps">
+          <li><span>1</span><h3>Enter the page</h3><p>Paste one public page you are authorised to test.</p></li>
+          <li><span>2</span><h3>Add the workflow</h3><p>Create one file in your repository and paste the prepared code.</p></li>
+          <li><span>3</span><h3>Run and download</h3><p>Start it in GitHub Actions and open the report link in the run summary.</p></li>
+        </ol>
+      </section>
+
+      <section class="section coverage" id="coverage">
+        <div class="section-heading">
+          <p class="eyebrow">Honest by design</p>
+          <h2>Automation that shows its evidence—and its limits</h2>
+        </div>
+        <div class="coverage-grid">
+          <article><h3>Automated browser checks</h3><p>Semantics, names, contrast signals, page structure, component states, links, responsive reflow, and keyboard interaction evidence.</p></article>
+          <article><h3>Review-ready outputs</h3><p>Each run keeps structured findings, screenshots, an accessible HTML report, and a native Excel workbook together.</p></article>
+          <article><h3>Human checks stay visible</h3><p>No automated tool can certify full WCAG conformance. Screen-reader experience, meaning, usability, and exceptions still require expert review.</p></article>
+        </div>
+      </section>
+
+      <section class="cta-section">
+        <div><p class="eyebrow">Built in public</p><h2>Inspect it, improve it, use it.</h2><p>The action and its test methodology are open source under the MIT licence.</p></div>
+        <a class="secondary-button" href="https://github.com/CarlasHub/accessibility-audit-plugin">Explore the GitHub project <span aria-hidden="true">→</span></a>
+      </section>
+    </main>
+
+    <footer>
+      <p>Built by <a href="https://github.com/CarlasHub">CarlasHub</a> for more trustworthy accessibility work.</p>
+      <p><a href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/SECURITY.md">Security</a> · <a href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/TERMS.md">Responsible use</a></p>
+    </footer>
+
+    <script type="module" src="/app.ts"></script>
+  </body>
+</html>

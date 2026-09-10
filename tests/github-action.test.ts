@@ -5,7 +5,8 @@ import {
   parseFailurePolicy,
   parseListInput,
   parsePositiveInteger,
-  parseWcagLevel
+  parseWcagLevel,
+  resolveAllowedHosts
 } from '../src/github-action.js';
 
 describe('GitHub Action inputs', () => {
@@ -33,6 +34,17 @@ describe('GitHub Action inputs', () => {
     expect(parsePositiveInteger('', 2, 'concurrency', 8)).toBe(2);
     expect(parsePositiveInteger('8', 2, 'concurrency', 8)).toBe(8);
     expect(() => parsePositiveInteger('9', 2, 'concurrency', 8)).toThrow('between 1 and 8');
+  });
+
+  it('derives a safe hostname allowlist when users provide only URLs', () => {
+    expect(resolveAllowedHosts([
+      'https://example.test/',
+      'https://example.test/contact',
+      'https://docs.example.test/'
+    ], [])).toEqual(['example.test', 'docs.example.test']);
+    expect(resolveAllowedHosts(['https://example.test/'], ['preview.example.test'])).toEqual(['preview.example.test']);
+    expect(() => resolveAllowedHosts(['pages.csv'], [])).toThrow(/explicit HTTP\(S\) URLs only/);
+    expect(() => resolveAllowedHosts(['https://user:secret@example.test/'], [])).toThrow(/without embedded credentials/);
   });
 });
 

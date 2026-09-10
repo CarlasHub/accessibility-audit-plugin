@@ -30,7 +30,7 @@ inputs:
     description: Optional landing page used for same-origin link context.
     required: false
   allowed-hosts:
-    description: Optional comma-separated or newline-separated allowlist of hostnames.
+    description: Optional comma-separated or newline-separated allowlist of hostnames. Defaults to the hostnames in urls.
     required: false
   staging-only:
     description: Reject targets that do not look like staging, QA, preview, test, or local hosts.

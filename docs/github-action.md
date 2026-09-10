@@ -6,33 +6,33 @@ It is an automated testing aid, not a WCAG certification. WCAG 2.2 Level AA is t
 
 ## Minimal workflow
 
+The shortest setup delegates the audit and report upload to the maintained reusable workflow. Add this as `.github/workflows/accessibility-audit.yml` in your project:
+
 ```yaml
 name: Accessibility audit
 
 on:
   workflow_dispatch:
+    inputs:
+      url:
+        description: Public page to audit
+        required: true
+        type: string
+        default: https://example.com/
 
 permissions:
   contents: read
 
 jobs:
   audit:
-    runs-on: ubuntu-latest
-    steps:
-      - id: audit
-        uses: CarlasHub/accessibility-audit-plugin@v1
-        with:
-          urls: https://preview.example.test/
-          allowed-hosts: preview.example.test
-      - name: Upload evidence
-        if: always() && steps.audit.outputs.output-dir != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: accessibility-audit
-          path: ${{ steps.audit.outputs.output-dir }}
+    uses: CarlasHub/accessibility-audit-plugin/.github/workflows/reusable-accessibility-audit.yml@v1
+    with:
+      url: ${{ inputs.url }}
 ```
 
-Use a full release commit SHA instead of `@v1` when your threat model requires immutable third-party Action references. The maintained `v1` tag follows the latest compatible `v1.x.x` release.
+Open **Actions → Accessibility audit → Run workflow**, enter a page, and start the run. Its summary links directly to the complete downloadable report. No checkout, browser installation, artifact step, token, or hostname field is required.
+
+The reusable workflow follows the latest compatible `v1` release. For release-controlled environments, use the [standalone workflow](../site/workflow.ts) as a model and pin both Actions to immutable commit SHAs.
 
 ## Pull-request summaries
 
@@ -63,7 +63,7 @@ The Action uses the GitHub REST API only to list, create, or update its marked p
 | `aaa-advisory` | `false` | Run supported AAA rules as clearly separated advisory evidence. |
 | `output-dir` | `accessibility-audit-results` | Output directory, relative to the workspace unless absolute. |
 | `landing-page-url` | First URL | Report metadata and same-origin link context; it does not expand scope. |
-| `allowed-hosts` | Empty | Comma- or newline-separated hostname allowlist. Strongly recommended. |
+| `allowed-hosts` | Hosts in `urls` | Optional comma- or newline-separated hostname allowlist. The Action securely derives one from the explicit URLs when omitted. |
 | `staging-only` | `false` | Reject hosts that do not look like staging, QA, preview, test, or local hosts. |
 | `capture-screenshots` | `true` | Retain contextual screenshot evidence when reproducible. |
 | `browser-channel` | Empty | Optional installed Playwright channel such as `chrome`. |
@@ -97,7 +97,7 @@ Each job uploads JSON, Markdown, HTML, and Playwright artifacts containing the s
 ## Security and privacy
 
 - Pin third-party Actions to complete commit SHAs and grant the workflow only the permissions it needs.
-- Use `allowed-hosts`; use `staging-only: 'true'` where naming conventions make it reliable.
+- The Action derives `allowed-hosts` from `urls`; set it explicitly when a stricter or deliberately different boundary is required. Use `staging-only: 'true'` where naming conventions make it reliable.
 - Main-page redirects are checked against the same host and staging restrictions; out-of-scope destinations are rejected and are not accepted as audit results.
 - Do not put credentials, session tokens, private URLs, or secrets in `urls` or workflow logs.
 - Treat reports and screenshots as potentially sensitive. Set an appropriate artifact retention period and restrict repository access.

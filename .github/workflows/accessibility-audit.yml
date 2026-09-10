@@ -10,10 +10,6 @@ on:
         description: Public, non-sensitive page to audit
         required: true
         default: https://example.com/
-      target-host:
-        description: Expected hostname for the target URL
-        required: true
-        default: example.com
 
 jobs:
   audit:
@@ -25,14 +21,24 @@ jobs:
         uses: ./
         with:
           urls: ${{ inputs.target-url }}
-          allowed-hosts: ${{ inputs.target-host }}
           auditor: Carla / CarlasHub
           fail-on: none
           comment-on-pr: 'false'
       - name: Upload accessibility evidence
+        id: evidence
         if: always() && steps.audit.outputs.output-dir != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: accessibility-audit
           path: ${{ steps.audit.outputs.output-dir }}
           retention-days: 14
+      - name: Add the report link to the run summary
+        if: always() && steps.evidence.outputs.artifact-url != ''
+        env:
+          ARTIFACT_URL: ${{ steps.evidence.outputs.artifact-url }}
+        run: |
+          {
+            echo '## Accessibility report ready'
+            echo
+            echo "[Download the complete report]($ARTIFACT_URL)"
+          } >> "$GITHUB_STEP_SUMMARY"

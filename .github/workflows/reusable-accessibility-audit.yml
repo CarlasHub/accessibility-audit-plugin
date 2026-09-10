@@ -1,0 +1,56 @@
+name: Reusable accessibility audit
+
+on:
+  workflow_call:
+    inputs:
+      url:
+        description: Public, non-sensitive HTTP(S) page to audit
+        required: true
+        type: string
+      auditor:
+        description: Name recorded in the report
+        required: false
+        type: string
+        default: GitHub Actions
+      fail-on:
+        description: none, blockers, confirmed, critical, serious, moderate, or minor
+        required: false
+        type: string
+        default: none
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit ${{ inputs.url }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - id: audit
+        name: Run WCAG 2.2 audit
+        uses: CarlasHub/accessibility-audit-plugin@v1
+        with:
+          urls: ${{ inputs.url }}
+          auditor: ${{ inputs.auditor }}
+          fail-on: ${{ inputs.fail-on }}
+          comment-on-pr: 'false'
+      - id: evidence
+        name: Upload the complete report
+        if: always() && steps.audit.outputs.output-dir != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: accessibility-audit
+          path: ${{ steps.audit.outputs.output-dir }}
+          if-no-files-found: error
+          retention-days: 14
+      - name: Add the report link to the run summary
+        if: always() && steps.evidence.outputs.artifact-url != ''
+        env:
+          ARTIFACT_URL: ${{ steps.evidence.outputs.artifact-url }}
+        run: |
+          {
+            echo '## Accessibility report ready'
+            echo
+            echo "[Download the HTML, Excel, JSON, screenshots, and ZIP report]($ARTIFACT_URL)"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -36,42 +36,31 @@ For a client-neutral example, [watch the sanitised plugin demonstration](https:/
 
 ## Use the free GitHub Action
 
-Add WCAG 2.2 evidence to a workflow without installing this repository as an editor plugin:
+Add this file as `.github/workflows/accessibility-audit.yml` in any GitHub project:
 
 ```yaml
 name: Accessibility audit
 
 on:
   workflow_dispatch:
-  pull_request:
+    inputs:
+      url:
+        description: Public page to audit
+        required: true
+        type: string
+        default: https://example.com/
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
-  accessibility:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - id: audit
-        uses: CarlasHub/accessibility-audit-plugin@v1
-        with:
-          urls: |
-            https://preview.example.test/
-            https://preview.example.test/contact
-          allowed-hosts: preview.example.test
-          fail-on: serious
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload audit evidence
-        if: always() && steps.audit.outputs.output-dir != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: accessibility-audit
-          path: ${{ steps.audit.outputs.output-dir }}
+  audit:
+    uses: CarlasHub/accessibility-audit-plugin/.github/workflows/reusable-accessibility-audit.yml@v1
+    with:
+      url: ${{ inputs.url }}
 ```
 
-The Action tests only the URLs you list. It posts or updates one pull-request summary when permitted and retains HTML, Excel, JSON, screenshots, and a portable ZIP for upload. `fail-on: none` is the informational default; severity gates count confirmed findings only, never items awaiting human review. See [GitHub Action usage](docs/github-action.md) for every input, output, permission, and security recommendation.
+Open **Actions → Accessibility audit → Run workflow**, enter any authorised public page, and start the run. The run summary links directly to the HTML, Excel, JSON, screenshots, and ZIP report. No checkout, browser setup, artifact step, token, or hostname field is required. The Action tests only the URL you enter and does not crawl the rest of the site. See [GitHub Action usage](docs/github-action.md) for advanced inputs, pull-request comments, quality gates, and security recommendations.
 
 ## Start here
 

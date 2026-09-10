@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.0 - 2026-09-10
+
+- Added a token-free landing-page generator that turns one public URL into a ready-to-paste GitHub Actions workflow and explains the complete run-to-report path.
+- Added a maintained reusable workflow so projects can run the audit with one URL, no checkout, no browser setup, and no repeated hostname input.
+- Derived the network allowlist securely from explicit audit URLs when `allowed-hosts` is omitted, while continuing to reject credential-bearing URLs.
+- Linked the uploaded HTML, Excel, JSON, screenshot, and ZIP evidence directly from the GitHub Actions run summary.
+- Added automated coverage for workflow generation and one-URL Action inputs, and validated the landing page at desktop, mobile, and 320-pixel reflow sizes.
+
 ## 1.3.1 - 2026-09-10
 
 - Corrected the release lineage after `v1.3.0` was accidentally published from the previous `v1.2.1` source commit; `v1.3.0` is retained as withdrawn and must not be used.

@@ -2,7 +2,17 @@ import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'action/dist/**', 'node_modules/**', 'artifacts/**', 'marketplace/carlashub-plugin-marketplace/accessibility-audit/**'] },
+  {
+    ignores: [
+      'dist/**',
+      'action/dist/**',
+      'node_modules/**',
+      'artifacts/**',
+      'site-dist/**',
+      'site/dist/**',
+      'marketplace/carlashub-plugin-marketplace/accessibility-audit/**'
+    ]
+  },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -25,6 +35,16 @@ export default tseslint.config(
     files: ['**/*.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off'
+    }
+  },
+  {
+    files: ['site/server.js'],
+    languageOptions: {
+      globals: {
+        Request: 'readonly',
+        Response: 'readonly',
+        URL: 'readonly'
+      }
     }
   }
 );
