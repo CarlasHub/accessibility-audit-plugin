@@ -106,19 +106,14 @@ button {
 
 .brand-mark,
 .hero-mark {
-  display: inline-grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--night-text);
-  color: var(--night);
-  font-weight: 850;
-  line-height: 1;
+  display: block;
+  flex: 0 0 auto;
+  object-fit: contain;
 }
 
 .brand-mark {
-  width: 2rem;
-  height: 2rem;
-  font-size: 0.85rem;
+  width: 2.25rem;
+  height: 2.25rem;
 }
 
 .brand strong,
@@ -184,10 +179,9 @@ main {
 }
 
 .hero-mark {
-  width: 3rem;
-  height: 3rem;
-  margin-bottom: 1.25rem;
-  font-size: 1.15rem;
+  width: 4rem;
+  height: 4rem;
+  margin: 0 auto 1.25rem;
 }
 
 .eyebrow,
@@ -874,8 +868,6 @@ footer p {
 @media (forced-colors: active) {
   .pixel-block.is-active,
   .primary-button,
-  .brand-mark,
-  .hero-mark,
   .action-steps .is-current > span {
     border: 1px solid ButtonText;
   }
