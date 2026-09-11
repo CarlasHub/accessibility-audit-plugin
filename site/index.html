@@ -48,7 +48,7 @@
           />
           <p class="eyebrow">Open-source accessibility testing</p>
           <h1>Audit every page.<br /><em>Remove barriers before release.</em></h1>
-          <p class="lede">Add up to 20 public pages. Get one ready-to-run GitHub Actions workflow and one evidence pack for your team.</p>
+          <p class="lede">Add up to 20 public pages. Create your own ready-to-run GitHub repository and keep every audit and report under your account.</p>
           <div class="trust-row" aria-label="Audit capabilities">
             <span>WCAG 2.2</span>
             <span>Keyboard</span>
@@ -96,14 +96,14 @@
                 <p id="url-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
               </fieldset>
               <div class="form-actions">
-                <button class="primary-button build-button" id="launch-audit" type="submit">Run audit now <span aria-hidden="true">→</span></button>
-                <button class="secondary-button build-button" id="build-workflow" type="button">Use in my own repository</button>
+                <button class="primary-button build-button" id="launch-audit" type="submit">Create my audit repository <span aria-hidden="true">→</span></button>
+                <button class="secondary-button build-button" id="build-workflow" type="button">Download a workflow instead</button>
               </div>
               <p class="launch-status" id="launch-status" role="status" aria-live="polite" aria-atomic="true"></p>
               <p class="field-error launch-error" id="launch-error" role="alert" aria-atomic="true" tabindex="-1" hidden></p>
             </form>
 
-            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>The one-click audit runs in CarlasHub GitHub Actions. Your URLs go to the Action; GitHub credentials never reach your browser.</span></p>
+            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>Your page list is copied, then GitHub asks you to confirm a repository from the free template. Its Actions usage, audit history, and reports belong to you—not CarlasHub.</span></p>
           </div>
         </div>
       </section>
@@ -112,7 +112,7 @@
         <div class="result-heading">
           <div>
             <p class="eyebrow success-label"><span aria-hidden="true"></span> Checkpoint reached</p>
-            <h2 id="workflow-result-title" tabindex="-1" aria-describedby="result-description">Your repository workflow is ready</h2>
+            <h2 id="workflow-result-title" tabindex="-1" aria-describedby="result-description">Your workflow file is ready</h2>
             <p id="result-description">The workflow is configured for your pages.</p>
           </div>
           <button class="text-button" id="download-again" type="button">Download <code>.yml</code></button>
@@ -127,7 +127,7 @@
 
         <div class="result-actions">
           <button class="primary-button" id="copy-workflow" type="button">Copy workflow code</button>
-          <a class="secondary-button" href="https://github.com/CarlasHub/accessibility-audit-plugin/actions/workflows/accessibility-audit.yml" target="_blank" rel="noreferrer" aria-label="Open the accessibility Action on GitHub (opens in a new tab)">Open the Action <span aria-hidden="true">↗</span></a>
+          <a class="secondary-button" href="https://github.com/CarlasHub/accessibility-audit-starter" target="_blank" rel="noreferrer" aria-label="Open the accessibility audit starter repository on GitHub (opens in a new tab)">Open starter repository <span aria-hidden="true">↗</span></a>
         </div>
         <div class="copy-feedback">
           <p class="copy-status" id="copy-status" role="status" aria-live="polite" aria-atomic="true"></p>
@@ -154,8 +154,8 @@
         <div class="integration-grid">
           <article class="integration-card integration-card-featured">
             <div class="integration-topline"><h3>GitHub Actions</h3><span class="availability availability-live">Ready</span></div>
-            <p>Generate one workflow on this page, commit it to any repository, and run audits in GitHub without installing the plugin locally.</p>
-            <a class="integration-action" href="#audit-builder">Build a workflow <span aria-hidden="true">→</span></a>
+            <p>Create your own audit repository from the ready template, or download a workflow for an existing project. Runs and reports stay in your GitHub account.</p>
+            <a class="integration-action" href="#audit-builder">Create an audit repository <span aria-hidden="true">→</span></a>
           </article>
 
           <article class="integration-card">
@@ -201,11 +201,11 @@ copilot plugin install ./marketplace/carlashub-plugin-marketplace/accessibility-
         <div class="section-heading">
           <p class="eyebrow"><span aria-hidden="true"></span> A shorter setup</p>
           <h2>From a page list to useful evidence.</h2>
-          <p>The builder writes the technical workflow for you. Add it to a repository once, then rerun it whenever your site changes.</p>
+          <p>The template adds the technical workflow for you. Confirm your repository on GitHub, then rerun it whenever your site changes.</p>
         </div>
         <ol class="steps">
           <li><span aria-hidden="true">01</span><h3>Add your pages</h3><p>Enter one or several public pages that you are authorised to test.</p></li>
-          <li><span aria-hidden="true">02</span><h3>Commit one file</h3><p>Copy the generated workflow into your project’s <code>.github/workflows</code> folder.</p></li>
+          <li><span aria-hidden="true">02</span><h3>Create your repository</h3><p>Confirm the prefilled template on GitHub. The repository and its Actions usage are yours.</p></li>
           <li><span aria-hidden="true">03</span><h3>Run and review</h3><p>Start the Action and download one combined evidence pack for every page.</p></li>
         </ol>
       </section>

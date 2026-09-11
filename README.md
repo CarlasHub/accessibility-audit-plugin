@@ -10,7 +10,7 @@ Maintained by CarlasHub and released under the MIT License.
 
 [Open the public installation and workflow builder](https://carlashub.github.io/accessibility-audit-plugin/) to use the GitHub Action or choose the verified installation path for Claude Desktop, Claude Code, Cursor, Codex CLI, and GitHub Copilot.
 
-The authenticated CarlasHub launcher offers two routes. **Run audit now** starts the maintained CarlasHub workflow and opens the exact live run; its GitHub credential stays on the server. **Use in my own repository** generates a small reusable workflow for public visitors and teams that want runs and artifacts to remain in their own project. The public GitHub Pages copy supports the second route because a static page cannot safely store a GitHub credential.
+The public builder keeps ownership with the user. **Create my audit repository** opens a prefilled GitHub template and copies the selected page list ready to paste into the Action. GitHub asks the user to confirm the repository, and every run, report, permission, and usage record stays in that user’s account. **Download a workflow instead** generates a standalone file for an existing project. CarlasHub does not provide a shared runner or store a launcher token.
 
 The audit engine is site-independent. It contains no customer-specific hostnames, page assumptions, selectors, rules, or defaults. Every target URL is supplied at run time, and evidence from one audit is never reused in another. Customer sites used during development are external validation targets only and are not part of the plugin package.
 

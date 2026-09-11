@@ -32,6 +32,15 @@ const buildWorkflowButton = requiredElement<HTMLButtonElement>('#build-workflow'
 const launchStatus = requiredElement<HTMLParagraphElement>('#launch-status');
 const launchError = requiredElement<HTMLParagraphElement>('#launch-error');
 
+const templateCreationUrl = new URL('https://github.com/new');
+templateCreationUrl.search = new URLSearchParams({
+  template_owner: 'CarlasHub',
+  template_name: 'accessibility-audit-starter',
+  name: 'accessibility-audit',
+  description: 'My WCAG 2.2 accessibility audit',
+  visibility: 'public'
+}).toString();
+
 let currentWorkflow = '';
 
 function getRows(): HTMLDivElement[] {
@@ -51,9 +60,9 @@ function requiredElementInRow<T extends HTMLElement>(row: HTMLElement, selector:
 function setProgress(stage: 1 | 2 | 3 | 4): void {
   const labels = {
     1: 'Stage 1 of 4: add pages',
-    2: 'Stage 2 of 4: pages checked',
-    3: 'Stage 3 of 4: starting GitHub Action',
-    4: 'Stage 4 of 4: live run ready'
+    2: 'Stage 2 of 4: create your repository',
+    3: 'Stage 3 of 4: run your GitHub Action',
+    4: 'Stage 4 of 4: download your report'
   } as const;
   const label = labels[stage];
   progress.setAttribute('aria-valuenow', String(stage));
@@ -231,7 +240,7 @@ function prepareWorkflow(): void {
   resultTitle.focus({ preventScroll: true });
 }
 
-async function launchAudit(): Promise<void> {
+async function createAuditRepository(): Promise<void> {
   clearLaunchFeedback();
   const targets = readTargets();
   if (!targets) return;
@@ -239,50 +248,35 @@ async function launchAudit(): Promise<void> {
   const insecureTarget = targets.find((target) => !target.url.startsWith('https://'));
   if (insecureTarget) {
     const input = getInputs().find((candidate) => candidate.value.trim() === insecureTarget.url) ?? getInputs()[0];
-    if (input) showFieldError(input, 'One-click audits require a public address beginning with https://.');
+    if (input) showFieldError(input, 'The ready-to-run repository requires a public address beginning with https://.');
     return;
   }
 
   setProgress(2);
   launchButton.disabled = true;
   launchButton.setAttribute('aria-busy', 'true');
-  launchButton.textContent = 'Starting audit…';
+  launchButton.textContent = 'Opening GitHub…';
   form.setAttribute('aria-busy', 'true');
-  launchStatus.textContent = `${targets.length} ${targets.length === 1 ? 'page' : 'pages'} checked. Connecting to GitHub Actions.`;
+  launchStatus.textContent = `${targets.length} ${targets.length === 1 ? 'page' : 'pages'} checked. Preparing your GitHub repository.`;
 
   let navigating = false;
   try {
-    setProgress(3);
-    const response = await fetch('/api/audits', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ urls: targets.map((target) => target.url) })
-    });
-    const payload = (await response.json().catch(() => ({}))) as { error?: string; runUrl?: string };
-    if (!response.ok) throw new Error(payload.error || 'The audit could not be started.');
-    if (!payload.runUrl) throw new Error('GitHub started the audit but did not return its run page.');
-
-    const runUrl = new URL(payload.runUrl);
-    const expectedPath = '/CarlasHub/accessibility-audit-plugin/actions/';
-    if (runUrl.protocol !== 'https:' || runUrl.hostname !== 'github.com' || !runUrl.pathname.startsWith(expectedPath)) {
-      throw new Error('GitHub returned an unexpected run address.');
-    }
-
-    setProgress(4);
-    launchStatus.textContent = 'Audit started. Opening the live GitHub Actions run.';
+    if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable.');
+    await navigator.clipboard.writeText(targets.map((target) => target.url).join('\n'));
+    launchStatus.textContent = 'Page list copied. GitHub will ask you to confirm your new repository.';
     navigating = true;
-    window.location.assign(runUrl.href);
-  } catch (error) {
-    setProgress(2);
+    window.location.assign(templateCreationUrl.href);
+  } catch {
+    setProgress(1);
     launchStatus.textContent = '';
-    launchError.textContent = error instanceof Error ? error.message : 'The audit could not be started.';
+    launchError.textContent = 'Your browser blocked copying the page list. Use “Download a workflow instead” below, or allow clipboard access and try again.';
     launchError.hidden = false;
     launchError.focus();
   } finally {
     if (!navigating) {
       launchButton.disabled = false;
       launchButton.removeAttribute('aria-busy');
-      launchButton.innerHTML = 'Run audit now <span aria-hidden="true">→</span>';
+      launchButton.innerHTML = 'Create my audit repository <span aria-hidden="true">→</span>';
       form.removeAttribute('aria-busy');
     }
   }
@@ -290,7 +284,7 @@ async function launchAudit(): Promise<void> {
 
 form.addEventListener('submit', (event) => {
   event.preventDefault();
-  void launchAudit();
+  void createAuditRepository();
 });
 
 buildWorkflowButton.addEventListener('click', prepareWorkflow);
