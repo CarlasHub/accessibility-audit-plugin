@@ -36,15 +36,5 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-explicit-any': 'off'
     }
-  },
-  {
-    files: ['site/server.js'],
-    languageOptions: {
-      globals: {
-        Request: 'readonly',
-        Response: 'readonly',
-        URL: 'readonly'
-      }
-    }
   }
 );

@@ -6,7 +6,7 @@ export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
   build: {
     emptyOutDir: true,
-    outDir: 'dist/client',
+    outDir: '../dist/client',
     rollupOptions: {
       output: {
         assetFileNames: 'assets/[name][extname]',

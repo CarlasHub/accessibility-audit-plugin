@@ -63,7 +63,7 @@
     "build:action": "npm run build && node scripts/clean-action-dist.mjs && ncc build dist/action-entry.js -o action/dist --no-source-map-register -e axe-core -e playwright -e playwright-core && node scripts/finalize-action-dist.mjs",
     "build:marketplace": "npm run build && node scripts/build-marketplace-payload.mjs",
     "site:dev": "vite site --host 127.0.0.1",
-    "site:build": "vite build --config site/vite.config.ts && node scripts/prepare-site-worker.mjs",
+    "site:build": "vite build --config site/vite.config.ts",
     "site:preview": "vite preview --config site/vite.config.ts --host 127.0.0.1",
     "package:claude-desktop": "npm run build:marketplace && node scripts/package-claude-desktop.mjs",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
