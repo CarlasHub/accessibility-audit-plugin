@@ -141,13 +141,23 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
           },
           runResponsiveChecks: async () => {
             responsiveCalls += 1;
-            throw new Error('responsive checks must not run behind an interaction blocker');
+            return {
+              completed: true,
+              horizontalOverflow: 0,
+              overflowElements: [],
+              textResizeOverflow: 0,
+              textSpacingOverflow: 0,
+              clippedElements: [],
+              overlapPairs: [],
+              lostInteractiveElements: [],
+              textResizeLostInteractiveElements: []
+            };
           }
         });
         const findings = findingsFromPage({ url, viewports: [audit], partial: Boolean(audit.partial) });
 
         expect(keyboardCalls, viewport.name).toBe(0);
-        expect(responsiveCalls, viewport.name).toBe(0);
+        expect(responsiveCalls, viewport.name).toBe(1);
         expect(audit.interactionBlocker?.selector, viewport.name).toBe('#backdrop');
         expect(findings.some((finding) => finding.classification === 'blocker'), viewport.name).toBe(true);
         expect(findings.some((finding) => finding.ruleId.includes('keyboard-focus-obscured')), viewport.name).toBe(false);

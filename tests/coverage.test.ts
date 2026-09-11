@@ -33,6 +33,7 @@ function viewport(overrides: Partial<ViewportAudit> = {}): ViewportAudit {
     },
     keyboard: { sequence: [], journeys: [], completedCycle: false, truncated: false, scope: 'unknown' },
     responsive: {
+      completed: true,
       horizontalOverflow: 0,
       overflowElements: [],
       textSpacingOverflow: 0,
@@ -167,6 +168,27 @@ describe('coverage matrix', () => {
     const keyboard = coverage[0]!.viewports[0]!.assessments.find((item) => item.area === 'keyboard-only');
     expect(keyboard).toEqual(expect.objectContaining({ status: 'tested-inconclusive' }));
     expect(keyboard?.detail).toContain('#privacy-dialog');
+  });
+
+  it('does not claim responsive phases completed when execution evidence is absent', () => {
+    const incomplete = viewport({
+      responsive: {
+        completed: false,
+        horizontalOverflow: 0,
+        overflowElements: [],
+        textSpacingOverflow: 0,
+        clippedElements: [],
+        overlapPairs: [],
+        lostInteractiveElements: []
+      }
+    });
+    const coverage = buildCoverageMatrix([{ url: incomplete.url, viewports: [incomplete] }], []);
+    const responsive = coverage[0]!.viewports[0]!.assessments
+      .find((item) => item.area === 'zoom-text-spacing-and-responsive');
+
+    expect(responsive).toEqual(expect.objectContaining({ status: 'tested-inconclusive' }));
+    expect(responsive?.detail).toContain('did not produce complete evidence');
+    expect(responsive?.detail).not.toContain('were sampled');
   });
 
   it('never turns an audit blocker into a WCAG failure', () => {

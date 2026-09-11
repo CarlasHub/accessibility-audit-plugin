@@ -866,6 +866,7 @@ export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckRe
   const baseClippingKeys = new Set(base.clippedElements.map((item) => `${item.selector}|${item.axis}`));
   const baseOverlapKeys = new Set(base.overlapPairs.map((item) => [item.firstSelector, item.secondSelector].sort().join('|')));
   return {
+    completed: true,
     horizontalOverflow: base.horizontalOverflow,
     overflowElements: base.overflowElements,
     textResizeOverflow: resized.horizontalOverflow,

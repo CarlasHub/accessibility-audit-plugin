@@ -88,6 +88,7 @@ function viewportCoverage(audit: ViewportAudit, findings: Finding[]): CoverageAs
   const disclosureError = checkError('Disclosure checks error:');
   const tabError = checkError('Tab checks error:');
   const responsiveError = checkError('Responsive checks error:');
+  const responsiveComplete = audit.responsive.completed === true;
   const contextError = checkError('Element context check error:');
   const screenshotError = checkError('Screenshot check error:');
   const journeyResults = audit.keyboard.journeys.map((journey) => `${journey.title}: ${journey.status}`).join('; ');
@@ -199,6 +200,8 @@ function viewportCoverage(audit: ViewportAudit, findings: Finding[]): CoverageAs
       (finding) => /reflow|responsive|overflow|text-spacing/i.test(finding.ruleId),
       responsiveError
         ? `Responsive checks did not complete: ${responsiveError.slice('Responsive checks error:'.length).trim()}`
+        : !responsiveComplete
+          ? 'Responsive checks did not produce complete evidence for the default, 200% root text-resize, and WCAG text-spacing phases; rerun the audit and complete human reflow and zoom review.'
         : 'At 320 CSS pixels, overflow, clipping and interactive overlap were sampled in the default state, with a 200% root text resize, and with WCAG text spacing; browser zoom, permitted exceptions, and complete content loss still require human review.'
     ),
     resultForFindings(

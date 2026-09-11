@@ -2,13 +2,13 @@
   {
     "name": "accessibility-audit",
     "description": "Evidence-backed WCAG 2.2 A/AA page audits for Copilot CLI.",
-    "version": "1.6.1",
+    "version": "1.6.2",
     "source": "accessibility-audit/copilot-cli"
   },
   {
     "name": "accessibility-audit-vscode",
     "description": "Evidence-backed WCAG 2.2 A/AA page audits for Copilot in VS Code.",
-    "version": "1.6.1",
+    "version": "1.6.2",
     "source": "accessibility-audit/copilot-vscode"
   }
 ]

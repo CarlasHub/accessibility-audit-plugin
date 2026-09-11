@@ -152020,6 +152020,7 @@ async function runResponsiveChecks(page) {
     const baseClippingKeys = new Set(base.clippedElements.map((item) => `${item.selector}|${item.axis}`));
     const baseOverlapKeys = new Set(base.overlapPairs.map((item) => [item.firstSelector, item.secondSelector].sort().join('|')));
     return {
+        completed: true,
         horizontalOverflow: base.horizontalOverflow,
         overflowElements: base.overflowElements,
         textResizeOverflow: resized.horizontalOverflow,
@@ -154800,6 +154801,7 @@ function viewportCoverage(audit, findings) {
     const disclosureError = checkError('Disclosure checks error:');
     const tabError = checkError('Tab checks error:');
     const responsiveError = checkError('Responsive checks error:');
+    const responsiveComplete = audit.responsive.completed === true;
     const contextError = checkError('Element context check error:');
     const screenshotError = checkError('Screenshot check error:');
     const journeyResults = audit.keyboard.journeys.map((journey) => `${journey.title}: ${journey.status}`).join('; ');
@@ -154865,7 +154867,9 @@ function viewportCoverage(audit, findings) {
         assessment('dynamic-content-and-status', configuredByCategory('dynamic-content').length ? 'tested-inconclusive' : 'not-tested', `${configuredDetail('dynamic-content')} A DOM live-region mutation is evidence of an update, not proof that every screen reader announces it correctly.`),
         resultForFindings('zoom-text-spacing-and-responsive', relevant, (finding) => /reflow|responsive|overflow|text-spacing/i.test(finding.ruleId), responsiveError
             ? `Responsive checks did not complete: ${responsiveError.slice('Responsive checks error:'.length).trim()}`
-            : 'At 320 CSS pixels, overflow, clipping and interactive overlap were sampled in the default state, with a 200% root text resize, and with WCAG text spacing; browser zoom, permitted exceptions, and complete content loss still require human review.'),
+            : !responsiveComplete
+                ? 'Responsive checks did not produce complete evidence for the default, 200% root text-resize, and WCAG text-spacing phases; rerun the audit and complete human reflow and zoom review.'
+                : 'At 320 CSS pixels, overflow, clipping and interactive overlap were sampled in the default state, with a 200% root text resize, and with WCAG text spacing; browser zoom, permitted exceptions, and complete content loss still require human review.'),
         resultForFindings('contrast-and-non-colour-cues', relevant, (finding) => /contrast|use-of-color|colour/i.test(finding.ruleId), 'Axe inspected supported initial-state text contrast; non-text contrast, colour-only cues and all interaction states remain inconclusive.'),
         assessment('motion-autoplay-and-controls', autoplayPresent ? 'manual-review-required' : 'tested-inconclusive', autoplayPresent
             ? 'Autoplay media was detected; duration, audio, motion and pause/stop/hide controls require timed manual testing.'
@@ -155672,6 +155676,9 @@ async function collectUrls(inputs, options = {}) {
 const CANCELLED_REASON = 'The audit was stopped by the user. Results include only work completed before cancellation.';
 const MAX_CAPTURED_RUNTIME_ERRORS = 50;
 const runner_require = (0,external_node_module_namespaceObject.createRequire)(import.meta.url);
+function isBrowserNetworkConsoleError(message) {
+    return /^Failed to load resource:\s+net::ERR_[A-Z0-9_]+$/i.test(message.trim());
+}
 function emptyDom() {
     return {
         h1Count: 0,
@@ -156038,6 +156045,7 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
         sequence: [], completedCycle: false, truncated: false, scope: 'unknown', journeys: []
     };
     let responsive = {
+        completed: false,
         horizontalOverflow: 0,
         overflowElements: [],
         textSpacingOverflow: 0,
@@ -156077,8 +156085,10 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
         };
         page.on('pageerror', (error) => captureRuntimeError(`Page error: ${error.message}`));
         page.on('console', (message) => {
-            if (message.type() === 'error')
-                captureRuntimeError(`Console error: ${message.text()}`);
+            const text = message.text();
+            if (message.type() === 'error' && !isBrowserNetworkConsoleError(text)) {
+                captureRuntimeError(`Console error: ${text}`);
+            }
         });
         let blockedNavigationReason = null;
         await page.route('**/*', async (route) => {
@@ -156193,13 +156203,11 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
                 errors.push(`Tab checks error: ${error instanceof Error ? error.message : String(error)}`);
             }
         }
-        if (!interactionBlocker) {
-            try {
-                responsive = await dependencies.runResponsiveChecks(page);
-            }
-            catch (error) {
-                errors.push(`Responsive checks error: ${error instanceof Error ? error.message : String(error)}`);
-            }
+        try {
+            responsive = await dependencies.runResponsiveChecks(page);
+        }
+        catch (error) {
+            errors.push(`Responsive checks error: ${error instanceof Error ? error.message : String(error)}`);
         }
         if (!interactionBlocker && viewport.name === 'desktop') {
             try {

@@ -39,6 +39,10 @@ const CANCELLED_REASON = 'The audit was stopped by the user. Results include onl
 const MAX_CAPTURED_RUNTIME_ERRORS = 50;
 const require = createRequire(import.meta.url);
 
+export function isBrowserNetworkConsoleError(message: string): boolean {
+  return /^Failed to load resource:\s+net::ERR_[A-Z0-9_]+$/i.test(message.trim());
+}
+
 function emptyDom(): DomCheckResult {
   return {
     h1Count: 0,
@@ -479,6 +483,7 @@ export async function auditViewport(
     sequence: [], completedCycle: false, truncated: false, scope: 'unknown', journeys: []
   };
   let responsive: ViewportAudit['responsive'] = {
+    completed: false,
     horizontalOverflow: 0,
     overflowElements: [],
     textSpacingOverflow: 0,
@@ -517,7 +522,10 @@ export async function auditViewport(
     };
     page.on('pageerror', (error) => captureRuntimeError(`Page error: ${error.message}`));
     page.on('console', (message) => {
-      if (message.type() === 'error') captureRuntimeError(`Console error: ${message.text()}`);
+      const text = message.text();
+      if (message.type() === 'error' && !isBrowserNetworkConsoleError(text)) {
+        captureRuntimeError(`Console error: ${text}`);
+      }
     });
     let blockedNavigationReason: string | null = null;
     await page.route('**/*', async (route) => {
@@ -622,12 +630,10 @@ export async function auditViewport(
         errors.push(`Tab checks error: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    if (!interactionBlocker) {
-      try {
-        responsive = await dependencies.runResponsiveChecks(page);
-      } catch (error) {
-        errors.push(`Responsive checks error: ${error instanceof Error ? error.message : String(error)}`);
-      }
+    try {
+      responsive = await dependencies.runResponsiveChecks(page);
+    } catch (error) {
+      errors.push(`Responsive checks error: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (!interactionBlocker && viewport.name === 'desktop') {
       try {

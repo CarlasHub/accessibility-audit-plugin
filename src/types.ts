@@ -245,6 +245,8 @@ export interface KeyboardJourneyResult {
 }
 
 export interface ResponsiveCheckResult {
+  /** True only after the default, 200% text-resize, and WCAG text-spacing phases all completed. */
+  completed?: boolean;
   horizontalOverflow: number;
   overflowElements: Array<{ selector: string; right: number; width: number }>;
   textSpacingOverflow: number;

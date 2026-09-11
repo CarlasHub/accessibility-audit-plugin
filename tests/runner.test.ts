@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   browserLaunchCandidates,
   createBrowserLaunchOptions,
+  isBrowserNetworkConsoleError,
   isMissingBrowserExecutableError,
   needsFullPageScreenshotFallback,
   retainRepresentativeScreenshotPerFinding,
@@ -10,6 +11,13 @@ import {
 import type { Finding } from '../src/types.js';
 
 describe('browser launch isolation', () => {
+  it('separates Chromium network noise from authored console errors', () => {
+    expect(isBrowserNetworkConsoleError('Failed to load resource: net::ERR_HTTP2_PROTOCOL_ERROR')).toBe(true);
+    expect(isBrowserNetworkConsoleError('Failed to load resource: net::ERR_NAME_NOT_RESOLVED')).toBe(true);
+    expect(isBrowserNetworkConsoleError('Uncaught TypeError: button is null')).toBe(false);
+    expect(isBrowserNetworkConsoleError('Failed to load resource')).toBe(false);
+  });
+
   it('keeps normal checks headless without surrendering graceful signal handling', () => {
     const normal = createBrowserLaunchOptions({ channel: 'chrome' }, true);
 

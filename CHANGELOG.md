@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.2 - 2026-09-11
+
+- Made the default, 200% root text-resize, and WCAG text-spacing phases run against the rendered state even when a modal blocks underlying keyboard interactions.
+- Added explicit responsive-phase completion evidence and prevented the coverage matrix from claiming those phases ran when evidence is absent.
+- Stopped Chromium's generic transient resource-load console message from being misreported as an authored page error while preserving real JavaScript console and page errors.
+- Added regression coverage for blocked-page responsive execution and truthful incomplete-phase reporting.
+
 ## 1.6.1 - 2026-09-11
 
 - Made the GitHub Action's process-level cancellation state authoritative, preventing a late SIGTERM received during output or summary writing from incorrectly exiting as a successful audit.
