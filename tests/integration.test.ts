@@ -120,6 +120,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
 
       for (const viewport of viewports) {
         let keyboardCalls = 0;
+        let responsiveCalls = 0;
         const html = '<!doctype html><html lang="en"><head><title>Blocked page</title></head><body><main><h1>Page</h1><button>Unreachable</button></main><div id="backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.6);pointer-events:auto"></div></body></html>';
         const url = `data:text/html,${encodeURIComponent(html)}`;
         const options = resolveOptions({
@@ -136,14 +137,20 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
           runKeyboardChecks: async () => {
             keyboardCalls += 1;
             throw new Error('keyboard checks must not run behind an interaction blocker');
+          },
+          runResponsiveChecks: async () => {
+            responsiveCalls += 1;
+            throw new Error('responsive checks must not run behind an interaction blocker');
           }
         });
         const findings = findingsFromPage({ url, viewports: [audit], partial: Boolean(audit.partial) });
 
         expect(keyboardCalls, viewport.name).toBe(0);
+        expect(responsiveCalls, viewport.name).toBe(0);
         expect(audit.interactionBlocker?.selector, viewport.name).toBe('#backdrop');
         expect(findings.some((finding) => finding.classification === 'blocker'), viewport.name).toBe(true);
         expect(findings.some((finding) => finding.ruleId.includes('keyboard-focus-obscured')), viewport.name).toBe(false);
+        expect(findings.some((finding) => finding.ruleId.startsWith('responsive-')), viewport.name).toBe(false);
       }
     } finally {
       await browser.close();
@@ -161,6 +168,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
           .track { display: flex; width: 300px; }
           .carousel-slide { flex: 0 0 150px; }
           .wide { width: 300px; height: 20px; }
+          .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
         </style>
         <main>
           <div id="stories-carousel" class="viewport carousel">
@@ -170,12 +178,15 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
             </div>
           </div>
           <div id="genuine-clipping" class="viewport"><div class="wide">Clipped content</div></div>
+          <span id="assistive-copy" class="sr-only">Useful screen reader instructions that are intentionally hidden visually.</span>
         </main>
       `);
 
       const result = await runResponsiveChecks(page);
       expect(result.clippedElements.some((element) => element.selector === '#stories-carousel')).toBe(false);
       expect(result.clippedElements.some((element) => element.selector === '#genuine-clipping')).toBe(true);
+      expect(result.clippedElements.filter((element) => element.selector === '#genuine-clipping')).toHaveLength(1);
+      expect(result.clippedElements.some((element) => element.selector === '#assistive-copy')).toBe(false);
     } finally {
       await browser.close();
     }

@@ -832,7 +832,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       identity: `responsive-clipped|${clipped.phase}|${normalizeComponent(clipped.selector)}`,
       ruleId: 'responsive-content-clipped',
       classification: 'review',
-      severity: 'Serious',
+      severity: 'Moderate',
       wcag: criteria,
       summary: `Content may be clipped${clipped.phase === 'text-spacing' ? ' after text spacing' : ' at the narrow viewport'}`,
       issue: `${clipped.selector} has ${clipped.axis} scroll dimensions larger than its visible box while its overflow styling can clip content.`,
@@ -857,7 +857,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       identity: `responsive-overlap|${overlap.phase}|${selectors.map(normalizeComponent).sort().join('|')}`,
       ruleId: 'responsive-controls-overlap',
       classification: 'review',
-      severity: 'Serious',
+      severity: 'Moderate',
       wcag: criteria,
       summary: `Interactive elements overlap${overlap.phase === 'text-spacing' ? ' after text spacing' : ' at the narrow viewport'}`,
       issue: `Two visible interactive elements overlap by ${overlap.overlapWidth}×${overlap.overlapHeight} CSS pixels. Review whether either control, label, or focus indicator is obscured.`,
@@ -1319,7 +1319,7 @@ export function findingsFromPage(page: PageAudit): Finding[] {
         ...(interactionUnavailable || failed('Disclosure checks error:') ? { disclosures: [] } : {}),
         ...(interactionUnavailable || failed('Tab checks error:') ? { tabs: [] } : {}),
         ...(interactionUnavailable || failed('Link checks error:') ? { links: [] } : {}),
-        ...(failed('Responsive checks error:') ? {
+        ...(interactionUnavailable || failed('Responsive checks error:') ? {
           responsive: {
             horizontalOverflow: 0,
             overflowElements: [],

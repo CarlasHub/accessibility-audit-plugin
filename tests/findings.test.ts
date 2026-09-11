@@ -407,6 +407,28 @@ describe('evidence-gated link and tab findings', () => {
         truncated: false,
         scope: 'modal-only',
         modalSelector: '#privacy-dialog'
+      },
+      responsive: {
+        horizontalOverflow: 0,
+        overflowElements: [],
+        textSpacingOverflow: 0,
+        clippedElements: [{
+          selector: '#hidden-behind-dialog',
+          axis: 'horizontal',
+          phase: 'default',
+          clientWidth: 10,
+          clientHeight: 10,
+          scrollWidth: 100,
+          scrollHeight: 10
+        }],
+        overlapPairs: [{
+          firstSelector: '#hidden-behind-dialog',
+          secondSelector: '#privacy-dialog',
+          phase: 'default',
+          overlapWidth: 20,
+          overlapHeight: 20
+        }],
+        lostInteractiveElements: []
       }
     })));
     expect(findings).toContainEqual(expect.objectContaining({
@@ -414,6 +436,46 @@ describe('evidence-gated link and tab findings', () => {
       classification: 'blocker',
       wcag: ['None']
     }));
+    expect(findings.some((finding) => finding.ruleId.startsWith('responsive-'))).toBe(false);
+  });
+
+  it('keeps valid responsive signals as moderate review candidates', () => {
+    const findings = findingsFromPage(page(viewport({
+      responsive: {
+        horizontalOverflow: 0,
+        overflowElements: [],
+        textSpacingOverflow: 0,
+        clippedElements: [{
+          selector: '#genuinely-clipped-content',
+          axis: 'horizontal',
+          phase: 'default',
+          clientWidth: 120,
+          clientHeight: 40,
+          scrollWidth: 240,
+          scrollHeight: 40
+        }],
+        overlapPairs: [{
+          firstSelector: '#primary-action',
+          secondSelector: '#secondary-action',
+          phase: 'default',
+          overlapWidth: 24,
+          overlapHeight: 16
+        }],
+        lostInteractiveElements: []
+      }
+    })));
+    expect(findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        ruleId: 'responsive-content-clipped',
+        classification: 'review',
+        severity: 'Moderate'
+      }),
+      expect.objectContaining({
+        ruleId: 'responsive-controls-overlap',
+        classification: 'review',
+        severity: 'Moderate'
+      })
+    ]));
   });
 
   it('does not flag an organisation-named logo link solely because it points home', () => {

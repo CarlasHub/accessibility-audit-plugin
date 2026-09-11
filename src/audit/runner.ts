@@ -619,10 +619,12 @@ export async function auditViewport(
         errors.push(`Tab checks error: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    try {
-      responsive = await dependencies.runResponsiveChecks(page);
-    } catch (error) {
-      errors.push(`Responsive checks error: ${error instanceof Error ? error.message : String(error)}`);
+    if (!interactionBlocker) {
+      try {
+        responsive = await dependencies.runResponsiveChecks(page);
+      } catch (error) {
+        errors.push(`Responsive checks error: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
     if (!interactionBlocker && viewport.name === 'desktop') {
       try {

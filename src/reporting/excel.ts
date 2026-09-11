@@ -17,6 +17,39 @@ const templateFileName = ['accessibility', 'report', 'template.xlsx'].join('-');
 export const DEFAULT_TEMPLATE = resolve(moduleDirectory, '..', '..', 'assets', templateFileName);
 export const CANONICAL_TEMPLATE_SHA256 = '0dc49529d49402eaad4c5511f6db1cc44f91afb1cbd804da6bc702081321a4ce';
 
+const REPORT_COLOURS = {
+  primary: 'FF1A73E8',
+  primaryDark: 'FF174EA6',
+  text: 'FF202124',
+  border: 'FFDADCE0',
+  surface: 'FFF8F9FA',
+  open: 'FFE8F0FE',
+  critical: 'FFB3261E',
+  serious: 'FFC5221F',
+  moderate: 'FFF9AB00',
+  minor: 'FFFDE293',
+  advisory: 'FFDDE8F8',
+  review: 'FFFFF4CE',
+  blocker: 'FFEADDFF',
+  confirmed: 'FFFCE8E6',
+  manual: 'FFE6F4EA'
+} as const;
+
+const SEVERITY_COLOURS: Record<Finding['severity'], { background: string; foreground: string }> = {
+  Critical: { background: REPORT_COLOURS.critical, foreground: 'FFFFFFFF' },
+  Serious: { background: REPORT_COLOURS.serious, foreground: 'FFFFFFFF' },
+  Moderate: { background: REPORT_COLOURS.moderate, foreground: REPORT_COLOURS.text },
+  Minor: { background: REPORT_COLOURS.minor, foreground: REPORT_COLOURS.text },
+  Advisory: { background: REPORT_COLOURS.advisory, foreground: REPORT_COLOURS.text }
+};
+
+const CLASSIFICATION_COLOURS: Record<Finding['classification'], { background: string; foreground: string }> = {
+  confirmed: { background: REPORT_COLOURS.confirmed, foreground: REPORT_COLOURS.serious },
+  review: { background: REPORT_COLOURS.review, foreground: 'FF7A4F01' },
+  blocker: { background: REPORT_COLOURS.blocker, foreground: 'FF5B21B6' },
+  manual: { background: REPORT_COLOURS.manual, foreground: 'FF137333' }
+};
+
 async function assertCanonicalTemplate(path: string): Promise<void> {
   const digest = createHash('sha256').update(await readFile(path)).digest('hex');
   if (digest !== CANONICAL_TEMPLATE_SHA256) {
@@ -26,6 +59,86 @@ async function assertCanonicalTemplate(path: string): Promise<void> {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function solidFill(cell: ExcelJS.Cell, colour: string): void {
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colour } };
+}
+
+function styleBadge(cell: ExcelJS.Cell, background: string, foreground: string): void {
+  solidFill(cell, background);
+  cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: foreground } };
+  cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+  cell.border = {
+    top: { style: 'thin', color: { argb: REPORT_COLOURS.border } },
+    bottom: { style: 'thin', color: { argb: REPORT_COLOURS.border } },
+    left: { style: 'thin', color: { argb: REPORT_COLOURS.border } },
+    right: { style: 'thin', color: { argb: REPORT_COLOURS.border } }
+  };
+}
+
+function evidenceKey(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[-_]+/g, ' ')
+    .replace(/^\w/, (character) => character.toUpperCase());
+}
+
+function compactEvidenceText(value: unknown): string {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > 260 ? `${text.slice(0, 257)}…` : text;
+}
+
+function readableEvidenceDetail(detail: string): string {
+  const source = detail.trim();
+  if (!source) return 'No additional detail recorded.';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    return compactEvidenceText(source);
+  }
+  if (typeof parsed !== 'object' || parsed === null) return compactEvidenceText(parsed);
+
+  const lines: string[] = [];
+  let truncated = false;
+  const append = (label: string, value: unknown): void => {
+    if (lines.length >= 24) {
+      truncated = true;
+      return;
+    }
+    const text = compactEvidenceText(value);
+    if (text) lines.push(`${evidenceKey(label)}: ${text}`);
+  };
+  const visit = (value: unknown, path: string, depth: number): void => {
+    if (lines.length >= 24) {
+      truncated = true;
+      return;
+    }
+    if (value === null || value === undefined || typeof value !== 'object') {
+      append(path || 'Value', value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      if (value.every((item) => item === null || typeof item !== 'object')) {
+        append(path || 'Values', value.join(', '));
+        return;
+      }
+      value.slice(0, 8).forEach((item, index) => visit(item, `${path || 'Item'} ${index + 1}`, depth + 1));
+      if (value.length > 8) truncated = true;
+      return;
+    }
+    if (depth >= 3) {
+      append(path || 'Detail', JSON.stringify(value));
+      return;
+    }
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      visit(nested, path ? `${path} · ${key}` : key, depth + 1);
+    }
+  };
+  visit(parsed, '', 0);
+  if (truncated) lines.push('Additional technical detail is available in audit-results.json.');
+  return lines.join('\n') || 'No additional detail recorded.';
 }
 
 function valueText(value: ExcelJS.CellValue): string {
@@ -224,7 +337,7 @@ function populateEvidence(worksheet: Worksheet, summary: AuditSummary, outputPat
         componentName(finding),
         evidence.selector || finding.selectors.join('\n') || 'Page-level or structural check',
         evidence.kind,
-        evidence.detail
+        readableEvidenceDetail(evidence.detail)
       ], template);
       rowNumber += 1;
     }
@@ -255,7 +368,7 @@ function populateCriteria(workbook: ExcelJS.Workbook, summary: AuditSummary): vo
   worksheet.mergeCells('A1:H1');
   worksheet.getCell('A1').value = 'WCAG 2.2 criterion-by-criterion ledger';
   worksheet.getCell('A1').font = { name: 'Arial', size: 18, bold: true, color: { argb: 'FFFFFFFF' } };
-  worksheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF17365D' } };
+  worksheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: REPORT_COLOURS.primaryDark } };
   worksheet.getCell('A1').alignment = { vertical: 'middle' };
   worksheet.getRow(1).height = 32;
   worksheet.mergeCells('A2:H2');
@@ -269,7 +382,7 @@ function populateCriteria(workbook: ExcelJS.Workbook, summary: AuditSummary): vo
   worksheet.getRow(4).height = 26;
   worksheet.getRow(4).eachCell((cell) => {
     cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: REPORT_COLOURS.primary } };
     cell.alignment = { vertical: 'middle', wrapText: true };
     cell.border = { bottom: { style: 'thin', color: { argb: 'FFB4C6E7' } } };
   });
@@ -322,7 +435,7 @@ function populateCriteria(workbook: ExcelJS.Workbook, summary: AuditSummary): vo
     { width: 34 }, { width: 9 }, { width: 22 }, { width: 24 },
     { width: 18 }, { width: 42 }, { width: 48 }, { width: 46 }
   ];
-  worksheet.views = [{ state: 'frozen', ySplit: 4 }];
+  worksheet.views = [{ state: 'frozen', xSplit: 2, ySplit: 4, topLeftCell: 'C5', showGridLines: false, zoomScale: 90 }];
   worksheet.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(5, (summary.criteria?.length ?? 0) + 4), column: 8 } };
   worksheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
 }
@@ -375,6 +488,108 @@ function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
   ].join('\n');
 }
 
+function applySummaryPresentation(worksheet: Worksheet): void {
+  worksheet.views = [{ state: 'frozen', ySplit: 3, showGridLines: false, zoomScale: 100 }];
+  worksheet.getCell('B5').numFmt = 'dd mmm yyyy, hh:mm';
+  for (const cellAddress of ['B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11']) {
+    const cell = worksheet.getCell(cellAddress);
+    cell.font = { ...cell.font, name: 'Arial', color: { argb: REPORT_COLOURS.text } };
+  }
+  const runStatus = valueText(worksheet.getCell('B4').value);
+  if (runStatus === 'Completed') styleBadge(worksheet.getCell('B4'), REPORT_COLOURS.manual, 'FF137333');
+  else if (runStatus === 'Cancelled') styleBadge(worksheet.getCell('B4'), REPORT_COLOURS.review, 'FF7A4F01');
+  else styleBadge(worksheet.getCell('B4'), REPORT_COLOURS.confirmed, REPORT_COLOURS.serious);
+  const resultCards: Array<[string, string, string]> = [
+    ['E4', REPORT_COLOURS.open, REPORT_COLOURS.primaryDark],
+    ['E5', REPORT_COLOURS.confirmed, REPORT_COLOURS.serious],
+    ['E6', REPORT_COLOURS.review, 'FF7A4F01'],
+    ['E7', REPORT_COLOURS.blocker, 'FF5B21B6'],
+    ['E8', REPORT_COLOURS.manual, 'FF137333']
+  ];
+  resultCards.forEach(([address, background, foreground]) => styleBadge(worksheet.getCell(address), background, foreground));
+  (['Critical', 'Serious', 'Moderate', 'Minor', 'Advisory'] as const).forEach((severity, index) => {
+    const colours = SEVERITY_COLOURS[severity];
+    styleBadge(worksheet.getCell(`G${index + 4}`), colours.background, colours.foreground);
+    styleBadge(worksheet.getCell(`H${index + 4}`), colours.background, colours.foreground);
+  });
+  worksheet.getCell('A14').alignment = { vertical: 'top', wrapText: true };
+  worksheet.getCell('A19').alignment = { vertical: 'top', wrapText: true };
+  worksheet.getRow(19).height = 156;
+}
+
+function applyFindingPresentation(worksheet: Worksheet, findings: Finding[]): void {
+  worksheet.views = [{
+    state: 'frozen',
+    xSplit: 4,
+    ySplit: 6,
+    topLeftCell: 'E7',
+    showGridLines: false,
+    zoomScale: 85
+  }];
+  worksheet.getCell('A4').value = 'Prioritise confirmed barriers and blockers. Review rows are evidence-led candidates that require human validation; severity is colour-coded and also stated as text.';
+  findings.forEach((finding, index) => {
+    const row = worksheet.getRow(index + 7);
+    row.height = 72;
+    row.eachCell((cell) => {
+      cell.font = { ...cell.font, name: 'Arial', size: 10, color: { argb: REPORT_COLOURS.text } };
+      cell.alignment = { ...cell.alignment, vertical: 'top', wrapText: true };
+      cell.border = { ...cell.border, bottom: { style: 'thin', color: { argb: REPORT_COLOURS.border } } };
+      if (index % 2 === 1) solidFill(cell, REPORT_COLOURS.surface);
+    });
+    row.getCell(1).font = { name: 'Arial', size: 10, bold: true, color: { argb: REPORT_COLOURS.primaryDark } };
+    const classification = CLASSIFICATION_COLOURS[finding.classification];
+    styleBadge(row.getCell(2), classification.background, classification.foreground);
+    styleBadge(row.getCell(3), REPORT_COLOURS.open, REPORT_COLOURS.primaryDark);
+    const severity = SEVERITY_COLOURS[finding.severity];
+    styleBadge(row.getCell(4), severity.background, severity.foreground);
+  });
+}
+
+function applySupportingSheetPresentation(
+  worksheet: Worksheet,
+  headerRow: number,
+  dataStartRow: number,
+  columnCount: number,
+  xSplit = 1
+): void {
+  worksheet.views = [{
+    state: 'frozen',
+    xSplit,
+    ySplit: headerRow,
+    topLeftCell: `${String.fromCharCode(65 + xSplit)}${dataStartRow}`,
+    showGridLines: false,
+    zoomScale: 90
+  }];
+  worksheet.getRow(headerRow).eachCell((cell) => {
+    solidFill(cell, REPORT_COLOURS.primary);
+    cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+  });
+  for (let rowNumber = dataStartRow; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+    const row = worksheet.getRow(rowNumber);
+    row.height = worksheet.name === 'Evidence' ? 66 : Math.max(row.height ?? 0, 42);
+    for (let column = 1; column <= columnCount; column += 1) {
+      const cell = row.getCell(column);
+      cell.font = { ...cell.font, name: 'Arial', size: 10, color: { argb: REPORT_COLOURS.text } };
+      cell.alignment = { ...cell.alignment, vertical: 'top', wrapText: true };
+      cell.border = { ...cell.border, bottom: { style: 'thin', color: { argb: REPORT_COLOURS.border } } };
+      if ((rowNumber - dataStartRow) % 2 === 1) solidFill(cell, REPORT_COLOURS.surface);
+    }
+  }
+}
+
+function applyStatusBadges(pageSheet: Worksheet, manualSheet: Worksheet): void {
+  for (let rowNumber = 5; rowNumber <= pageSheet.rowCount; rowNumber += 1) {
+    const cell = pageSheet.getCell(rowNumber, 2);
+    const status = valueText(cell.value);
+    if (status === 'Completed') styleBadge(cell, REPORT_COLOURS.manual, 'FF137333');
+    else if (status === 'Partial') styleBadge(cell, REPORT_COLOURS.review, 'FF7A4F01');
+    else styleBadge(cell, REPORT_COLOURS.confirmed, REPORT_COLOURS.serious);
+  }
+  for (let rowNumber = 5; rowNumber <= manualSheet.rowCount; rowNumber += 1) {
+    styleBadge(manualSheet.getCell(rowNumber, 6), REPORT_COLOURS.review, 'FF7A4F01');
+  }
+}
+
 export interface ExcelReportOptions {
   outputPath: string;
   templatePath?: string;
@@ -415,6 +630,13 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
   populateEvidence(evidenceSheet, summary, options.outputPath);
   populateManualChecks(manualSheet, summary);
   populateCriteria(workbook, summary);
+  applySummaryPresentation(summarySheet);
+  applyFindingPresentation(findingsSheet, summary.findings);
+  applySupportingSheetPresentation(pageSheet, 4, 5, 7, 2);
+  applySupportingSheetPresentation(evidenceSheet, 4, 5, 9, 2);
+  applySupportingSheetPresentation(manualSheet, 4, 5, 7, 2);
+  applySupportingSheetPresentation(lookupSheet, 3, 4, 4);
+  applyStatusBadges(pageSheet, manualSheet);
   workbook.creator = summary.auditor;
   workbook.lastModifiedBy = summary.auditor;
   workbook.created = new Date(summary.generatedAt);

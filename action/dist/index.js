@@ -151842,6 +151842,20 @@ async function runResponsiveChecks(page) {
                 return false;
             return element.querySelectorAll('[data-carousel], [class*="carousel-slide" i], [class~="slide" i], [role="group"]').length >= 2;
         };
+        const isIntentionallyVisuallyHidden = (element) => {
+            const node = element;
+            const style = getComputedStyle(node);
+            const rect = node.getBoundingClientRect();
+            const clippedOut = style.clip === 'rect(0px, 0px, 0px, 0px)'
+                || /^inset\((?:50%|100%)(?:\s+(?:50%|100%)){0,3}\)$/i.test(style.clipPath);
+            const tinyClippedBox = rect.width <= 2
+                && rect.height <= 2
+                && /^(absolute|fixed)$/.test(style.position)
+                && /^(hidden|clip)$/.test(style.overflow)
+                && (style.whiteSpace === 'nowrap' || clippedOut);
+            const authoredHiddenClass = /(?:^|[\s_-])(?:sr-only|screen-reader-only|visually-hidden)(?:$|[\s_-])/i.test(typeof node.className === 'string' ? node.className : '');
+            return clippedOut || (tinyClippedBox && authoredHiddenClass);
+        };
         const documentWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
         const overflowElements = [...document.body.querySelectorAll('*')]
             .map((element) => ({ element, rect: element.getBoundingClientRect() }))
@@ -151856,6 +151870,7 @@ async function runResponsiveChecks(page) {
         const clippedElements = [...document.body.querySelectorAll('*')]
             .filter(visible)
             .filter((element) => !isIntentionalCarouselViewport(element))
+            .filter((element) => !isIntentionallyVisuallyHidden(element))
             .flatMap((element) => {
             const node = element;
             const style = getComputedStyle(node);
@@ -151927,12 +151942,20 @@ async function runResponsiveChecks(page) {
     await spacingStyle.evaluate((element) => element.remove());
     const spacedSelectors = new Set(spaced.visibleInteractiveElements.map((element) => element.selector));
     const lostInteractiveElements = base.visibleInteractiveElements.filter((element) => !spacedSelectors.has(element.selector));
+    const baseClippingKeys = new Set(base.clippedElements.map((item) => `${item.selector}|${item.axis}`));
+    const baseOverlapKeys = new Set(base.overlapPairs.map((item) => [item.firstSelector, item.secondSelector].sort().join('|')));
     return {
         horizontalOverflow: base.horizontalOverflow,
         overflowElements: base.overflowElements,
         textSpacingOverflow: spaced.horizontalOverflow,
-        clippedElements: [...base.clippedElements, ...spaced.clippedElements],
-        overlapPairs: [...base.overlapPairs, ...spaced.overlapPairs],
+        clippedElements: [
+            ...base.clippedElements,
+            ...spaced.clippedElements.filter((item) => !baseClippingKeys.has(`${item.selector}|${item.axis}`))
+        ],
+        overlapPairs: [
+            ...base.overlapPairs,
+            ...spaced.overlapPairs.filter((item) => !baseOverlapKeys.has([item.firstSelector, item.secondSelector].sort().join('|')))
+        ],
         lostInteractiveElements
     };
 }
@@ -153825,7 +153848,7 @@ function domFindings(audit) {
             identity: `responsive-clipped|${clipped.phase}|${normalizeComponent(clipped.selector)}`,
             ruleId: 'responsive-content-clipped',
             classification: 'review',
-            severity: 'Serious',
+            severity: 'Moderate',
             wcag: criteria,
             summary: `Content may be clipped${clipped.phase === 'text-spacing' ? ' after text spacing' : ' at the narrow viewport'}`,
             issue: `${clipped.selector} has ${clipped.axis} scroll dimensions larger than its visible box while its overflow styling can clip content.`,
@@ -153849,7 +153872,7 @@ function domFindings(audit) {
             identity: `responsive-overlap|${overlap.phase}|${selectors.map(normalizeComponent).sort().join('|')}`,
             ruleId: 'responsive-controls-overlap',
             classification: 'review',
-            severity: 'Serious',
+            severity: 'Moderate',
             wcag: criteria,
             summary: `Interactive elements overlap${overlap.phase === 'text-spacing' ? ' after text spacing' : ' at the narrow viewport'}`,
             issue: `Two visible interactive elements overlap by ${overlap.overlapWidth}×${overlap.overlapHeight} CSS pixels. Review whether either control, label, or focus indicator is obscured.`,
@@ -154286,7 +154309,7 @@ function findingsFromPage(page) {
             ...(interactionUnavailable || failed('Disclosure checks error:') ? { disclosures: [] } : {}),
             ...(interactionUnavailable || failed('Tab checks error:') ? { tabs: [] } : {}),
             ...(interactionUnavailable || failed('Link checks error:') ? { links: [] } : {}),
-            ...(failed('Responsive checks error:') ? {
+            ...(interactionUnavailable || failed('Responsive checks error:') ? {
                 responsive: {
                     horizontalOverflow: 0,
                     overflowElements: [],
@@ -155746,11 +155769,13 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
                 errors.push(`Tab checks error: ${error instanceof Error ? error.message : String(error)}`);
             }
         }
-        try {
-            responsive = await dependencies.runResponsiveChecks(page);
-        }
-        catch (error) {
-            errors.push(`Responsive checks error: ${error instanceof Error ? error.message : String(error)}`);
+        if (!interactionBlocker) {
+            try {
+                responsive = await dependencies.runResponsiveChecks(page);
+            }
+            catch (error) {
+                errors.push(`Responsive checks error: ${error instanceof Error ? error.message : String(error)}`);
+            }
         }
         if (!interactionBlocker && viewport.name === 'desktop') {
             try {
@@ -156036,6 +156061,36 @@ const moduleDirectory = (0,external_node_path_.dirname)((0,external_node_url_.fi
 const templateFileName = ['accessibility', 'report', 'template.xlsx'].join('-');
 const DEFAULT_TEMPLATE = (0,external_node_path_.resolve)(moduleDirectory, '..', '..', 'assets', templateFileName);
 const CANONICAL_TEMPLATE_SHA256 = '0dc49529d49402eaad4c5511f6db1cc44f91afb1cbd804da6bc702081321a4ce';
+const REPORT_COLOURS = {
+    primary: 'FF1A73E8',
+    primaryDark: 'FF174EA6',
+    text: 'FF202124',
+    border: 'FFDADCE0',
+    surface: 'FFF8F9FA',
+    open: 'FFE8F0FE',
+    critical: 'FFB3261E',
+    serious: 'FFC5221F',
+    moderate: 'FFF9AB00',
+    minor: 'FFFDE293',
+    advisory: 'FFDDE8F8',
+    review: 'FFFFF4CE',
+    blocker: 'FFEADDFF',
+    confirmed: 'FFFCE8E6',
+    manual: 'FFE6F4EA'
+};
+const SEVERITY_COLOURS = {
+    Critical: { background: REPORT_COLOURS.critical, foreground: 'FFFFFFFF' },
+    Serious: { background: REPORT_COLOURS.serious, foreground: 'FFFFFFFF' },
+    Moderate: { background: REPORT_COLOURS.moderate, foreground: REPORT_COLOURS.text },
+    Minor: { background: REPORT_COLOURS.minor, foreground: REPORT_COLOURS.text },
+    Advisory: { background: REPORT_COLOURS.advisory, foreground: REPORT_COLOURS.text }
+};
+const CLASSIFICATION_COLOURS = {
+    confirmed: { background: REPORT_COLOURS.confirmed, foreground: REPORT_COLOURS.serious },
+    review: { background: REPORT_COLOURS.review, foreground: 'FF7A4F01' },
+    blocker: { background: REPORT_COLOURS.blocker, foreground: 'FF5B21B6' },
+    manual: { background: REPORT_COLOURS.manual, foreground: 'FF137333' }
+};
 async function assertCanonicalTemplate(path) {
     const digest = (0,external_node_crypto_namespaceObject.createHash)('sha256').update(await (0,promises_.readFile)(path)).digest('hex');
     if (digest !== CANONICAL_TEMPLATE_SHA256) {
@@ -156044,6 +156099,86 @@ async function assertCanonicalTemplate(path) {
 }
 function excel_clone(value) {
     return structuredClone(value);
+}
+function solidFill(cell, colour) {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colour } };
+}
+function styleBadge(cell, background, foreground) {
+    solidFill(cell, background);
+    cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: foreground } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    cell.border = {
+        top: { style: 'thin', color: { argb: REPORT_COLOURS.border } },
+        bottom: { style: 'thin', color: { argb: REPORT_COLOURS.border } },
+        left: { style: 'thin', color: { argb: REPORT_COLOURS.border } },
+        right: { style: 'thin', color: { argb: REPORT_COLOURS.border } }
+    };
+}
+function evidenceKey(value) {
+    return value
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/[-_]+/g, ' ')
+        .replace(/^\w/, (character) => character.toUpperCase());
+}
+function compactEvidenceText(value) {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    return text.length > 260 ? `${text.slice(0, 257)}…` : text;
+}
+function readableEvidenceDetail(detail) {
+    const source = detail.trim();
+    if (!source)
+        return 'No additional detail recorded.';
+    let parsed;
+    try {
+        parsed = JSON.parse(source);
+    }
+    catch {
+        return compactEvidenceText(source);
+    }
+    if (typeof parsed !== 'object' || parsed === null)
+        return compactEvidenceText(parsed);
+    const lines = [];
+    let truncated = false;
+    const append = (label, value) => {
+        if (lines.length >= 24) {
+            truncated = true;
+            return;
+        }
+        const text = compactEvidenceText(value);
+        if (text)
+            lines.push(`${evidenceKey(label)}: ${text}`);
+    };
+    const visit = (value, path, depth) => {
+        if (lines.length >= 24) {
+            truncated = true;
+            return;
+        }
+        if (value === null || value === undefined || typeof value !== 'object') {
+            append(path || 'Value', value);
+            return;
+        }
+        if (Array.isArray(value)) {
+            if (value.every((item) => item === null || typeof item !== 'object')) {
+                append(path || 'Values', value.join(', '));
+                return;
+            }
+            value.slice(0, 8).forEach((item, index) => visit(item, `${path || 'Item'} ${index + 1}`, depth + 1));
+            if (value.length > 8)
+                truncated = true;
+            return;
+        }
+        if (depth >= 3) {
+            append(path || 'Detail', JSON.stringify(value));
+            return;
+        }
+        for (const [key, nested] of Object.entries(value)) {
+            visit(nested, path ? `${path} · ${key}` : key, depth + 1);
+        }
+    };
+    visit(parsed, '', 0);
+    if (truncated)
+        lines.push('Additional technical detail is available in audit-results.json.');
+    return lines.join('\n') || 'No additional detail recorded.';
 }
 function valueText(value) {
     if (value === null || value === undefined)
@@ -156249,7 +156384,7 @@ function populateEvidence(worksheet, summary, outputPath) {
                 componentName(finding),
                 evidence.selector || finding.selectors.join('\n') || 'Page-level or structural check',
                 evidence.kind,
-                evidence.detail
+                readableEvidenceDetail(evidence.detail)
             ], template);
             rowNumber += 1;
         }
@@ -156278,7 +156413,7 @@ function populateCriteria(workbook, summary) {
     worksheet.mergeCells('A1:H1');
     worksheet.getCell('A1').value = 'WCAG 2.2 criterion-by-criterion ledger';
     worksheet.getCell('A1').font = { name: 'Arial', size: 18, bold: true, color: { argb: 'FFFFFFFF' } };
-    worksheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF17365D' } };
+    worksheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: REPORT_COLOURS.primaryDark } };
     worksheet.getCell('A1').alignment = { vertical: 'middle' };
     worksheet.getRow(1).height = 32;
     worksheet.mergeCells('A2:H2');
@@ -156291,7 +156426,7 @@ function populateCriteria(workbook, summary) {
     worksheet.getRow(4).height = 26;
     worksheet.getRow(4).eachCell((cell) => {
         cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: REPORT_COLOURS.primary } };
         cell.alignment = { vertical: 'middle', wrapText: true };
         cell.border = { bottom: { style: 'thin', color: { argb: 'FFB4C6E7' } } };
     });
@@ -156343,7 +156478,7 @@ function populateCriteria(workbook, summary) {
         { width: 34 }, { width: 9 }, { width: 22 }, { width: 24 },
         { width: 18 }, { width: 42 }, { width: 48 }, { width: 46 }
     ];
-    worksheet.views = [{ state: 'frozen', ySplit: 4 }];
+    worksheet.views = [{ state: 'frozen', xSplit: 2, ySplit: 4, topLeftCell: 'C5', showGridLines: false, zoomScale: 90 }];
     worksheet.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(5, (summary.criteria?.length ?? 0) + 4), column: 8 } };
     worksheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
 }
@@ -156392,6 +156527,106 @@ function populateSummary(worksheet, summary) {
             : 'No additional guided manual checks were generated.'
     ].join('\n');
 }
+function applySummaryPresentation(worksheet) {
+    worksheet.views = [{ state: 'frozen', ySplit: 3, showGridLines: false, zoomScale: 100 }];
+    worksheet.getCell('B5').numFmt = 'dd mmm yyyy, hh:mm';
+    for (const cellAddress of ['B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11']) {
+        const cell = worksheet.getCell(cellAddress);
+        cell.font = { ...cell.font, name: 'Arial', color: { argb: REPORT_COLOURS.text } };
+    }
+    const runStatus = valueText(worksheet.getCell('B4').value);
+    if (runStatus === 'Completed')
+        styleBadge(worksheet.getCell('B4'), REPORT_COLOURS.manual, 'FF137333');
+    else if (runStatus === 'Cancelled')
+        styleBadge(worksheet.getCell('B4'), REPORT_COLOURS.review, 'FF7A4F01');
+    else
+        styleBadge(worksheet.getCell('B4'), REPORT_COLOURS.confirmed, REPORT_COLOURS.serious);
+    const resultCards = [
+        ['E4', REPORT_COLOURS.open, REPORT_COLOURS.primaryDark],
+        ['E5', REPORT_COLOURS.confirmed, REPORT_COLOURS.serious],
+        ['E6', REPORT_COLOURS.review, 'FF7A4F01'],
+        ['E7', REPORT_COLOURS.blocker, 'FF5B21B6'],
+        ['E8', REPORT_COLOURS.manual, 'FF137333']
+    ];
+    resultCards.forEach(([address, background, foreground]) => styleBadge(worksheet.getCell(address), background, foreground));
+    ['Critical', 'Serious', 'Moderate', 'Minor', 'Advisory'].forEach((severity, index) => {
+        const colours = SEVERITY_COLOURS[severity];
+        styleBadge(worksheet.getCell(`G${index + 4}`), colours.background, colours.foreground);
+        styleBadge(worksheet.getCell(`H${index + 4}`), colours.background, colours.foreground);
+    });
+    worksheet.getCell('A14').alignment = { vertical: 'top', wrapText: true };
+    worksheet.getCell('A19').alignment = { vertical: 'top', wrapText: true };
+    worksheet.getRow(19).height = 156;
+}
+function applyFindingPresentation(worksheet, findings) {
+    worksheet.views = [{
+            state: 'frozen',
+            xSplit: 4,
+            ySplit: 6,
+            topLeftCell: 'E7',
+            showGridLines: false,
+            zoomScale: 85
+        }];
+    worksheet.getCell('A4').value = 'Prioritise confirmed barriers and blockers. Review rows are evidence-led candidates that require human validation; severity is colour-coded and also stated as text.';
+    findings.forEach((finding, index) => {
+        const row = worksheet.getRow(index + 7);
+        row.height = 72;
+        row.eachCell((cell) => {
+            cell.font = { ...cell.font, name: 'Arial', size: 10, color: { argb: REPORT_COLOURS.text } };
+            cell.alignment = { ...cell.alignment, vertical: 'top', wrapText: true };
+            cell.border = { ...cell.border, bottom: { style: 'thin', color: { argb: REPORT_COLOURS.border } } };
+            if (index % 2 === 1)
+                solidFill(cell, REPORT_COLOURS.surface);
+        });
+        row.getCell(1).font = { name: 'Arial', size: 10, bold: true, color: { argb: REPORT_COLOURS.primaryDark } };
+        const classification = CLASSIFICATION_COLOURS[finding.classification];
+        styleBadge(row.getCell(2), classification.background, classification.foreground);
+        styleBadge(row.getCell(3), REPORT_COLOURS.open, REPORT_COLOURS.primaryDark);
+        const severity = SEVERITY_COLOURS[finding.severity];
+        styleBadge(row.getCell(4), severity.background, severity.foreground);
+    });
+}
+function applySupportingSheetPresentation(worksheet, headerRow, dataStartRow, columnCount, xSplit = 1) {
+    worksheet.views = [{
+            state: 'frozen',
+            xSplit,
+            ySplit: headerRow,
+            topLeftCell: `${String.fromCharCode(65 + xSplit)}${dataStartRow}`,
+            showGridLines: false,
+            zoomScale: 90
+        }];
+    worksheet.getRow(headerRow).eachCell((cell) => {
+        solidFill(cell, REPORT_COLOURS.primary);
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+    });
+    for (let rowNumber = dataStartRow; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+        const row = worksheet.getRow(rowNumber);
+        row.height = worksheet.name === 'Evidence' ? 66 : Math.max(row.height ?? 0, 42);
+        for (let column = 1; column <= columnCount; column += 1) {
+            const cell = row.getCell(column);
+            cell.font = { ...cell.font, name: 'Arial', size: 10, color: { argb: REPORT_COLOURS.text } };
+            cell.alignment = { ...cell.alignment, vertical: 'top', wrapText: true };
+            cell.border = { ...cell.border, bottom: { style: 'thin', color: { argb: REPORT_COLOURS.border } } };
+            if ((rowNumber - dataStartRow) % 2 === 1)
+                solidFill(cell, REPORT_COLOURS.surface);
+        }
+    }
+}
+function applyStatusBadges(pageSheet, manualSheet) {
+    for (let rowNumber = 5; rowNumber <= pageSheet.rowCount; rowNumber += 1) {
+        const cell = pageSheet.getCell(rowNumber, 2);
+        const status = valueText(cell.value);
+        if (status === 'Completed')
+            styleBadge(cell, REPORT_COLOURS.manual, 'FF137333');
+        else if (status === 'Partial')
+            styleBadge(cell, REPORT_COLOURS.review, 'FF7A4F01');
+        else
+            styleBadge(cell, REPORT_COLOURS.confirmed, REPORT_COLOURS.serious);
+    }
+    for (let rowNumber = 5; rowNumber <= manualSheet.rowCount; rowNumber += 1) {
+        styleBadge(manualSheet.getCell(rowNumber, 6), REPORT_COLOURS.review, 'FF7A4F01');
+    }
+}
 async function writeExcelReport(summary, options) {
     const templatePath = options.templatePath ?? DEFAULT_TEMPLATE;
     await assertCanonicalTemplate(templatePath);
@@ -156420,6 +156655,13 @@ async function writeExcelReport(summary, options) {
     populateEvidence(evidenceSheet, summary, options.outputPath);
     populateManualChecks(manualSheet, summary);
     populateCriteria(workbook, summary);
+    applySummaryPresentation(summarySheet);
+    applyFindingPresentation(findingsSheet, summary.findings);
+    applySupportingSheetPresentation(pageSheet, 4, 5, 7, 2);
+    applySupportingSheetPresentation(evidenceSheet, 4, 5, 9, 2);
+    applySupportingSheetPresentation(manualSheet, 4, 5, 7, 2);
+    applySupportingSheetPresentation(lookupSheet, 3, 4, 4);
+    applyStatusBadges(pageSheet, manualSheet);
     workbook.creator = summary.auditor;
     workbook.lastModifiedBy = summary.auditor;
     workbook.created = new Date(summary.generatedAt);

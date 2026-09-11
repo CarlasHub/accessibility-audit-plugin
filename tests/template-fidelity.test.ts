@@ -43,7 +43,7 @@ function summaryWithEvidence(screenshot: string): AuditSummary {
         pageUrl: 'https://preview.example.test/',
         viewport: 'desktop',
         selector: 'main img',
-        detail: '<img>',
+        detail: JSON.stringify({ contrastRatio: 2.1, expectedRatio: 4.5, html: '<img class="hero">' }),
         screenshot
       }],
       assignment: 'Development',
@@ -111,19 +111,23 @@ describe('CarlasHub WCAG workbook template fidelity', () => {
       const generatedSheet = generated.getWorksheet(templateSheet.name);
       expect(generatedSheet?.state).toBe(templateSheet.state);
       expect(generatedSheet?.properties.tabColor).toEqual(templateSheet.properties.tabColor);
-      expect(generatedSheet?.views).toEqual(templateSheet.views);
+      expect(generatedSheet?.views[0]?.showGridLines).toBe(false);
     }
 
     const templateFindings = template.getWorksheet('Findings')!;
     const generatedFindings = generated.getWorksheet('Findings')!;
     for (let column = 1; column <= EXPECTED_REPORT_HEADERS.length; column += 1) {
       expect(generatedFindings.getColumn(column).width).toBe(templateFindings.getColumn(column).width);
-      expect(generatedFindings.getCell(6, column).fill).toEqual(templateFindings.getCell(6, column).fill);
-      expect(generatedFindings.getCell(6, column).font).toEqual(templateFindings.getCell(6, column).font);
-      expect(generatedFindings.getCell(9, column).fill).toEqual(templateFindings.getCell(7, column).fill);
-      expect(generatedFindings.getCell(9, column).font).toEqual(templateFindings.getCell(7, column).font);
-      expect(generatedFindings.getCell(9, column).border).toEqual(templateFindings.getCell(7, column).border);
+      expect((generatedFindings.getCell(6, column).fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FF1A73E8');
+      expect(generatedFindings.getCell(6, column).font.color?.argb).toBe('FFFFFFFF');
+      expect(generatedFindings.getCell(6, column).font.bold).toBe(true);
     }
+    expect(generatedFindings.views[0]).toEqual(expect.objectContaining({ xSplit: 4, ySplit: 6, showGridLines: false }));
+    expect((generatedFindings.getCell('B9').fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FFFCE8E6');
+    expect((generatedFindings.getCell('D9').fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FFC5221F');
+    expect(generatedFindings.getCell('D9').font.color?.argb).toBe('FFFFFFFF');
+    expect(generatedFindings.getCell('D9').font.bold).toBe(true);
+    expect(generatedFindings.getCell('D9').value).toBe('Serious');
     expect(generatedFindings.autoFilter).toBe('A6:Y9');
     expect(generatedFindings.getCell('B9').dataValidation.formulae?.[0]).toContain('manual');
     expect(generatedFindings.getCell('T9').dataValidation.formulae?.[0]).toContain('Development');
@@ -131,6 +135,8 @@ describe('CarlasHub WCAG workbook template fidelity', () => {
     expect(generatedFindings.getCell('Y9').dataValidation.formulae?.[0]).toContain('Review');
     expect(generated.getWorksheet('Page Inventory')?.getCell('A5').text).toBe('https://preview.example.test/');
     expect(generated.getWorksheet('Evidence')?.getCell('A5').hyperlink).toContain('screenshots/elements/element.png');
+    expect(generated.getWorksheet('Evidence')?.getCell('I5').value).toContain('Contrast Ratio: 2.1');
+    expect(generated.getWorksheet('Evidence')?.getCell('I5').value).not.toContain('{');
     expect(generated.getWorksheet('Manual Checks')?.getCell('A5').value).toBeNull();
     expect(generated.getWorksheet('WCAG 2.2 Reference')?.getCell('A4').value).toEqual(
       template.getWorksheet('WCAG 2.2 Reference')?.getCell('A4').value

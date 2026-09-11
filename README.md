@@ -18,6 +18,8 @@ You do not need to know WCAG terminology to run the plugin. Start with the workf
 
 > **Important:** this plugin is an automated testing aid, not a WCAG certification. A report with no automated findings does not prove that a page is accessible. Screen-reader, physical-device, content-meaning, visual-judgment, and other guided checks remain manual. W3C likewise states that no evaluation tool alone can determine whether a site meets accessibility standards.
 
+The audit protects review quality as well as coverage. It separates confirmed failures, review candidates, and coverage blockers; suppresses responsive evidence when a modal prevents a valid interaction test; ignores intentionally visually hidden assistive text in clipping checks; and consolidates repeated evidence across viewports and test states. The workbook uses severity and evidence-status colours for triage, but every status is also written as text so colour is never the only cue.
+
 ## GitHub Actions: start-to-results tutorial
 
 [![Start-to-results tutorial for auditing a different repository with GitHub Actions](https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/a11y-test-cases-github-actions-tutorial-poster.png)](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.3.1/A11y_Test_Cases_GitHub_Actions_Tutorial.mp4)

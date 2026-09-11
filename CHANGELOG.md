@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.1 - 2026-09-11
+
+- Prevented active consent and modal blockers from producing unreliable responsive findings against the obscured page underneath.
+- Excluded intentionally visually hidden assistive text from clipping detection, deduplicated responsive evidence across base and text-spacing states, and classified heuristic responsive signals as moderate review items rather than confirmed serious failures.
+- Reworked the Excel workbook as a professional triage document with severity and evidence-status colours, frozen navigation, readable evidence fields, banded tables, and clearer priority guidance.
+- Added unit, browser, Action-bundle, and workbook-format regressions for the corrected filtering and reporting behaviour.
+
 ## 1.4.0 - 2026-09-10
 
 - Added a token-free landing-page generator that turns one public URL into a ready-to-paste GitHub Actions workflow and explains the complete run-to-report path.

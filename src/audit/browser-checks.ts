@@ -753,6 +753,22 @@ export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckRe
       if (!/(?:^|[\s_-])(carousel|slider)(?:$|[\s_-])/i.test(identity)) return false;
       return element.querySelectorAll('[data-carousel], [class*="carousel-slide" i], [class~="slide" i], [role="group"]').length >= 2;
     };
+    const isIntentionallyVisuallyHidden = (element: Element): boolean => {
+      const node = element as HTMLElement;
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      const clippedOut = style.clip === 'rect(0px, 0px, 0px, 0px)'
+        || /^inset\((?:50%|100%)(?:\s+(?:50%|100%)){0,3}\)$/i.test(style.clipPath);
+      const tinyClippedBox = rect.width <= 2
+        && rect.height <= 2
+        && /^(absolute|fixed)$/.test(style.position)
+        && /^(hidden|clip)$/.test(style.overflow)
+        && (style.whiteSpace === 'nowrap' || clippedOut);
+      const authoredHiddenClass = /(?:^|[\s_-])(?:sr-only|screen-reader-only|visually-hidden)(?:$|[\s_-])/i.test(
+        typeof node.className === 'string' ? node.className : ''
+      );
+      return clippedOut || (tinyClippedBox && authoredHiddenClass);
+    };
     const documentWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
     const overflowElements = [...document.body.querySelectorAll('*')]
       .map((element) => ({ element, rect: element.getBoundingClientRect() }))
@@ -767,6 +783,7 @@ export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckRe
     const clippedElements = [...document.body.querySelectorAll('*')]
       .filter(visible)
       .filter((element) => !isIntentionalCarouselViewport(element))
+      .filter((element) => !isIntentionallyVisuallyHidden(element))
       .flatMap((element) => {
         const node = element as HTMLElement;
         const style = getComputedStyle(node);
@@ -837,12 +854,20 @@ export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckRe
   await spacingStyle.evaluate((element) => (element as Element).remove());
   const spacedSelectors = new Set(spaced.visibleInteractiveElements.map((element) => element.selector));
   const lostInteractiveElements = base.visibleInteractiveElements.filter((element) => !spacedSelectors.has(element.selector));
+  const baseClippingKeys = new Set(base.clippedElements.map((item) => `${item.selector}|${item.axis}`));
+  const baseOverlapKeys = new Set(base.overlapPairs.map((item) => [item.firstSelector, item.secondSelector].sort().join('|')));
   return {
     horizontalOverflow: base.horizontalOverflow,
     overflowElements: base.overflowElements,
     textSpacingOverflow: spaced.horizontalOverflow,
-    clippedElements: [...base.clippedElements, ...spaced.clippedElements],
-    overlapPairs: [...base.overlapPairs, ...spaced.overlapPairs],
+    clippedElements: [
+      ...base.clippedElements,
+      ...spaced.clippedElements.filter((item) => !baseClippingKeys.has(`${item.selector}|${item.axis}`))
+    ],
+    overlapPairs: [
+      ...base.overlapPairs,
+      ...spaced.overlapPairs.filter((item) => !baseOverlapKeys.has([item.firstSelector, item.secondSelector].sort().join('|')))
+    ],
     lostInteractiveElements
   };
 }
