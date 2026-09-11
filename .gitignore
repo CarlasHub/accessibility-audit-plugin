@@ -13,4 +13,7 @@ outputs/
 .DS_Store
 *.log
 *.tgz
+connector/.dev.vars
+connector/.wrangler/
+.wrangler/
 !marketplace/carlashub-plugin-marketplace/accessibility-audit/**/_install-source/*.tgz

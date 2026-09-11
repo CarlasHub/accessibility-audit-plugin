@@ -110,9 +110,18 @@ export function normalizeGitHubRepository(rawValue: string): GitHubRepository {
   return { owner, name, slug: `${owner}/${name}` };
 }
 
-export function buildGitHubWorkflowEditorUrl(repository: GitHubRepository, workflow: string): string {
+export function buildGitHubWorkflowEditorUrl(
+  repository: GitHubRepository,
+  workflow: string,
+  defaultBranch = 'main'
+): string {
+  const branch = defaultBranch.trim();
+  if (!branch || branch.length > 255) {
+    throw new Error('GitHub returned an invalid default branch for this repository.');
+  }
+
   const editorUrl = new URL(
-    `https://github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/new/HEAD`
+    `https://github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/new/${encodeURIComponent(branch)}`
   );
   editorUrl.searchParams.set('filename', '.github/workflows/accessibility-audit.yml');
   editorUrl.searchParams.set('value', workflow);

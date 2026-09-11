@@ -44,10 +44,15 @@ describe('public landing-page hosting', () => {
 
   it('offers user-owned setup for both new and existing repositories', async () => {
     const html = await readFile(path.join(repositoryRoot, 'site', 'index.html'), 'utf8');
+    const workflowBuilder = await readFile(path.join(repositoryRoot, 'site', 'workflow.ts'), 'utf8');
 
     expect(html).toContain('value="new" checked');
     expect(html).toContain('value="existing"');
     expect(html).toContain('id="repository-name"');
-    expect(html).toContain('No GitHub token or backend is used.');
+    expect(html).toContain('id="choose-repository"');
+    expect(html).toContain('id="repository-dialog"');
+    expect(html).toContain('It never runs audits or stores reports.');
+    expect(html).toContain('<script src="./config.js"></script>');
+    expect(workflowBuilder).not.toContain('/new/HEAD');
   });
 });

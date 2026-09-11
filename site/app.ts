@@ -7,6 +7,19 @@ import {
   normalizeTargetUrls,
   type AuditTarget
 } from './workflow.js';
+import {
+  buildAuthorizationUrl,
+  buildInstallationUrl,
+  captureOAuthSession,
+  hasConnectorSession,
+  listAccessibleRepositories,
+  readConnectorConfig,
+  resolvePublicRepositoryDefaultBranch,
+  saveAuditDraft,
+  setUpAndRunAudit,
+  takeAuditDraft,
+  type GitHubRepositoryOption
+} from './github-connector.js';
 
 function requiredElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -39,6 +52,15 @@ const destinationInputs = Array.from(
 const repositoryField = requiredElement<HTMLDivElement>('#repository-field');
 const repositoryInput = requiredElement<HTMLInputElement>('#repository-name');
 const repositoryError = requiredElement<HTMLParagraphElement>('#repository-error');
+const chooseRepositoryButton = requiredElement<HTMLButtonElement>('#choose-repository');
+const manageRepositoryAccess = requiredElement<HTMLAnchorElement>('#manage-repository-access');
+const repositoryDialog = requiredElement<HTMLDialogElement>('#repository-dialog');
+const closeRepositoryDialog = requiredElement<HTMLButtonElement>('#close-repository-dialog');
+const repositorySearch = requiredElement<HTMLInputElement>('#repository-search');
+const repositoryPickerStatus = requiredElement<HTMLParagraphElement>('#repository-picker-status');
+const repositoryOptions = requiredElement<HTMLDivElement>('#repository-options');
+const repositoryAccessHelp = requiredElement<HTMLDivElement>('#repository-access-help');
+const installGitHubApp = requiredElement<HTMLAnchorElement>('#install-github-app');
 
 if (destinationInputs.length !== 2) {
   throw new Error('Missing required repository destination options.');
@@ -54,6 +76,18 @@ templateCreationUrl.search = new URLSearchParams({
 }).toString();
 
 let currentWorkflow = '';
+const connectorConfig = readConnectorConfig();
+const returnedFromGitHub = captureOAuthSession();
+const pageUrl = new URL(window.location.href);
+const returnedFromInstallation = pageUrl.searchParams.get('github') === 'installed'
+  || ['install', 'update'].includes(pageUrl.searchParams.get('setup_action') ?? '');
+if (returnedFromInstallation) {
+  pageUrl.searchParams.delete('github');
+  pageUrl.searchParams.delete('installation_id');
+  pageUrl.searchParams.delete('setup_action');
+  history.replaceState(null, '', `${pageUrl.pathname}${pageUrl.search}${pageUrl.hash}`);
+}
+let availableRepositories: GitHubRepositoryOption[] = [];
 
 function getRows(): HTMLDivElement[] {
   return Array.from(urlList.querySelectorAll<HTMLDivElement>('.url-field'));
@@ -147,9 +181,90 @@ function refreshDestination(): void {
   repositoryField.hidden = !usesExistingRepository;
   repositoryInput.disabled = !usesExistingRepository;
   repositoryInput.required = usesExistingRepository;
-  launchButton.innerHTML = usesExistingRepository
-    ? 'Add audit to this repository <span aria-hidden="true">→</span>'
-    : 'Create my audit repository <span aria-hidden="true">→</span>';
+  chooseRepositoryButton.hidden = !usesExistingRepository || connectorConfig === null;
+  manageRepositoryAccess.hidden = !usesExistingRepository || connectorConfig === null || !hasConnectorSession();
+  if (!usesExistingRepository) {
+    launchButton.innerHTML = 'Create my audit repository <span aria-hidden="true">→</span>';
+  } else if (connectorConfig && !hasConnectorSession()) {
+    launchButton.innerHTML = 'Connect GitHub and choose a repository <span aria-hidden="true">→</span>';
+  } else if (connectorConfig && !repositoryInput.value.trim()) {
+    launchButton.innerHTML = 'Choose a repository <span aria-hidden="true">→</span>';
+  } else {
+    launchButton.innerHTML = 'Add workflow and run audit <span aria-hidden="true">→</span>';
+  }
+}
+
+function renderRepositoryOptions(filter = ''): void {
+  repositoryOptions.replaceChildren();
+  const normalizedFilter = filter.trim().toLocaleLowerCase();
+  const matches = availableRepositories.filter((repository) =>
+    repository.fullName.toLocaleLowerCase().includes(normalizedFilter)
+  );
+
+  for (const repository of matches) {
+    const button = document.createElement('button');
+    const name = document.createElement('strong');
+    const detail = document.createElement('span');
+    button.type = 'button';
+    button.className = 'repository-option';
+    name.textContent = repository.fullName;
+    detail.textContent = `${repository.private ? 'Private' : 'Public'} · default branch ${repository.defaultBranch}`;
+    button.append(name, detail);
+    button.addEventListener('click', () => {
+      repositoryInput.value = repository.fullName;
+      clearRepositoryError();
+      clearLaunchFeedback();
+      repositoryDialog.close();
+      launchStatus.textContent = `${repository.fullName} selected. Submit to add the workflow and start the audit.`;
+      refreshDestination();
+      launchButton.focus();
+    });
+    repositoryOptions.append(button);
+  }
+
+  repositoryPickerStatus.textContent = matches.length === 0 && availableRepositories.length > 0
+    ? 'No repositories match that filter.'
+    : `${matches.length} ${matches.length === 1 ? 'repository' : 'repositories'} available.`;
+}
+
+async function openRepositoryPicker(): Promise<void> {
+  if (!connectorConfig) return;
+  const targets = readTargets();
+  if (!targets) return;
+
+  if (!hasConnectorSession()) {
+    saveAuditDraft(targets.map((target) => target.url));
+    window.location.assign(buildAuthorizationUrl(connectorConfig));
+    return;
+  }
+
+  repositorySearch.value = '';
+  repositoryOptions.replaceChildren();
+  repositoryAccessHelp.hidden = true;
+  repositoryPickerStatus.textContent = 'Loading your allowed repositories…';
+  repositoryDialog.showModal();
+
+  try {
+    availableRepositories = await listAccessibleRepositories(connectorConfig);
+    repositoryAccessHelp.hidden = availableRepositories.length > 0;
+    renderRepositoryOptions();
+    if (availableRepositories.length > 0) repositorySearch.focus();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Your repositories could not be loaded.';
+    repositoryPickerStatus.textContent = message;
+    repositoryAccessHelp.hidden = false;
+  }
+}
+
+function restoreAuditDraft(urls: string[]): void {
+  const limitedUrls = urls.slice(0, MAX_AUDIT_TARGETS);
+  if (limitedUrls.length === 0) return;
+  while (getRows().length < limitedUrls.length) urlList.append(createUrlRow());
+  while (getRows().length > limitedUrls.length && getRows().length > 1) getRows().at(-1)?.remove();
+  getInputs().forEach((input, index) => {
+    input.value = limitedUrls[index] ?? '';
+  });
+  refreshRows();
 }
 
 function showActionError(message: string): void {
@@ -303,15 +418,72 @@ async function openRepositorySetup(): Promise<void> {
   let clipboardValue = targets.map((target) => target.url).join('\n');
 
   if (destination === 'existing') {
+    if (connectorConfig && !hasConnectorSession()) {
+      saveAuditDraft(targets.map((target) => target.url));
+      window.location.assign(buildAuthorizationUrl(connectorConfig));
+      return;
+    }
+
+    if (connectorConfig && !repositoryInput.value.trim()) {
+      await openRepositoryPicker();
+      return;
+    }
+
     try {
       const repository = normalizeGitHubRepository(repositoryInput.value);
       currentWorkflow = buildWorkflow(targets);
       clipboardValue = currentWorkflow;
-      destinationUrl = buildGitHubWorkflowEditorUrl(repository, currentWorkflow);
+      if (!connectorConfig) {
+        launchButton.disabled = true;
+        launchButton.setAttribute('aria-busy', 'true');
+        launchButton.textContent = 'Checking repository…';
+        form.setAttribute('aria-busy', 'true');
+        launchStatus.textContent = 'Finding the repository’s default branch on GitHub.';
+        const defaultBranch = await resolvePublicRepositoryDefaultBranch(repository);
+        destinationUrl = buildGitHubWorkflowEditorUrl(repository, currentWorkflow, defaultBranch);
+      }
     } catch (error) {
+      launchButton.disabled = false;
+      launchButton.removeAttribute('aria-busy');
+      form.removeAttribute('aria-busy');
+      refreshDestination();
+      launchStatus.textContent = '';
       showRepositoryError(
         error instanceof Error ? error.message : 'Check the GitHub repository and try again.'
       );
+      return;
+    }
+
+    if (connectorConfig) {
+      setProgress(2);
+      launchButton.disabled = true;
+      launchButton.setAttribute('aria-busy', 'true');
+      launchButton.textContent = 'Starting your audit…';
+      form.setAttribute('aria-busy', 'true');
+      launchStatus.textContent = 'Adding the workflow to your repository and asking GitHub Actions to run it.';
+      try {
+        const setup = await setUpAndRunAudit(
+          connectorConfig,
+          normalizeGitHubRepository(repositoryInput.value).slug,
+          targets.map((target) => target.url)
+        );
+        setProgress(3);
+        launchStatus.textContent = `Audit started in ${setup.repository}. Opening its GitHub Actions page…`;
+        window.location.assign(setup.actionsUrl);
+      } catch (error) {
+        setProgress(1);
+        launchStatus.textContent = '';
+        launchError.textContent = error instanceof Error
+          ? `${error.message} Nothing was overwritten; preview the workflow below for manual setup.`
+          : 'The audit could not be started. Nothing was overwritten; use the manual workflow preview below.';
+        launchError.hidden = false;
+        launchError.focus();
+      } finally {
+        launchButton.disabled = false;
+        launchButton.removeAttribute('aria-busy');
+        form.removeAttribute('aria-busy');
+        refreshDestination();
+      }
       return;
     }
   }
@@ -323,19 +495,16 @@ async function openRepositorySetup(): Promise<void> {
   form.setAttribute('aria-busy', 'true');
   launchStatus.textContent = `${targets.length} ${targets.length === 1 ? 'page' : 'pages'} checked. Preparing your GitHub setup.`;
 
-  let navigating = false;
   try {
     if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable.');
     await navigator.clipboard.writeText(clipboardValue);
     launchStatus.textContent = destination === 'existing'
       ? 'Workflow copied. GitHub will ask you to review and commit it.'
       : 'Page list copied. GitHub will ask you to confirm your new repository.';
-    navigating = true;
     window.location.assign(destinationUrl);
   } catch {
     if (destination === 'existing') {
       launchStatus.textContent = 'GitHub will open the prepared workflow. If it is not prefilled, return here and use “Preview or download the workflow”.';
-      navigating = true;
       window.location.assign(destinationUrl);
     } else {
       setProgress(1);
@@ -345,12 +514,10 @@ async function openRepositorySetup(): Promise<void> {
       launchError.focus();
     }
   } finally {
-    if (!navigating) {
-      launchButton.disabled = false;
-      launchButton.removeAttribute('aria-busy');
-      refreshDestination();
-      form.removeAttribute('aria-busy');
-    }
+    launchButton.disabled = false;
+    launchButton.removeAttribute('aria-busy');
+    refreshDestination();
+    form.removeAttribute('aria-busy');
   }
 }
 
@@ -372,6 +539,17 @@ destinationInputs.forEach((input) => {
 repositoryInput.addEventListener('input', () => {
   clearRepositoryError();
   clearLaunchFeedback();
+});
+
+chooseRepositoryButton.addEventListener('click', () => {
+  void openRepositoryPicker();
+});
+
+closeRepositoryDialog.addEventListener('click', () => repositoryDialog.close());
+repositorySearch.addEventListener('input', () => renderRepositoryOptions(repositorySearch.value));
+installGitHubApp.addEventListener('click', () => {
+  const targets = readTargets();
+  if (targets) saveAuditDraft(targets.map((target) => target.url));
 });
 
 addUrlButton.addEventListener('click', () => {
@@ -426,5 +604,22 @@ copyButton.addEventListener('click', async () => {
 });
 
 downloadButton.addEventListener('click', downloadWorkflow);
+if (connectorConfig) installGitHubApp.href = buildInstallationUrl(connectorConfig);
+if (returnedFromGitHub || returnedFromInstallation) {
+  const draft = takeAuditDraft();
+  if (draft) restoreAuditDraft(draft);
+  const existingDestination = destinationInputs.find((input) => input.value === 'existing');
+  if (existingDestination) existingDestination.checked = true;
+  launchStatus.textContent = returnedFromInstallation
+    ? 'Repository access updated. Choose where this audit should run.'
+    : 'GitHub connected. Choose the repository where this audit should run.';
+  if (hasConnectorSession()) {
+    window.setTimeout(() => void openRepositoryPicker(), 0);
+  } else if (returnedFromInstallation && connectorConfig) {
+    const targets = readTargets();
+    if (targets) saveAuditDraft(targets.map((target) => target.url));
+    window.setTimeout(() => window.location.assign(buildAuthorizationUrl(connectorConfig)), 0);
+  }
+}
 refreshDestination();
 refreshRows();

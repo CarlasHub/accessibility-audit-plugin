@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildGitHubWorkflowEditorUrl,
   buildWorkflow,
@@ -6,6 +6,7 @@ import {
   normalizeTargetUrl,
   normalizeTargetUrls
 } from '../site/workflow.js';
+import { resolvePublicRepositoryDefaultBranch } from '../site/github-connector.js';
 
 describe('landing page workflow generator', () => {
   it('normalizes a public URL and derives its security boundary', () => {
@@ -69,11 +70,26 @@ describe('landing page workflow generator', () => {
 
   it('opens GitHub’s workflow editor with the generated file prepared', () => {
     const repository = normalizeGitHubRepository('CarlasHub/example-project');
-    const editorUrl = new URL(buildGitHubWorkflowEditorUrl(repository, 'name: Accessibility audit\n'));
+    const editorUrl = new URL(buildGitHubWorkflowEditorUrl(repository, 'name: Accessibility audit\n', 'trunk'));
 
     expect(editorUrl.origin).toBe('https://github.com');
-    expect(editorUrl.pathname).toBe('/CarlasHub/example-project/new/HEAD');
+    expect(editorUrl.pathname).toBe('/CarlasHub/example-project/new/trunk');
     expect(editorUrl.searchParams.get('filename')).toBe('.github/workflows/accessibility-audit.yml');
     expect(editorUrl.searchParams.get('value')).toBe('name: Accessibility audit\n');
+  });
+
+  it('uses the repository default branch returned by GitHub', async () => {
+    const repository = normalizeGitHubRepository('CarlasHub/ai-agent-sdlc-boilerplate');
+    const request = vi.fn(async () => new Response(JSON.stringify({ default_branch: 'main' }), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 200
+    }));
+
+    await expect(resolvePublicRepositoryDefaultBranch(repository, request as typeof fetch))
+      .resolves.toBe('main');
+    expect(request).toHaveBeenCalledWith(
+      'https://api.github.com/repos/CarlasHub/ai-agent-sdlc-boilerplate',
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
   });
 });
