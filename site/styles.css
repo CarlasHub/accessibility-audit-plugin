@@ -489,15 +489,47 @@ input[type="url"][aria-invalid="true"] {
   background: #b4caff;
 }
 
+.primary-button:disabled,
+.secondary-button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.form-actions {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 0.55rem;
+}
+
 .build-button {
   width: 100%;
-  margin-top: 0.55rem;
 }
 
 .secondary-button {
   border-color: currentcolor;
   background: transparent;
   color: inherit;
+}
+
+button.secondary-button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.launch-status,
+.launch-error {
+  min-height: 1.5em;
+  margin: 0.7rem 0 0;
+  font-size: 0.85rem;
+}
+
+.launch-status {
+  color: var(--night-muted);
+}
+
+.launch-error:focus {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
 }
 
 .privacy-note {

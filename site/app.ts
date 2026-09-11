@@ -27,6 +27,10 @@ const copyStatus = requiredElement<HTMLParagraphElement>('#copy-status');
 const copyError = requiredElement<HTMLParagraphElement>('#copy-error');
 const progress = requiredElement<HTMLDivElement>('#setup-progress');
 const progressStatus = requiredElement<HTMLOutputElement>('#quest-status');
+const launchButton = requiredElement<HTMLButtonElement>('#launch-audit');
+const buildWorkflowButton = requiredElement<HTMLButtonElement>('#build-workflow');
+const launchStatus = requiredElement<HTMLParagraphElement>('#launch-status');
+const launchError = requiredElement<HTMLParagraphElement>('#launch-error');
 
 let currentWorkflow = '';
 
@@ -44,8 +48,14 @@ function requiredElementInRow<T extends HTMLElement>(row: HTMLElement, selector:
   return element;
 }
 
-function setProgress(stage: 1 | 2): void {
-  const label = stage === 1 ? 'Stage 1 of 4: add pages' : 'Stage 2 of 4: workflow ready';
+function setProgress(stage: 1 | 2 | 3 | 4): void {
+  const labels = {
+    1: 'Stage 1 of 4: add pages',
+    2: 'Stage 2 of 4: pages checked',
+    3: 'Stage 3 of 4: starting GitHub Action',
+    4: 'Stage 4 of 4: live run ready'
+  } as const;
+  const label = labels[stage];
   progress.setAttribute('aria-valuenow', String(stage));
   progress.setAttribute('aria-valuetext', label);
   progressStatus.value = label;
@@ -80,6 +90,12 @@ function clearActionFeedback(): void {
   copyStatus.textContent = '';
   copyError.textContent = '';
   copyError.hidden = true;
+}
+
+function clearLaunchFeedback(): void {
+  launchStatus.textContent = '';
+  launchError.textContent = '';
+  launchError.hidden = true;
 }
 
 function showActionError(message: string): void {
@@ -181,23 +197,28 @@ function downloadWorkflow(): void {
   copyStatus.textContent = 'Workflow download started.';
 }
 
-function prepareWorkflow(): void {
+function readTargets(): AuditTarget[] | null {
   clearFieldErrors();
   const inputs = getInputs();
   const blankInput = inputs.find((input) => input.value.trim() === '');
   if (blankInput) {
     showFieldError(blankInput, 'Enter a complete URL for every page, or remove the empty row.');
-    return;
+    return null;
   }
 
-  let targets: AuditTarget[];
   try {
-    targets = normalizeTargetUrls(inputs.map((input) => input.value));
+    return normalizeTargetUrls(inputs.map((input) => input.value));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Check the page URLs and try again.';
     showFieldError(locateInvalidInput(message), message);
-    return;
+    return null;
   }
+}
+
+function prepareWorkflow(): void {
+  clearLaunchFeedback();
+  const targets = readTargets();
+  if (!targets) return;
 
   currentWorkflow = buildWorkflow(targets);
   workflowCode.textContent = currentWorkflow;
@@ -210,10 +231,69 @@ function prepareWorkflow(): void {
   resultTitle.focus({ preventScroll: true });
 }
 
+async function launchAudit(): Promise<void> {
+  clearLaunchFeedback();
+  const targets = readTargets();
+  if (!targets) return;
+
+  const insecureTarget = targets.find((target) => !target.url.startsWith('https://'));
+  if (insecureTarget) {
+    const input = getInputs().find((candidate) => candidate.value.trim() === insecureTarget.url) ?? getInputs()[0];
+    if (input) showFieldError(input, 'One-click audits require a public address beginning with https://.');
+    return;
+  }
+
+  setProgress(2);
+  launchButton.disabled = true;
+  launchButton.setAttribute('aria-busy', 'true');
+  launchButton.textContent = 'Starting audit…';
+  form.setAttribute('aria-busy', 'true');
+  launchStatus.textContent = `${targets.length} ${targets.length === 1 ? 'page' : 'pages'} checked. Connecting to GitHub Actions.`;
+
+  let navigating = false;
+  try {
+    setProgress(3);
+    const response = await fetch('/api/audits', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ urls: targets.map((target) => target.url) })
+    });
+    const payload = (await response.json().catch(() => ({}))) as { error?: string; runUrl?: string };
+    if (!response.ok) throw new Error(payload.error || 'The audit could not be started.');
+    if (!payload.runUrl) throw new Error('GitHub started the audit but did not return its run page.');
+
+    const runUrl = new URL(payload.runUrl);
+    const expectedPath = '/CarlasHub/accessibility-audit-plugin/actions/';
+    if (runUrl.protocol !== 'https:' || runUrl.hostname !== 'github.com' || !runUrl.pathname.startsWith(expectedPath)) {
+      throw new Error('GitHub returned an unexpected run address.');
+    }
+
+    setProgress(4);
+    launchStatus.textContent = 'Audit started. Opening the live GitHub Actions run.';
+    navigating = true;
+    window.location.assign(runUrl.href);
+  } catch (error) {
+    setProgress(2);
+    launchStatus.textContent = '';
+    launchError.textContent = error instanceof Error ? error.message : 'The audit could not be started.';
+    launchError.hidden = false;
+    launchError.focus();
+  } finally {
+    if (!navigating) {
+      launchButton.disabled = false;
+      launchButton.removeAttribute('aria-busy');
+      launchButton.innerHTML = 'Run audit now <span aria-hidden="true">→</span>';
+      form.removeAttribute('aria-busy');
+    }
+  }
+}
+
 form.addEventListener('submit', (event) => {
   event.preventDefault();
-  prepareWorkflow();
+  void launchAudit();
 });
+
+buildWorkflowButton.addEventListener('click', prepareWorkflow);
 
 addUrlButton.addEventListener('click', () => {
   if (getRows().length >= MAX_AUDIT_TARGETS) return;
@@ -247,6 +327,7 @@ urlList.addEventListener('click', (event) => {
 
 urlList.addEventListener('input', () => {
   clearFieldErrors();
+  clearLaunchFeedback();
   invalidatePreparedWorkflow();
 });
 

@@ -1,4 +1,5 @@
 name: Try the accessibility Action
+run-name: Accessibility audit · ${{ inputs['request-id'] || 'manual run' }}
 
 permissions:
   contents: read
@@ -7,9 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       target-url:
-        description: Public, non-sensitive page to audit
+        description: Public HTTPS pages to audit, one per line
         required: true
         default: https://example.com/
+      request-id:
+        description: Launcher request identifier
+        required: false
+        default: manual-run
 
 jobs:
   audit:
@@ -20,7 +25,7 @@ jobs:
       - id: audit
         uses: ./
         with:
-          urls: ${{ inputs.target-url }}
+          urls: ${{ inputs['target-url'] }}
           auditor: Carla / CarlasHub
           fail-on: none
           comment-on-pr: 'false'

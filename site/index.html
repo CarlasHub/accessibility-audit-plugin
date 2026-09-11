@@ -61,7 +61,7 @@
           <div class="generator-card" aria-labelledby="generator-title">
             <div class="card-topline">
               <p class="card-kicker">Create an audit</p>
-              <span class="no-login">No login</span>
+              <span class="no-login">GitHub Actions</span>
             </div>
             <h2 id="generator-title">Which pages do you want to audit?</h2>
 
@@ -79,7 +79,7 @@
             <form id="workflow-form" novalidate>
               <fieldset>
                 <legend>Pages to audit</legend>
-                <p id="url-hint" class="field-hint">Use complete public addresses beginning with <code>https://</code> or <code>http://</code>. Add up to 20 pages.</p>
+                <p id="url-hint" class="field-hint">Use complete public <code>https://</code> addresses. Add up to 20 pages for one combined audit.</p>
                 <div class="url-list" id="url-list">
                   <div class="url-field">
                     <label for="target-url-1">Page 1 URL</label>
@@ -95,10 +95,15 @@
                 </div>
                 <p id="url-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
               </fieldset>
-              <button class="primary-button build-button" type="submit">Build my workflow <span aria-hidden="true">→</span></button>
+              <div class="form-actions">
+                <button class="primary-button build-button" id="launch-audit" type="submit">Run audit now <span aria-hidden="true">→</span></button>
+                <button class="secondary-button build-button" id="build-workflow" type="button">Use in my own repository</button>
+              </div>
+              <p class="launch-status" id="launch-status" role="status" aria-live="polite" aria-atomic="true"></p>
+              <p class="field-error launch-error" id="launch-error" role="alert" aria-atomic="true" tabindex="-1" hidden></p>
             </form>
 
-            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>The audit runs in your GitHub account. This page never asks for your token.</span></p>
+            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>The one-click audit runs in CarlasHub GitHub Actions. Your URLs go to the Action; GitHub credentials never reach your browser.</span></p>
           </div>
         </div>
       </section>
@@ -107,7 +112,7 @@
         <div class="result-heading">
           <div>
             <p class="eyebrow success-label"><span aria-hidden="true"></span> Checkpoint reached</p>
-            <h2 id="workflow-result-title" tabindex="-1" aria-describedby="result-description">Your multi-page workflow is ready</h2>
+            <h2 id="workflow-result-title" tabindex="-1" aria-describedby="result-description">Your repository workflow is ready</h2>
             <p id="result-description">The workflow is configured for your pages.</p>
           </div>
           <button class="text-button" id="download-again" type="button">Download <code>.yml</code></button>
@@ -122,7 +127,7 @@
 
         <div class="result-actions">
           <button class="primary-button" id="copy-workflow" type="button">Copy workflow code</button>
-          <a class="secondary-button" href="https://github.com" target="_blank" rel="noreferrer" aria-label="Open GitHub (opens in a new tab)">Open GitHub <span aria-hidden="true">↗</span></a>
+          <a class="secondary-button" href="https://github.com/CarlasHub/accessibility-audit-plugin/actions/workflows/accessibility-audit.yml" target="_blank" rel="noreferrer" aria-label="Open the accessibility Action on GitHub (opens in a new tab)">Open the Action <span aria-hidden="true">↗</span></a>
         </div>
         <div class="copy-feedback">
           <p class="copy-status" id="copy-status" role="status" aria-live="polite" aria-atomic="true"></p>
