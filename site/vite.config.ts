@@ -9,8 +9,8 @@ export default defineConfig({
     outDir: '../dist/client',
     rollupOptions: {
       output: {
-        assetFileNames: 'assets/[name][extname]',
-        entryFileNames: 'assets/app.js'
+        assetFileNames: 'assets/[name]-[hash][extname]',
+        entryFileNames: 'assets/[name]-[hash].js'
       }
     }
   }

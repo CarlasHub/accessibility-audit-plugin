@@ -32,6 +32,8 @@ describe('public landing-page hosting', () => {
     );
 
     expect(viteConfig).toContain("outDir: '../dist/client'");
+    expect(viteConfig).toContain("entryFileNames: 'assets/[name]-[hash].js'");
+    expect(viteConfig).not.toContain("entryFileNames: 'assets/app.js'");
     expect(workflow).toContain('uses: actions/deploy-pages@v4');
     expect(workflow).toContain('path: dist/client');
   });
