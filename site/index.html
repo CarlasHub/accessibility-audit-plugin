@@ -48,7 +48,7 @@
           />
           <p class="eyebrow">Open-source accessibility testing</p>
           <h1>Audit every page.<br /><em>Remove barriers before release.</em></h1>
-          <p class="lede">Add up to 20 public pages. Create your own ready-to-run GitHub repository and keep every audit and report under your account.</p>
+          <p class="lede">Add up to 20 public pages. Create a ready-to-run repository or add the audit to one you already own. Every run and report stays under your account.</p>
           <div class="trust-row" aria-label="Audit capabilities">
             <span>WCAG 2.2</span>
             <span>Keyboard</span>
@@ -95,15 +95,35 @@
                 </div>
                 <p id="url-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
               </fieldset>
+              <fieldset class="destination-fieldset">
+                <legend>Where should the audit run?</legend>
+                <p id="destination-hint" class="field-hint">Choose a new audit repository or add one workflow to a repository you can edit.</p>
+                <div class="destination-options">
+                  <label class="destination-option">
+                    <input type="radio" name="destination" value="new" checked />
+                    <span><strong>Create a new repository</strong><small>GitHub opens a prefilled copy of the free starter template.</small></span>
+                  </label>
+                  <label class="destination-option">
+                    <input type="radio" name="destination" value="existing" />
+                    <span><strong>Use an existing repository</strong><small>GitHub opens a prepared workflow for you to review and commit.</small></span>
+                  </label>
+                </div>
+                <div class="repository-field" id="repository-field" hidden>
+                  <label for="repository-name">Existing GitHub repository</label>
+                  <input id="repository-name" name="repository" type="text" placeholder="owner/project" autocomplete="off" spellcheck="false" aria-describedby="repository-hint" disabled />
+                  <p id="repository-hint" class="field-hint">Paste <code>owner/project</code> or its GitHub URL. Private repositories work when you are signed in and have permission; this page never reads your repository list.</p>
+                  <p id="repository-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
+                </div>
+              </fieldset>
               <div class="form-actions">
                 <button class="primary-button build-button" id="launch-audit" type="submit">Create my audit repository <span aria-hidden="true">→</span></button>
-                <button class="secondary-button build-button" id="build-workflow" type="button">Download a workflow instead</button>
+                <button class="secondary-button build-button" id="build-workflow" type="button">Preview or download the workflow</button>
               </div>
               <p class="launch-status" id="launch-status" role="status" aria-live="polite" aria-atomic="true"></p>
               <p class="field-error launch-error" id="launch-error" role="alert" aria-atomic="true" tabindex="-1" hidden></p>
             </form>
 
-            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>Your page list is copied, then GitHub asks you to confirm a repository from the free template. Its Actions usage, audit history, and reports belong to you—not CarlasHub.</span></p>
+            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>No GitHub token or backend is used. GitHub asks you to confirm every repository or workflow change, and all Actions usage, audit history, and reports belong to you—not CarlasHub.</span></p>
           </div>
         </div>
       </section>
@@ -154,8 +174,8 @@
         <div class="integration-grid">
           <article class="integration-card integration-card-featured">
             <div class="integration-topline"><h3>GitHub Actions</h3><span class="availability availability-live">Ready</span></div>
-            <p>Create your own audit repository from the ready template, or download a workflow for an existing project. Runs and reports stay in your GitHub account.</p>
-            <a class="integration-action" href="#audit-builder">Create an audit repository <span aria-hidden="true">→</span></a>
+            <p>Create your own audit repository from the ready template, or add a prepared workflow to an existing project. Runs and reports stay in your GitHub account.</p>
+            <a class="integration-action" href="#audit-builder">Set up GitHub Actions <span aria-hidden="true">→</span></a>
           </article>
 
           <article class="integration-card">
@@ -201,11 +221,11 @@ copilot plugin install ./marketplace/carlashub-plugin-marketplace/accessibility-
         <div class="section-heading">
           <p class="eyebrow"><span aria-hidden="true"></span> A shorter setup</p>
           <h2>From a page list to useful evidence.</h2>
-          <p>The template adds the technical workflow for you. Confirm your repository on GitHub, then rerun it whenever your site changes.</p>
+          <p>Choose a new or existing repository, confirm the workflow on GitHub, then rerun it whenever your site changes.</p>
         </div>
         <ol class="steps">
           <li><span aria-hidden="true">01</span><h3>Add your pages</h3><p>Enter one or several public pages that you are authorised to test.</p></li>
-          <li><span aria-hidden="true">02</span><h3>Create your repository</h3><p>Confirm the prefilled template on GitHub. The repository and its Actions usage are yours.</p></li>
+          <li><span aria-hidden="true">02</span><h3>Choose where it runs</h3><p>Create a repository from the template or add the prepared workflow to one you already use.</p></li>
           <li><span aria-hidden="true">03</span><h3>Run and review</h3><p>Start the Action and download one combined evidence pack for every page.</p></li>
         </ol>
       </section>

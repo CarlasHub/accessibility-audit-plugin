@@ -400,7 +400,8 @@ code {
   gap: 0.55rem;
 }
 
-input[type="url"] {
+input[type="url"],
+input[type="text"] {
   width: 100%;
   min-width: 0;
   min-height: 3.25rem;
@@ -413,13 +414,85 @@ input[type="url"] {
   font-size: 0.95rem;
 }
 
-input[type="url"]:hover {
+input[type="url"]:hover,
+input[type="text"]:hover {
   border-color: #777777;
 }
 
-input[type="url"][aria-invalid="true"] {
+input[type="url"][aria-invalid="true"],
+input[type="text"][aria-invalid="true"] {
   border-color: var(--error);
   box-shadow: 0 0 0 1px var(--error);
+}
+
+.destination-fieldset {
+  margin-top: 1.35rem;
+  padding-top: 1.35rem;
+  border-top: 1px solid var(--night-border);
+}
+
+.destination-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.destination-option {
+  display: flex;
+  min-width: 0;
+  gap: 0.65rem;
+  align-items: flex-start;
+  padding: 0.85rem;
+  border: 1px solid var(--night-border);
+  border-radius: 0.85rem;
+  background: var(--night-control);
+  cursor: pointer;
+}
+
+.destination-option:has(input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.destination-option input {
+  flex: 0 0 auto;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin: 0.15rem 0 0;
+  accent-color: var(--accent);
+}
+
+.destination-option span,
+.destination-option small {
+  display: block;
+}
+
+.destination-option strong {
+  color: var(--night-text);
+  font-size: 0.88rem;
+}
+
+.destination-option small {
+  margin-top: 0.25rem;
+  color: var(--night-muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.repository-field {
+  margin-top: 0.9rem;
+}
+
+.repository-field[hidden] {
+  display: none;
+}
+
+.repository-field > label {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: #e8e8e4;
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .remove-url,
@@ -1019,6 +1092,10 @@ footer {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .destination-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .remove-url {
     justify-self: start;
   }
@@ -1059,7 +1136,8 @@ footer {
     border: 1px solid ButtonText;
   }
 
-  input[type="url"] {
+  input[type="url"],
+  input[type="text"] {
     border: 1px solid FieldText;
   }
 }

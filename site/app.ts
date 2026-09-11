@@ -1,6 +1,8 @@
 import {
+  buildGitHubWorkflowEditorUrl,
   buildWorkflow,
   MAX_AUDIT_TARGETS,
+  normalizeGitHubRepository,
   normalizeTargetUrl,
   normalizeTargetUrls,
   type AuditTarget
@@ -31,6 +33,16 @@ const launchButton = requiredElement<HTMLButtonElement>('#launch-audit');
 const buildWorkflowButton = requiredElement<HTMLButtonElement>('#build-workflow');
 const launchStatus = requiredElement<HTMLParagraphElement>('#launch-status');
 const launchError = requiredElement<HTMLParagraphElement>('#launch-error');
+const destinationInputs = Array.from(
+  document.querySelectorAll<HTMLInputElement>('input[name="destination"]')
+);
+const repositoryField = requiredElement<HTMLDivElement>('#repository-field');
+const repositoryInput = requiredElement<HTMLInputElement>('#repository-name');
+const repositoryError = requiredElement<HTMLParagraphElement>('#repository-error');
+
+if (destinationInputs.length !== 2) {
+  throw new Error('Missing required repository destination options.');
+}
 
 const templateCreationUrl = new URL('https://github.com/new');
 templateCreationUrl.search = new URLSearchParams({
@@ -60,7 +72,7 @@ function requiredElementInRow<T extends HTMLElement>(row: HTMLElement, selector:
 function setProgress(stage: 1 | 2 | 3 | 4): void {
   const labels = {
     1: 'Stage 1 of 4: add pages',
-    2: 'Stage 2 of 4: create your repository',
+    2: 'Stage 2 of 4: set up your repository',
     3: 'Stage 3 of 4: run your GitHub Action',
     4: 'Stage 4 of 4: download your report'
   } as const;
@@ -105,6 +117,39 @@ function clearLaunchFeedback(): void {
   launchStatus.textContent = '';
   launchError.textContent = '';
   launchError.hidden = true;
+}
+
+function selectedDestination(): 'new' | 'existing' {
+  return destinationInputs.find((input) => input.checked)?.value === 'existing' ? 'existing' : 'new';
+}
+
+function clearRepositoryError(): void {
+  repositoryError.textContent = '';
+  repositoryError.hidden = true;
+  repositoryInput.removeAttribute('aria-invalid');
+  repositoryInput.removeAttribute('aria-errormessage');
+  repositoryInput.setAttribute('aria-describedby', 'repository-hint');
+  repositoryInput.setCustomValidity('');
+}
+
+function showRepositoryError(message: string): void {
+  repositoryInput.setAttribute('aria-invalid', 'true');
+  repositoryInput.setAttribute('aria-errormessage', 'repository-error');
+  repositoryInput.setAttribute('aria-describedby', 'repository-hint repository-error');
+  repositoryInput.setCustomValidity(message);
+  repositoryError.textContent = message;
+  repositoryError.hidden = false;
+  repositoryInput.focus();
+}
+
+function refreshDestination(): void {
+  const usesExistingRepository = selectedDestination() === 'existing';
+  repositoryField.hidden = !usesExistingRepository;
+  repositoryInput.disabled = !usesExistingRepository;
+  repositoryInput.required = usesExistingRepository;
+  launchButton.innerHTML = usesExistingRepository
+    ? 'Add audit to this repository <span aria-hidden="true">→</span>'
+    : 'Create my audit repository <span aria-hidden="true">→</span>';
 }
 
 function showActionError(message: string): void {
@@ -240,8 +285,9 @@ function prepareWorkflow(): void {
   resultTitle.focus({ preventScroll: true });
 }
 
-async function createAuditRepository(): Promise<void> {
+async function openRepositorySetup(): Promise<void> {
   clearLaunchFeedback();
+  clearRepositoryError();
   const targets = readTargets();
   if (!targets) return;
 
@@ -252,31 +298,57 @@ async function createAuditRepository(): Promise<void> {
     return;
   }
 
+  const destination = selectedDestination();
+  let destinationUrl = templateCreationUrl.href;
+  let clipboardValue = targets.map((target) => target.url).join('\n');
+
+  if (destination === 'existing') {
+    try {
+      const repository = normalizeGitHubRepository(repositoryInput.value);
+      currentWorkflow = buildWorkflow(targets);
+      clipboardValue = currentWorkflow;
+      destinationUrl = buildGitHubWorkflowEditorUrl(repository, currentWorkflow);
+    } catch (error) {
+      showRepositoryError(
+        error instanceof Error ? error.message : 'Check the GitHub repository and try again.'
+      );
+      return;
+    }
+  }
+
   setProgress(2);
   launchButton.disabled = true;
   launchButton.setAttribute('aria-busy', 'true');
   launchButton.textContent = 'Opening GitHub…';
   form.setAttribute('aria-busy', 'true');
-  launchStatus.textContent = `${targets.length} ${targets.length === 1 ? 'page' : 'pages'} checked. Preparing your GitHub repository.`;
+  launchStatus.textContent = `${targets.length} ${targets.length === 1 ? 'page' : 'pages'} checked. Preparing your GitHub setup.`;
 
   let navigating = false;
   try {
     if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable.');
-    await navigator.clipboard.writeText(targets.map((target) => target.url).join('\n'));
-    launchStatus.textContent = 'Page list copied. GitHub will ask you to confirm your new repository.';
+    await navigator.clipboard.writeText(clipboardValue);
+    launchStatus.textContent = destination === 'existing'
+      ? 'Workflow copied. GitHub will ask you to review and commit it.'
+      : 'Page list copied. GitHub will ask you to confirm your new repository.';
     navigating = true;
-    window.location.assign(templateCreationUrl.href);
+    window.location.assign(destinationUrl);
   } catch {
-    setProgress(1);
-    launchStatus.textContent = '';
-    launchError.textContent = 'Your browser blocked copying the page list. Use “Download a workflow instead” below, or allow clipboard access and try again.';
-    launchError.hidden = false;
-    launchError.focus();
+    if (destination === 'existing') {
+      launchStatus.textContent = 'GitHub will open the prepared workflow. If it is not prefilled, return here and use “Preview or download the workflow”.';
+      navigating = true;
+      window.location.assign(destinationUrl);
+    } else {
+      setProgress(1);
+      launchStatus.textContent = '';
+      launchError.textContent = 'Your browser blocked copying the page list. Use “Preview or download the workflow” below, or allow clipboard access and try again.';
+      launchError.hidden = false;
+      launchError.focus();
+    }
   } finally {
     if (!navigating) {
       launchButton.disabled = false;
       launchButton.removeAttribute('aria-busy');
-      launchButton.innerHTML = 'Create my audit repository <span aria-hidden="true">→</span>';
+      refreshDestination();
       form.removeAttribute('aria-busy');
     }
   }
@@ -284,10 +356,23 @@ async function createAuditRepository(): Promise<void> {
 
 form.addEventListener('submit', (event) => {
   event.preventDefault();
-  void createAuditRepository();
+  void openRepositorySetup();
 });
 
 buildWorkflowButton.addEventListener('click', prepareWorkflow);
+
+destinationInputs.forEach((input) => {
+  input.addEventListener('change', () => {
+    clearLaunchFeedback();
+    clearRepositoryError();
+    refreshDestination();
+  });
+});
+
+repositoryInput.addEventListener('input', () => {
+  clearRepositoryError();
+  clearLaunchFeedback();
+});
 
 addUrlButton.addEventListener('click', () => {
   if (getRows().length >= MAX_AUDIT_TARGETS) return;
@@ -341,4 +426,5 @@ copyButton.addEventListener('click', async () => {
 });
 
 downloadButton.addEventListener('click', downloadWorkflow);
+refreshDestination();
 refreshRows();

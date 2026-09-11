@@ -6,6 +6,12 @@ export interface AuditTarget {
   url: string;
 }
 
+export interface GitHubRepository {
+  name: string;
+  owner: string;
+  slug: string;
+}
+
 export const MAX_AUDIT_TARGETS = 20;
 
 export function normalizeTargetUrl(rawValue: string): AuditTarget {
@@ -59,6 +65,58 @@ export function normalizeTargetUrls(rawValues: string[]): AuditTarget[] {
   }
 
   return targets;
+}
+
+export function normalizeGitHubRepository(rawValue: string): GitHubRepository {
+  const trimmed = rawValue.trim();
+  if (!trimmed) throw new Error('Enter a GitHub repository URL or owner/name.');
+
+  let slug = trimmed;
+  if (/^https?:\/\//i.test(trimmed)) {
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      throw new Error('Enter a valid GitHub repository URL or owner/name.');
+    }
+
+    if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'github.com') {
+      throw new Error('Use a repository on github.com, such as owner/project.');
+    }
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+      throw new Error('Remove credentials, query parameters, or fragments from the repository URL.');
+    }
+
+    slug = parsed.pathname.replace(/^\/+|\/+$/g, '');
+  }
+
+  slug = slug.replace(/\.git$/i, '').replace(/^\/+|\/+$/g, '');
+  const parts = slug.split('/');
+  if (parts.length !== 2) {
+    throw new Error('Use only the repository URL or owner/name, without an extra file path.');
+  }
+
+  const owner = parts[0];
+  const name = parts[1];
+  if (!owner || !name) {
+    throw new Error('Enter a valid GitHub owner and repository name.');
+  }
+  const validOwner = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(owner);
+  const validName = name.length <= 100 && /^[A-Za-z0-9._-]+$/.test(name);
+  if (!validOwner || !validName) {
+    throw new Error('Enter a valid GitHub owner and repository name.');
+  }
+
+  return { owner, name, slug: `${owner}/${name}` };
+}
+
+export function buildGitHubWorkflowEditorUrl(repository: GitHubRepository, workflow: string): string {
+  const editorUrl = new URL(
+    `https://github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/new/HEAD`
+  );
+  editorUrl.searchParams.set('filename', '.github/workflows/accessibility-audit.yml');
+  editorUrl.searchParams.set('value', workflow);
+  return editorUrl.href;
 }
 
 export function buildWorkflow(targets: AuditTarget | AuditTarget[]): string {

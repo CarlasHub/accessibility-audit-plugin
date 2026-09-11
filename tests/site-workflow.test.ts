@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkflow, normalizeTargetUrl, normalizeTargetUrls } from '../site/workflow.js';
+import {
+  buildGitHubWorkflowEditorUrl,
+  buildWorkflow,
+  normalizeGitHubRepository,
+  normalizeTargetUrl,
+  normalizeTargetUrls
+} from '../site/workflow.js';
 
 describe('landing page workflow generator', () => {
   it('normalizes a public URL and derives its security boundary', () => {
@@ -41,5 +47,33 @@ describe('landing page workflow generator', () => {
   it('rejects duplicate and empty URL lists', () => {
     expect(() => normalizeTargetUrls([])).toThrow(/at least one/);
     expect(() => normalizeTargetUrls(['https://example.com', 'https://example.com/'])).toThrow(/duplicate/);
+  });
+
+  it('accepts an existing GitHub repository URL or owner/name without requesting account access', () => {
+    expect(normalizeGitHubRepository(' CarlasHub/example-project ')).toEqual({
+      owner: 'CarlasHub',
+      name: 'example-project',
+      slug: 'CarlasHub/example-project'
+    });
+    expect(normalizeGitHubRepository('https://github.com/CarlasHub/example-project.git')).toEqual({
+      owner: 'CarlasHub',
+      name: 'example-project',
+      slug: 'CarlasHub/example-project'
+    });
+  });
+
+  it('rejects non-GitHub hosts and file paths masquerading as repositories', () => {
+    expect(() => normalizeGitHubRepository('https://example.com/owner/project')).toThrow(/github.com/);
+    expect(() => normalizeGitHubRepository('owner/project/settings')).toThrow(/extra file path/);
+  });
+
+  it('opens GitHub’s workflow editor with the generated file prepared', () => {
+    const repository = normalizeGitHubRepository('CarlasHub/example-project');
+    const editorUrl = new URL(buildGitHubWorkflowEditorUrl(repository, 'name: Accessibility audit\n'));
+
+    expect(editorUrl.origin).toBe('https://github.com');
+    expect(editorUrl.pathname).toBe('/CarlasHub/example-project/new/HEAD');
+    expect(editorUrl.searchParams.get('filename')).toBe('.github/workflows/accessibility-audit.yml');
+    expect(editorUrl.searchParams.get('value')).toBe('name: Accessibility audit\n');
   });
 });

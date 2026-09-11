@@ -41,4 +41,13 @@ describe('public landing-page hosting', () => {
     expect(await exists('site/server.js')).toBe(false);
     expect(await exists('scripts/prepare-site-worker.mjs')).toBe(false);
   });
+
+  it('offers user-owned setup for both new and existing repositories', async () => {
+    const html = await readFile(path.join(repositoryRoot, 'site', 'index.html'), 'utf8');
+
+    expect(html).toContain('value="new" checked');
+    expect(html).toContain('value="existing"');
+    expect(html).toContain('id="repository-name"');
+    expect(html).toContain('No GitHub token or backend is used.');
+  });
 });
