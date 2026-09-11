@@ -50,7 +50,15 @@ describe('HTML accessibility report', () => {
         effort: 'Small',
         translationRequired: 'No'
       }],
-      manualChecks: [{ id: 'MAN-001', classification: 'manual', title: 'Screen reader flow', wcag: ['1.3.1'], procedure: 'Review reading order.', applicableTo: 'All pages' }],
+      manualChecks: [{
+        id: 'MAN-001',
+        classification: 'manual',
+        title: 'Screen reader flow',
+        wcag: ['1.3.1'],
+        procedure: 'Review reading order.',
+        applicableTo: 'All pages',
+        expectedEvidence: 'Page, screen reader, reading sequence, announcement, and verdict.'
+      }],
       limitations: ['Manual assistive-technology testing remains required.']
     };
 
@@ -63,6 +71,7 @@ describe('HTML accessibility report', () => {
     expect(html).toContain('screenshots/elements/button.png');
     expect(html).toContain('CarlasHub &lt;script&gt;alert(1)&lt;/script&gt;');
     expect(html).toContain('<strong>Source:</strong> direct input</span>');
+    expect(html).toContain('Page, screen reader, reading sequence, announcement, and verdict.');
     expect(html).not.toContain('direct input, direct input');
     expect(html).not.toContain('CarlasHub <script>alert(1)</script>');
     expect(html).not.toMatch(/https?:\/\/[^"']+\.(?:css|js)/i);

@@ -1,60 +1,83 @@
 import type { ManualCheck } from '../types.js';
 
-export const REQUIRED_MANUAL_CHECKS: ManualCheck[] = [
-  {
-    id: 'manual-keyboard-complete',
-    classification: 'manual',
-    title: 'Complete keyboard-only journey',
-    wcag: ['2.1.1', '2.1.2', '2.4.3', '2.4.7', '2.4.11'],
-    applicableTo: 'Every unique page template and interactive component state',
-    procedure: 'Use Tab, Shift+Tab, Enter, Space, and pattern-appropriate arrow keys without a pointer. Test Escape only for patterns that require or document it, such as dialogs and applicable menus or popovers; do not require it for an ordinary accordion or disclosure. Confirm logical order, operation, no trap, visible focus, and no focus obscuration.'
-  },
-  {
-    id: 'manual-screen-reader-combinations',
-    classification: 'manual',
-    title: 'Supported screen-reader and browser combinations',
-    wcag: ['1.3.1', '2.4.3', '2.4.6', '3.2.4', '4.1.2', '4.1.3'],
-    applicableTo: 'Navigation, forms, validation, search, tabs, dialogs, carousels, and dynamic status messages',
-    procedure: 'Run the agreed production screen-reader and browser combinations manually, including desktop and mobile assistive technologies. Confirm names, roles, states, values, reading order, focus, instructions, errors, and dynamic announcements.'
-  },
-  {
-    id: 'manual-zoom-reflow',
-    classification: 'manual',
-    title: 'Zoom, text resize, and reflow',
-    wcag: ['1.4.4', '1.4.10', '1.4.12'],
-    applicableTo: 'Every unique responsive template',
-    procedure: 'Verify 200% browser zoom, 400% reflow at 1280 CSS pixels, and the WCAG text-spacing overrides. Check that content and controls remain available without two-dimensional scrolling except permitted content.'
-  },
-  {
-    id: 'manual-contrast-states',
-    classification: 'manual',
-    title: 'Contrast in all component states',
-    wcag: ['1.4.3', '1.4.11', '2.4.7', '2.4.11'],
-    applicableTo: 'Text, icons, controls, validation, hover, focus, selected, disabled, and image backgrounds',
-    procedure: 'Measure foreground/background pairs in every state, including gradients and imagery that automated tools cannot resolve.'
-  },
-  {
-    id: 'manual-content-meaning',
-    classification: 'manual',
-    title: 'Content meaning and alternatives',
-    wcag: ['1.1.1', '1.2.1', '1.2.2', '1.2.3', '1.2.5', '2.4.4', '2.4.6', '3.1.2'],
-    applicableTo: 'Images, icons, video/audio, headings, labels, link text, and language changes',
-    procedure: 'Confirm alternatives communicate the same purpose in context, captions and descriptions are accurate, headings/labels are descriptive, and language changes are identified.'
-  },
-  {
-    id: 'manual-cognitive-and-consistency',
-    classification: 'manual',
-    title: 'Consistency, error prevention, and cognitive checks',
-    wcag: ['3.2.3', '3.2.4', '3.2.6', '3.3.1', '3.3.3', '3.3.7', '3.3.8'],
-    applicableTo: 'Repeated navigation, help, authentication, and data-entry flows',
-    procedure: 'Confirm consistent order and naming, findable help, understandable errors and suggestions, redundant-entry handling, and accessible authentication.'
-  },
-  {
-    id: 'manual-mobile-device',
-    classification: 'manual',
-    title: 'Physical mobile and touch testing',
-    wcag: ['1.3.4', '2.5.1', '2.5.2', '2.5.4', '2.5.7', '2.5.8'],
-    applicableTo: 'Responsive navigation, touch controls, drag interactions, and orientation changes',
-    procedure: 'Test portrait and landscape on physical devices with touch and mobile screen readers. Confirm alternatives to multipoint, path-based, motion, and dragging gestures and assess target-spacing exceptions.'
-  }
+type CriterionCheck = [
+  criterion: string,
+  title: string,
+  applicableTo: string,
+  procedure: string,
+  expectedEvidence: string
 ];
+
+const criterionChecks: CriterionCheck[] = [
+  ['1.1.1', 'Non-text Content', 'Images, icons, charts, controls, CAPTCHA, and decorative content', 'Inspect every meaningful and decorative non-text item in context. Confirm that text alternatives convey the same purpose, complex content has an equivalent explanation, controls are named, and decorative content is ignored by assistive technology.', 'Representative item inventory, accessible-name or alternative text captured, purpose comparison, exceptions, and verdict.'],
+  ['1.2.1', 'Audio-only and Video-only (Prerecorded)', 'Prerecorded audio-only and video-only media', 'For prerecorded audio-only content, verify an equivalent transcript. For prerecorded video-only content, verify an equivalent transcript or audio track, unless the media is itself a clearly labelled text alternative.', 'Media URL, format, transcript or audio-alternative location, equivalence notes, exception if any, and verdict.'],
+  ['1.2.2', 'Captions (Prerecorded)', 'Prerecorded synchronised media with audio', 'Play each prerecorded synchronised media item and verify captions include dialogue and important non-speech information, remain synchronised, identify speakers where needed, and are accurate, unless the media is itself a clearly labelled text alternative.', 'Media URL, sampled timestamps, caption observations, exception if any, and verdict.'],
+  ['1.2.3', 'Audio Description or Media Alternative (Prerecorded)', 'Prerecorded synchronised media', 'Verify that important visual information not available from the soundtrack is provided through audio description or a complete media alternative, unless the media is itself a clearly labelled text alternative.', 'Media URL, important visual events sampled, description or alternative location, exception if any, and verdict.'],
+  ['1.2.4', 'Captions (Live)', 'Live synchronised media', 'Observe representative live media and confirm captions are available for all spoken dialogue and important audio information with usable accuracy and latency.', 'Live event or stream, date and duration sampled, caption accuracy and latency notes, and verdict.'],
+  ['1.2.5', 'Audio Description (Prerecorded)', 'Prerecorded video in synchronised media', 'Play each prerecorded video and confirm an audio description track communicates important visual information during available pauses, unless that information is already present in the main audio.', 'Media URL, sampled visual events and timestamps, audio-description track or integrated-description notes, and verdict.'],
+  ['1.3.1', 'Info and Relationships', 'Headings, regions, lists, tables, forms, groups, emphasis, and visual relationships', 'Compare the visual structure with the accessibility tree and source semantics. Confirm that information, structure, and relationships are programmatically determined or available in text, including labels, instructions, table headers, groups, and landmarks.', 'Page and component, visual relationship, exposed semantic relationship, accessibility-tree or code evidence, and verdict.'],
+  ['1.3.2', 'Meaningful Sequence', 'Content whose presentation order affects meaning', 'Read content in DOM and screen-reader order with styles reduced where useful. Confirm the programmatic sequence preserves meaning and operation at every responsive state.', 'Page and viewport, expected sequence, observed DOM or reading sequence, exception if any, and verdict.'],
+  ['1.3.3', 'Sensory Characteristics', 'Instructions that refer to shape, colour, size, visual location, orientation, or sound', 'Review instructions and cues. Confirm understanding and operation do not rely only on sensory characteristics such as “the red button”, “on the right”, shape, position, or sound.', 'Instruction text, sensory reference, additional non-sensory cue, affected task, and verdict.'],
+  ['1.3.4', 'Orientation', 'Responsive pages and components on supported mobile devices', 'Test portrait and landscape orientations on physical devices or equivalent emulation. Confirm content and operation are not restricted to one orientation unless a specific orientation is essential.', 'Device and browser, both orientations, screenshots or observations, essential exception if any, and verdict.'],
+  ['1.3.5', 'Identify Input Purpose', 'Inputs collecting information about the user', 'Inspect eligible personal-data fields and confirm their purposes are programmatically identified using valid autocomplete tokens or another accessibility-supported mechanism.', 'Form and field, visible label, programmatic purpose or autocomplete token, applicability, and verdict.'],
+  ['1.4.1', 'Use of Color', 'Text, links, states, validation, charts, and controls using colour', 'Review every state and data visualisation without relying on colour perception. Confirm colour is not the only visual means of conveying information, prompting a response, indicating an action, or distinguishing an element.', 'Component and state, colour cue, additional text, icon, pattern, or shape cue, and verdict.'],
+  ['1.4.2', 'Audio Control', 'Audio that starts automatically', 'Load pages with audio enabled. If audio plays automatically for more than three seconds, confirm a keyboard-accessible pause/stop control or independent volume control is available.', 'Page, autoplay duration, pause/stop or volume control result, keyboard result, and verdict.'],
+  ['1.4.3', 'Contrast (Minimum)', 'Text and images of text in every state and background', 'Measure rendered foreground and background colours, including hover, focus, selected, validation, gradients, and imagery. Confirm at least 4.5:1 for normal text and 3:1 for large text, applying only the permitted exceptions.', 'Text sample and state, font size and weight, foreground/background values, measured ratio, exception if any, and verdict.'],
+  ['1.4.4', 'Resize Text', 'Every unique responsive template and text-bearing component', 'Resize text to 200% without assistive technology and complete representative tasks. Confirm no loss of content or functionality, except for captions and images of text.', 'Page, browser and settings, task, lost or overlapping content observations, screenshots, and verdict.'],
+  ['1.4.5', 'Images of Text', 'Images containing text', 'Inspect images and CSS backgrounds that contain text. Confirm actual text is used whenever the required visual presentation can be achieved with supported technologies, allowing only essential presentation and logos.', 'Image location, transcribed text, reason an image is used, essential or logo exception if any, and verdict.'],
+  ['1.4.10', 'Reflow', 'Every unique responsive page and component', 'At 1280 by 1024 CSS pixels, zoom to 400% or test an equivalent 320 CSS-pixel-wide viewport; also test 256 CSS-pixel height for horizontal content. Confirm content and functionality work without two-dimensional scrolling except where a two-dimensional layout is essential.', 'Page, viewport and zoom, horizontal/vertical overflow observations, essential-content exception if any, screenshots, and verdict.'],
+  ['1.4.11', 'Non-text Contrast', 'Controls, states, focus indicators, icons, charts, and meaningful graphics', 'Measure adjacent colours needed to identify user-interface components, states, and graphical objects. Confirm at least 3:1 contrast, applying the inactive, user-agent, unmodified, or essential exceptions correctly.', 'Component and state, adjacent colours, measured ratio, exception if any, and verdict.'],
+  ['1.4.12', 'Text Spacing', 'All pages with authored text styling', 'Apply line height 1.5 times font size, paragraph spacing 2 times, letter spacing 0.12 times, and word spacing 0.16 times. Confirm no content or functionality is lost.', 'Page, override method, affected component, clipping/overlap observations, screenshots, and verdict.'],
+  ['1.4.13', 'Content on Hover or Focus', 'Tooltips, menus, popovers, and other additional content triggered by hover or focus', 'Trigger additional content with pointer hover and keyboard focus. Confirm it is dismissible without moving focus or pointer, hoverable when the pointer can enter it, and persistent until dismissed, invalid, or no longer triggered, applying permitted exceptions.', 'Trigger and content, keyboard/pointer method, dismissible/hoverable/persistent results, exception if any, and verdict.'],
+  ['2.1.1', 'Keyboard', 'Every interactive component and representative user journey', 'Operate all functionality with a keyboard interface using Tab, Shift+Tab, Enter, Space, and pattern-appropriate keys. Confirm operation does not require specific timing for individual keystrokes unless the function depends on the path of movement rather than endpoints.', 'Page, journey and component, keys used, expected and actual behaviour, path-dependent exception if any, and verdict.'],
+  ['2.1.2', 'No Keyboard Trap', 'Every component that can receive keyboard focus', 'Enter and leave each interactive region using only the keyboard. Confirm focus is never trapped; if a non-standard exit method is essential, verify the user is told how to use it.', 'Component, entry and exit sequence, focus trace, escape instruction if applicable, and verdict.'],
+  ['2.1.4', 'Character Key Shortcuts', 'Single-character shortcuts active on the page', 'Identify shortcuts using letters, punctuation, numbers, or symbols without modifiers. Confirm each can be turned off, remapped to include a non-printing key, or is active only while its relevant component has focus.', 'Shortcut inventory, scope, disable/remap/focus-only result, settings screenshot if relevant, and verdict.'],
+  ['2.2.1', 'Timing Adjustable', 'Sessions, forms, dialogs, carousels, and tasks with time limits', 'Identify every content time limit. Confirm users can turn it off, adjust it to at least ten times the default, or extend it after a warning with at least 20 seconds to respond, unless a listed real-time, essential, or longer-than-20-hours exception applies.', 'Time limit and default, warning timing, adjustment or extension result, exception rationale if any, and verdict.'],
+  ['2.2.2', 'Pause, Stop, Hide', 'Moving, blinking, scrolling, or auto-updating content', 'For moving, blinking, or scrolling content that starts automatically, lasts over five seconds, and runs alongside other content, verify a pause, stop, or hide control. For auto-updating content, verify pause, stop, hide, or update-frequency control unless essential.', 'Content and duration, simultaneous content, control and keyboard result, essential exception if any, and verdict.'],
+  ['2.3.1', 'Three Flashes or Below Threshold', 'Video, animation, games, advertising, and scripted visual effects', 'Review all flashing content and use an appropriate flash-analysis tool where flashing may approach the threshold. Confirm no content flashes more than three times in any one-second period or that it remains below the general and red-flash thresholds.', 'Content and time range, flashes per second or analysis-tool result, threshold evidence, and verdict.'],
+  ['2.4.1', 'Bypass Blocks', 'Pages sharing repeated navigation or other repeated content', 'Using keyboard and screen reader navigation, confirm a mechanism such as a working skip link, landmarks, or headings lets users bypass repeated blocks and reach main content efficiently.', 'Page/template, bypass mechanism, keyboard and screen-reader result, target reached, and verdict.'],
+  ['2.4.2', 'Page Titled', 'Every audited document and route, including client-side route changes', 'Inspect the document title before and after navigation. Confirm it identifies the page topic or purpose and updates appropriately for route or context changes.', 'URL or route, observed title, expected topic or purpose, update behaviour, and verdict.'],
+  ['2.4.3', 'Focus Order', 'Every focusable component and dynamic interaction', 'Traverse with keyboard and exercise dialogs, menus, validation, updates, and responsive states. Confirm focus follows a sequence that preserves meaning and operability and moves predictably when content changes.', 'Page and journey, ordered focus trace, dynamic focus transitions, discrepancy if any, and verdict.'],
+  ['2.4.4', 'Link Purpose (In Context)', 'Links in navigation, body content, cards, tables, and repeated components', 'Review each link with its programmatically determined context. Confirm its purpose can be understood from the link text alone or together with that context, except where the purpose is ambiguous to users generally.', 'Link text, accessible name, programmatic context, destination or action, ambiguity exception if any, and verdict.'],
+  ['2.4.5', 'Multiple Ways', 'Pages within a set of web pages', 'Confirm users can locate each page through at least two mechanisms, such as navigation, search, sitemap, table of contents, or related links, except where the page is a step in or result of a process.', 'Page set, target page, two locating mechanisms, process exception if any, and verdict.'],
+  ['2.4.6', 'Headings and Labels', 'Headings and labels throughout each page and flow', 'Review headings and labels in context. Confirm they describe the topic or purpose of the content or control they identify.', 'Heading or label, associated content/control, purpose comparison, duplicate-context notes, and verdict.'],
+  ['2.4.7', 'Focus Visible', 'All keyboard-operable controls and links in every state', 'Navigate using the keyboard across supported browsers and themes. Confirm every keyboard-operable control displays a visible focus indicator whenever it receives focus.', 'Component and state, browser/theme, focus indicator description or screenshot, and verdict.'],
+  ['2.4.11', 'Focus Not Obscured (Minimum)', 'Focused components with sticky, fixed, modal, or overlapping authored content', 'Move focus through pages, overlays, sticky headers, cookie banners, and responsive states. Confirm the focused component is not entirely hidden by author-created content at its initial focus position.', 'Page, focused component, viewport, overlapping content, screenshot, exception if any, and verdict.'],
+  ['2.5.1', 'Pointer Gestures', 'Multipoint or path-based pointer interactions', 'Identify pinch, swipe, drawing, and other multipoint or path-based gestures. Confirm every function also works with a single pointer without a path-based gesture unless the gesture is essential.', 'Gesture and function, single-pointer alternative, essential exception if any, device, and verdict.'],
+  ['2.5.2', 'Pointer Cancellation', 'Controls and interactions operated by a single pointer', 'Test mouse and touch activation. Confirm the down-event does not complete the function, or users can abort/undo it, reverse before completion, or the down-event is essential.', 'Component, input device, down/up behaviour, abort or undo result, essential exception if any, and verdict.'],
+  ['2.5.3', 'Label in Name', 'Controls with visible text labels or text in images', 'Compare each visible label with the programmatic accessible name. Confirm the accessible name contains the visible label text, preferably beginning with it, while accounting for equivalent handling of symbols.', 'Component, exact visible label, computed accessible name, comparison, and verdict.'],
+  ['2.5.4', 'Motion Actuation', 'Functions triggered by device or user motion', 'Identify shake, tilt, camera gesture, or other motion-triggered functions. Confirm each has a user-interface alternative and motion response can be disabled unless motion is essential or used through an accessibility-supported interface.', 'Motion function, interface alternative, disable setting, device, exception if any, and verdict.'],
+  ['2.5.7', 'Dragging Movements', 'Drag-and-drop, sliders, maps, reorder, resize, and other dragging interactions', 'Complete every dragging function with mouse and touch, then confirm a single-pointer alternative operates it without dragging unless dragging is essential.', 'Dragging function, non-drag alternative, input device, essential exception if any, and verdict.'],
+  ['2.5.8', 'Target Size (Minimum)', 'Pointer targets in all responsive states', 'Measure targets or the spacing circle around undersized targets. Confirm each target is at least 24 by 24 CSS pixels or satisfies a permitted spacing, equivalent-control, inline, user-agent, or essential exception.', 'Target and viewport, rendered size and spacing measurement, exception if any, screenshot, and verdict.'],
+  ['3.1.1', 'Language of Page', 'Every audited HTML page or document', 'Inspect the programmatically determined default human language and compare it with the page content. Confirm a valid language is exposed to assistive technology.', 'URL, predominant language, programmatic language value, accessibility-tree or code evidence, and verdict.'],
+  ['3.1.2', 'Language of Parts', 'Passages and phrases whose language differs from the page default', 'Review multilingual content and confirm language changes are programmatically identified, excluding proper names, technical terms, words of indeterminate language, and words adopted into the surrounding language.', 'Passage, expected language, programmatic language value, exception if any, and verdict.'],
+  ['3.2.1', 'On Focus', 'All focusable components', 'Move focus to each component without activating it. Confirm receiving focus alone does not initiate an unexpected change of context such as navigation, a new window, major content replacement, or focus relocation.', 'Component, focus method, observed context before/after, expected behaviour, and verdict.'],
+  ['3.2.2', 'On Input', 'Forms, selectors, toggles, and editable controls', 'Change each control value without an explicit submit action. Confirm input alone does not cause an unexpected change of context unless users were advised before using the component.', 'Control, input change, resulting context change, prior advisory text if any, and verdict.'],
+  ['3.2.3', 'Consistent Navigation', 'Navigation mechanisms repeated across pages in the set', 'Compare repeated navigation across representative pages and states. Confirm mechanisms occur in the same relative order unless the user initiates a change.', 'Page set, navigation inventory and order, user-initiated variation if any, and verdict.'],
+  ['3.2.4', 'Consistent Identification', 'Components with the same function across the page set', 'Compare repeated controls, links, icons, and components. Confirm components with the same functionality are identified consistently in visible text and accessible names.', 'Component instances, function, visible labels and accessible names, inconsistency if any, and verdict.'],
+  ['3.2.6', 'Consistent Help', 'Help mechanisms repeated across pages in the set', 'Inventory human contact details, human contact mechanisms, self-help, and automated contact mechanisms repeated across pages. Confirm they appear in the same relative order unless users initiate a change.', 'Page set, help mechanisms and relative order, user-initiated variation if any, and verdict.'],
+  ['3.3.1', 'Error Identification', 'Forms and tasks with detectable input errors', 'Submit empty, invalid, and boundary values. Confirm every automatically detected error identifies the item in error and describes the error in text.', 'Form and field, test value, error identification and text, programmatic association, and verdict.'],
+  ['3.3.2', 'Labels or Instructions', 'Inputs requiring user information or action', 'Review and operate each input. Confirm labels or instructions are provided when content requires user input, including format, required status, constraints, and grouping where necessary.', 'Field or task, required information, visible label/instruction, association, and verdict.'],
+  ['3.3.3', 'Error Suggestion', 'Forms where an input error is automatically detected and a correction is known', 'Trigger each known validation error. Confirm a specific correction suggestion is provided unless it would jeopardise security or the content purpose.', 'Field, invalid value, detected error, correction suggestion, security/purpose exception if any, and verdict.'],
+  ['3.3.4', 'Error Prevention (Legal, Financial, Data)', 'Legal commitments, financial transactions, user-controlled data changes/deletions, and test responses', 'Complete representative high-consequence submissions. Confirm the action is reversible, checked for input errors with correction opportunity, or reviewed and confirmed before final submission.', 'Transaction or task, consequence, reversal/check/confirmation mechanism, tested result, and verdict.'],
+  ['3.3.7', 'Redundant Entry', 'Multi-step processes requiring previously entered information', 'Complete representative processes and note repeated requests for the same information. Confirm earlier information is auto-populated or selectable unless re-entry is essential, required for security, or the information is no longer valid.', 'Process and repeated field, earlier value source, auto-populate/select result, exception if any, and verdict.'],
+  ['3.3.8', 'Accessible Authentication (Minimum)', 'Authentication steps in login, registration, recovery, and sensitive actions', 'Complete each authentication process without relying on a cognitive-function test such as memorising, transcribing, or solving, unless an alternative, assistance mechanism, object recognition, or user-provided non-text content method satisfies the criterion.', 'Authentication flow, cognitive demand, alternative or assistance mechanism, password-manager/copy-paste result, exception if any, and verdict.'],
+  ['4.1.2', 'Name, Role, Value', 'Custom and native user-interface components', 'Inspect the accessibility tree and operate each component. Confirm names and roles are programmatically determined, user-settable states and values are exposed, and changes are available to assistive technology.', 'Component, computed name/role/state/value before and after operation, assistive-technology result, and verdict.'],
+  ['4.1.3', 'Status Messages', 'Dynamic success, error, loading, progress, result-count, and cart/status updates', 'Trigger status messages without moving focus. Confirm assistive technology can determine and announce the message through an appropriate role or live region without receiving focus.', 'Trigger, message text, role/live setting, screen-reader announcement and timing, focus result, and verdict.']
+];
+
+export const REQUIRED_MANUAL_CHECKS: ManualCheck[] = criterionChecks.map(([
+  criterion,
+  title,
+  applicableTo,
+  procedure,
+  expectedEvidence
+]) => ({
+  id: `manual-wcag-${criterion.replaceAll('.', '-')}`,
+  classification: 'manual',
+  title: `${criterion} ${title}`,
+  wcag: [criterion],
+  applicableTo,
+  procedure,
+  expectedEvidence
+}));

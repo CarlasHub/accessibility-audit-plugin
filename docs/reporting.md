@@ -8,7 +8,7 @@ Every audit writes two human-readable formats. Open the self-contained HTML repo
 2. **Page Inventory:** review every requested URL, its audit state, completed viewports, consent handling, runtime errors, and notes.
 3. **Findings:** triage confirmed findings, investigate review items, and resolve blockers.
 4. **Evidence:** trace screenshots and other evidence back to a finding, page, viewport, rule, component, and technical locator.
-5. **Manual Checks:** assign and record the guided checks that automation cannot complete.
+5. **Manual Checks:** complete all 55 A/AA criterion-specific procedures and record the requested evidence, explicit verdict, and reviewer notes; use `Not applicable` only with a reason.
 6. **WCAG 2.2 Reference:** use the criterion, level, title, and Understanding link as a reporting aid.
 7. **WCAG Criteria:** review every WCAG 2.2 success criterion, its AA-target or AAA-advisory scope, evidence status, mapped finding ids, automated evidence, explanation, and Understanding link.
 

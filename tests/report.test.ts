@@ -26,7 +26,15 @@ function summaryWithScreenshot(screenshot: string): AuditSummary {
         detail: '<img src="logo.png">', screenshot
       }], assignment: 'Content', effort: 'Small', translationRequired: 'Review'
     }],
-    manualChecks: [{ id: 'manual-image-purpose', classification: 'manual', title: 'Confirm image purpose', wcag: ['1.1.1'], applicableTo: 'Images', procedure: 'Confirm the text alternative conveys the image purpose.' }],
+    manualChecks: [{
+      id: 'manual-image-purpose',
+      classification: 'manual',
+      title: 'Confirm image purpose',
+      wcag: ['1.1.1'],
+      applicableTo: 'Images',
+      procedure: 'Confirm the text alternative conveys the image purpose.',
+      expectedEvidence: 'Page, image, text alternative, context, and verdict.'
+    }],
     limitations: ['Not a conformance certification.']
   };
 }
@@ -74,6 +82,10 @@ describe('Excel report', () => {
     expect(auditSummary.getCell('B6').value).toBe('Test Auditor');
     expect(auditSummary.getCell('B8').value).toEqual(expect.objectContaining({ text: 'https://careers.qa.example.org/en', hyperlink: 'https://careers.qa.example.org/en' }));
     expect(auditSummary.getCell('E4').value).toBe(1);
+
+    const manualChecks = workbook.getWorksheet('Manual Checks')!;
+    expect(manualChecks.getCell('F5').value).toBe('Not tested');
+    expect(manualChecks.getCell('G5').value).toBe('Record: Page, image, text alternative, context, and verdict.');
   });
 
   it('uses readable fallback values for advisory criteria absent from the WCAG reference', async () => {

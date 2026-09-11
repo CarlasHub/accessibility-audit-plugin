@@ -1,6 +1,6 @@
 {
   "name": "accessibility-audit-plugin",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "private": true,
   "description": "Cross-platform Codex, Claude Code, Claude Desktop, Cursor, and GitHub Copilot plugin for structured WCAG 2.2 accessibility audits.",
   "author": {
@@ -77,7 +77,7 @@
     "test:screen-reader:voiceover": "cross-env A11Y_SCREEN_READER=voiceover playwright test -c playwright.screen-reader.config.ts tests/screen-reader/voiceover.spec.ts",
     "test:screen-reader:nvda": "cross-env A11Y_SCREEN_READER=nvda playwright test -c playwright.screen-reader.config.ts tests/screen-reader/nvda.spec.ts",
     "test:action": "node scripts/smoke-action-bundle.mjs",
-    "test:buggyland": "node scripts/verify-buggyland-regression.mjs",
+    "test:buggyland": "node scripts/run-buggyland-regression.mjs",
     "test:buggyland:live": "node scripts/run-buggyland-regression.mjs",
     "test:watch": "vitest",
     "audit": "npm run build --silent && node dist/cli.js audit",

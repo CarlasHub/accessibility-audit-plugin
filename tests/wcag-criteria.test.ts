@@ -13,6 +13,20 @@ describe('WCAG 2.2 criterion ledger', () => {
     expect(ledger.every((entry) => entry.understandingUrl.startsWith('https://www.w3.org/WAI/WCAG22/Understanding/'))).toBe(true);
   });
 
+  it('provides a dedicated human procedure and evidence prompt for every A/AA criterion', () => {
+    const expected = buildWcagCriterionLedger([], [], [], false)
+      .filter((entry) => entry.level !== 'AAA')
+      .map((entry) => entry.criterion);
+    const mapped = REQUIRED_MANUAL_CHECKS.flatMap((check) => check.wcag);
+
+    expect(expected).toHaveLength(55);
+    expect(REQUIRED_MANUAL_CHECKS).toHaveLength(55);
+    expect(mapped).toHaveLength(55);
+    expect(new Set(mapped)).toEqual(new Set(expected));
+    expect(REQUIRED_MANUAL_CHECKS.every((check) => check.wcag.length === 1)).toBe(true);
+    expect(REQUIRED_MANUAL_CHECKS.every((check) => Boolean(check.procedure && check.expectedEvidence))).toBe(true);
+  });
+
   it('keeps AAA outside the AA target unless advisory checks are enabled', () => {
     const standard = buildWcagCriterionLedger([], [], REQUIRED_MANUAL_CHECKS, false);
     const advisory = buildWcagCriterionLedger([], [], REQUIRED_MANUAL_CHECKS, true);

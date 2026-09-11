@@ -18,6 +18,12 @@ You do not need to know WCAG terminology to run the plugin. Start with the workf
 
 > **Important:** this plugin is an automated testing aid, not a WCAG certification. A report with no automated findings does not prove that a page is accessible. Screen-reader, physical-device, content-meaning, visual-judgment, and other guided checks remain manual. W3C likewise states that no evaluation tool alone can determine whether a site meets accessibility standards.
 
+## WCAG 2.2 Level AA coverage
+
+Every new report accounts for all **55 active WCAG 2.2 Level A and Level AA success criteria**. Each criterion has its own human-verification procedure and evidence prompt in the HTML report and `Manual Checks` worksheet, alongside the criterion ledger and any automated evidence. A criterion is never marked as passed merely because automation found nothing, and the removed WCAG 4.1.1 criterion is not treated as active.
+
+This is complete criteria coverage, not automatic certification. The final verdict still requires a qualified reviewer to complete the applicable procedures across the agreed pages, states, responsive variations, processes, browsers, devices, and assistive technologies. The 31 Level AAA criteria remain optional advisory coverage.
+
 The audit protects review quality as well as coverage. It separates confirmed failures, review candidates, and coverage blockers; suppresses responsive evidence when a modal prevents a valid interaction test; ignores intentionally visually hidden assistive text in clipping checks; and consolidates repeated evidence across viewports and test states. The workbook uses severity and evidence-status colours for triage, but every status is also written as text so colour is never the only cue.
 
 ## GitHub Actions: start-to-results tutorial
@@ -26,7 +32,7 @@ The audit protects review quality as well as coverage. It separates confirmed fa
 
 [Watch or download the complete captioned walkthrough](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.3.1/A11y_Test_Cases_GitHub_Actions_Tutorial.mp4). It starts in a separate repository, creates the workflow, runs it from the Actions tab, follows the job, downloads the artifact, and opens both report formats. You can also follow the [click-by-click written tutorial](docs/a11y-test-cases-github-actions-tutorial.md), read the [video transcript](docs/a11y-test-cases-github-actions-tutorial-transcript.md), inspect the [successful public run](https://github.com/CarlasHub/a11y-test-cases/actions/runs/34448319858), or download the permanent [HTML report](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.1/Accessibility_Audit_Report.html) and [Excel workbook](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.1/Accessibility_Audit_Report.xlsx).
 
-The demonstrated audit of [A11y Test Cases](https://carlashub.github.io/a11y-test-cases/) completed one page and produced 52 findings: 51 confirmed and 1 requiring review, plus 7 guided manual checks. No secret or paid marketplace installation is required for a public URL.
+The demonstrated audit of [A11y Test Cases](https://carlashub.github.io/a11y-test-cases/) completed one page and produced 52 findings: 51 confirmed and 1 requiring review, plus the 7 grouped manual checks used by that historical release. Current reports replace those groups with 55 criterion-specific checks. No secret or paid marketplace installation is required for a public URL.
 
 ## BuggyLand benchmark and v1.3.1 regression gate
 
@@ -36,7 +42,7 @@ The demonstrated audit of [A11y Test Cases](https://carlashub.github.io/a11y-tes
 
 The two [BuggyLand](https://carlashub.github.io/buggyland/) pages declare 172 intentional failure fixtures across all 86 active WCAG 2.2 success criteria. The historical v1.2.0 walkthrough produced 70 consolidated machine results: 52 confirmed failures and 18 items for review, with zero execution errors. Those numbers should not match: automated rules inspect rendered behaviour, consolidate repeated evidence, and cannot decide every WCAG requirement. The [benchmark evidence guide](docs/buggyland-benchmark.md) provides the complete criteria matrix, fixture inventory, downloadable enhanced workbook, raw JSON, and manual verification plan.
 
-The v1.3.1 release gate is stricter. It audits four page and fragment states at desktop, mobile, and 320px reflow sizes, then repeats the complete run to detect unstable results. Its reviewed baseline is 66 consolidated records: 32 confirmed failures, 33 items for review, and 1 interaction blocker, plus 7 guided manual checks. Two blocked `#special` states remain visibly partial instead of being reported as passes. The exact baseline is enforced by the [regression fixture](tests/fixtures/buggyland-regression.json) and the [scheduled public workflow](.github/workflows/buggyland-regression.yml).
+The current v1.5.0 release gate audits four page and fragment states at desktop, mobile, and 320px reflow sizes, then repeats the complete run to detect unstable results. Its reviewed baseline is 60 consolidated records: 32 confirmed failures, 27 items for review, and 1 interaction blocker, plus all 55 A/AA criterion-specific checks. The earlier v1.3.1 baseline contained 66 records; v1.4.1 removed six duplicate or unreliable review signals without suppressing confirmed failures. Two blocked `#special` states remain visibly partial instead of being reported as passes. The exact machine-result baseline is enforced by the [regression fixture](tests/fixtures/buggyland-regression.json) and the [scheduled public workflow](.github/workflows/buggyland-regression.yml).
 
 For a client-neutral example, [watch the sanitised plugin demonstration](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4) or read its [transcript](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/accessibility-audit-demo-transcript.md).
 
@@ -394,7 +400,7 @@ Workbook worksheets:
 - `Findings` — a 25-field remediation register covering evidence confidence, workflow status, severity, WCAG mapping, affected scope, user impact, reproducible results, recommendation, ownership, effort, and screenshot evidence.
 - `Page Inventory` — every requested URL with audit state, planned and completed viewports, consent handling, runtime errors, and notes.
 - `Evidence` — portable evidence paths linked to their finding, page, viewport, rule, component, locator, evidence type, and detail.
-- `Manual Checks` — guided procedures, applicability, status, and reviewer notes for checks automation cannot complete.
+- `Manual Checks` — one row for each of the 55 active A/AA criteria, with a criterion-specific procedure, applicability, evidence prompt, status, and reviewer notes.
 - `WCAG 2.2 Reference` — visible criterion, level, title, and W3C Understanding links used to enrich findings.
 - `WCAG Criteria` — generated criterion-by-criterion AA and optional AAA-advisory status ledger with finding links, automated evidence, limitations, and W3C Understanding links.
 

@@ -2,6 +2,19 @@
 
 Automation does not complete a WCAG 2.2 A/AA evaluation. Use this guide after every run and record each applicable procedure as `Pass`, `Fail`, `Not applicable` with a reason, or `Not tested`. Do not report an unperformed check as passed.
 
+## Coverage contract
+
+Every generated report contains one criterion-specific human-verification row for each of the 55 active WCAG 2.2 Level A and AA success criteria:
+
+- Perceivable: `1.1.1`; `1.2.1`–`1.2.5`; `1.3.1`–`1.3.5`; `1.4.1`–`1.4.5`; and `1.4.10`–`1.4.13`.
+- Operable: `2.1.1`, `2.1.2`, `2.1.4`; `2.2.1`, `2.2.2`; `2.3.1`; `2.4.1`–`2.4.7`, `2.4.11`; and `2.5.1`–`2.5.4`, `2.5.7`, `2.5.8`.
+- Understandable: `3.1.1`, `3.1.2`; `3.2.1`–`3.2.4`, `3.2.6`; and `3.3.1`–`3.3.4`, `3.3.7`, `3.3.8`.
+- Robust: `4.1.2`, `4.1.3`.
+
+WCAG 4.1.1 is excluded because WCAG 2.2 removed it. The 31 Level AAA criteria are advisory and do not change the Level AA target.
+
+The row proves that the criterion was accounted for; it does not prove the procedure was performed. Record the requested evidence and an explicit verdict for every row. Use `Not applicable` only with a criterion-specific reason and `Not tested` whenever the required page, state, journey, technology, device, content, or reviewer was not assessed. Automated evidence may support the decision, but absence of a finding never supplies a pass.
+
 ## First validate the generated evidence
 
 1. Confirm the workbook auditor, landing-page QA URL, and requested URL scope.

@@ -355,7 +355,7 @@ function populateManualChecks(worksheet: Worksheet, summary: AuditSummary): void
       check.applicableTo,
       check.procedure,
       'Not tested',
-      ''
+      check.expectedEvidence ? `Record: ${check.expectedEvidence}` : 'Record the tested scope, method, result, evidence, and reviewer verdict.'
     ], template);
   });
   worksheet.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(5, summary.manualChecks.length + 4), column: 7 } };

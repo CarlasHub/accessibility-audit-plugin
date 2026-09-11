@@ -8,6 +8,8 @@ Web accessibility means people with disabilities can perceive, understand, navig
 
 WCAG is the Web Content Accessibility Guidelines published by the World Wide Web Consortium (W3C). This plugin targets testable evidence related to WCAG 2.2 Level A and Level AA.
 
+The report explicitly accounts for all 55 active Level A and AA success criteria. It supplies one human-verification procedure and evidence prompt per criterion because complete criteria coverage cannot be reduced to automated rule coverage. WCAG 4.1.1 is not included because it was removed in WCAG 2.2; the 31 active Level AAA criteria are optional advisory coverage.
+
 WCAG is organized around four principles:
 
 - **Perceivable:** users can obtain the information, for example through text alternatives, captions, adaptable structure, and sufficient contrast.

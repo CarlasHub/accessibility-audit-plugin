@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.0 - 2026-09-11
+
+- Added a criterion-specific human verification procedure and evidence prompt for every one of the 55 active WCAG 2.2 Level A and AA success criteria.
+- Exposed those evidence requirements in the accessible HTML report and validated Excel workbook, with every human verdict remaining `Not tested` until an auditor records a decision.
+- Added a coverage contract that rejects missing, duplicate, or underspecified A/AA procedures and clarified throughout the documentation and public site that automated results alone cannot establish conformance.
+- Refreshed the deterministic BuggyLand baseline for the intentional v1.4.1 false-positive reductions and made `npm run test:buggyland` execute the complete two-run live regression.
+
 ## 1.4.1 - 2026-09-11
 
 - Prevented active consent and modal blockers from producing unreliable responsive findings against the obscured page underneath.

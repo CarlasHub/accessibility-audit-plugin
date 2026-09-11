@@ -150,7 +150,7 @@ Review in this order:
 2. `Findings`: triage confirmed issues first, then perform the stated checks for review items.
 3. `Page Inventory`: confirm each tested URL and its completion, viewport, consent, and runtime-error state.
 4. `Evidence`: open each relative screenshot link and match it to its finding, page, viewport, rule, and locator.
-5. `Manual Checks`: record the outcome of every applicable human verification procedure.
+5. `Manual Checks`: complete the criterion-specific procedure and evidence prompt for each of the 55 active A/AA criteria, then record an explicit verdict and reviewer notes.
 6. `WCAG 2.2 Reference`: use the criterion, level, title, and Understanding link as a navigation aid.
 
 Do not conclude that the site passed because the workbook has few or no automated rows. An `Open` workflow status means the item still needs triage; `Evidence type` states how strongly automation supports it.
@@ -183,7 +183,7 @@ Target-size reviews are deliberately conservative. A control is not added to the
 
 The JSON `coverage` matrix is the execution record for every started page and viewport. Read it before claiming an area passed. `tested-inconclusive`, `manual-review-required`, `not-tested`, and `not-applicable` are not passes. In particular, sampled keyboard traversal, a non-empty title, an axe incomplete result, a configured link-limit truncation, or the absence of a finding does not prove conformance.
 
-The generated `WCAG Criteria` worksheet and matching HTML section show every WCAG 2.2 criterion, not only criteria with findings. Level AA is the conformance target; enabled AAA checks remain advisory. Use the ledger to see failures, required manual work, non-applicable AAA criteria, and inconclusive automated evidence before a qualified reviewer records a final decision.
+The generated `WCAG Criteria` worksheet and matching HTML section show every WCAG 2.2 criterion, not only criteria with findings. Level AA is the conformance target; enabled AAA checks remain advisory. The `Manual Checks` worksheet adds one dedicated procedure and evidence prompt for each of the 55 active A/AA criteria. Use both sheets to see failures, required human work, non-applicable AAA criteria, and inconclusive automated evidence before a qualified reviewer records a final decision.
 
 ## Step 7: decide what happens next
 
@@ -193,7 +193,7 @@ Use this triage sequence:
 2. Reproduce confirmed issues and prioritize them by user impact and product risk.
 3. Complete the Test method for every review item; reclassify it only after evidence supports the decision.
 4. Assign and estimate accepted failures.
-5. Complete the guided manual checks with suitable browsers, devices, and assistive technologies.
+5. Complete all applicable criterion-specific manual checks with suitable browsers, devices, and assistive technologies; retain `Not tested` where required evidence was not collected.
 6. Implement fixes.
 7. Rerun the same URL list and manually retest affected journeys and states.
 8. Keep before/after evidence according to the project’s retention policy.

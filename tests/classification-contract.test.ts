@@ -154,7 +154,7 @@ describe('finding classification contract', () => {
 
   it('classifies screen-reader and contextual judgment checks as manual work', () => {
     expect(REQUIRED_MANUAL_CHECKS).toContainEqual(expect.objectContaining({
-      id: 'manual-screen-reader-combinations',
+      id: 'manual-wcag-4-1-3',
       classification: 'manual'
     }));
     const audit = viewport();

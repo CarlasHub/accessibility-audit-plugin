@@ -396,6 +396,7 @@ export interface ManualCheck {
   wcag: string[];
   procedure: string;
   applicableTo: string;
+  expectedEvidence?: string;
 }
 
 export type WcagCriterionStatus = 'passed' | 'failed' | 'manual-review-required' | 'not-applicable' | 'inconclusive';

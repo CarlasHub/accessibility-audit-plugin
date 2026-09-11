@@ -25,13 +25,13 @@
   ],
   "classifications": {
     "confirmed": 32,
-    "review": 33,
+    "review": 27,
     "blocker": 1,
-    "manualChecks": 7,
-    "totalFindings": 66
+    "manualChecks": 55,
+    "totalFindings": 60
   },
   "fullyCompletedPages": 2,
   "partialPages": 2,
   "blockerSelector": "div.modal-backdrop",
-  "findingIdentitySha256": "5fcc6dbc0c2170e32b11f1634eab8c08ab93c0021025db31a197f415c88166da"
+  "findingIdentitySha256": "eeb314e636e2954c4552f6c989f897ceda2829b7c34f6dec8305314c3f3cd97d"
 }
