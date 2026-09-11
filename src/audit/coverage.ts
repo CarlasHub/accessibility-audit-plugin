@@ -84,19 +84,32 @@ function viewportCoverage(audit: ViewportAudit, findings: Finding[]): CoverageAs
   const checkError = (prefix: string): string | undefined => audit.errors.find((message) => message.startsWith(prefix));
   const domError = checkError('DOM checks error:');
   const keyboardError = checkError('Keyboard checks error:');
+  const configuredJourneyError = checkError('Configured journey checks error:');
   const disclosureError = checkError('Disclosure checks error:');
   const tabError = checkError('Tab checks error:');
   const responsiveError = checkError('Responsive checks error:');
   const contextError = checkError('Element context check error:');
   const screenshotError = checkError('Screenshot check error:');
   const journeyResults = audit.keyboard.journeys.map((journey) => `${journey.title}: ${journey.status}`).join('; ');
+  const configuredJourneys = audit.keyboard.journeys.filter((journey) => journey.source === 'configured');
+  const configuredByCategory = (category: NonNullable<(typeof configuredJourneys)[number]['categories']>[number]) => (
+    configuredJourneys.filter((journey) => journey.categories?.includes(category))
+  );
+  const configuredDetail = (category: Parameters<typeof configuredByCategory>[0]): string => {
+    const matches = configuredByCategory(category);
+    return matches.length
+      ? matches.map((journey) => `${journey.title}: ${journey.status} (${journey.assertionCount ?? 0} assertion(s))`).join('; ')
+      : 'No configured journey covered this area.';
+  };
   const keyboardDetail = blocker
     ? `Interaction coverage was blocked by ${blocker.selector}: ${blocker.reason}`
     : keyboardError
       ? `Keyboard checks did not complete: ${keyboardError.slice('Keyboard checks error:'.length).trim()}`
     : audit.keyboard.truncated
       ? `The keyboard sequence reached its configured limit after ${audit.keyboard.sequence.length} controls.`
-      : `Deterministic forward/reverse and bypass journeys accompanied ${audit.keyboard.sequence.length} focus samples${journeyResults ? ` (${journeyResults})` : ''}; complete task-based keyboard testing still requires manual review.`;
+      : configuredJourneyError
+        ? `Configured journeys did not complete: ${configuredJourneyError.slice('Configured journey checks error:'.length).trim()}`
+      : `Deterministic forward/reverse and bypass journeys accompanied ${audit.keyboard.sequence.length} focus samples${journeyResults ? ` (${journeyResults})` : ''}; configured tasks add repeatable evidence, but complete keyboard testing still requires manual review.`;
   const relevant = affectingFindings(findings, audit);
   const autoplayPresent = audit.dom.autoplayMedia.length > 0;
   const axeStatus: CoverageStatus = !audit.axeRun.completed
@@ -163,7 +176,7 @@ function viewportCoverage(audit: ViewportAudit, findings: Finding[]): CoverageAs
       (finding) => /form|field|label|error|validation/i.test(finding.ruleId),
       domError
         ? `DOM form checks did not complete: ${domError.slice('DOM checks error:'.length).trim()}`
-        : 'Initial field labels were inspected, but forms were not submitted with valid and invalid data; errors and status announcements are inconclusive.'
+        : `${configuredDetail('forms')} Initial field labels were inspected; only the explicitly configured form states were submitted or asserted, and human review remains required.`
     ),
     resultForFindings(
       'interactive-components',
@@ -173,16 +186,20 @@ function viewportCoverage(audit: ViewportAudit, findings: Finding[]): CoverageAs
         ? keyboardDetail
         : disclosureError || tabError
           ? `Interactive component checks did not complete: ${(disclosureError ?? tabError)?.replace(/^(?:Disclosure|Tab) checks error:\s*/, '')}`
-        : 'Disclosures and tab patterns were sampled; every open/closed/validated state and other widget pattern still requires completion.'
+        : `${configuredDetail('interaction')} Disclosures and tab patterns were sampled; unconfigured widgets and assistive-technology behaviour remain inconclusive.`
     ),
-    assessment('dynamic-content-and-status', 'not-tested', 'No complete status-message or asynchronous-update announcement test was recorded.'),
+    assessment(
+      'dynamic-content-and-status',
+      configuredByCategory('dynamic-content').length ? 'tested-inconclusive' : 'not-tested',
+      `${configuredDetail('dynamic-content')} A DOM live-region mutation is evidence of an update, not proof that every screen reader announces it correctly.`
+    ),
     resultForFindings(
       'zoom-text-spacing-and-responsive',
       relevant,
       (finding) => /reflow|responsive|overflow|text-spacing/i.test(finding.ruleId),
       responsiveError
         ? `Responsive checks did not complete: ${responsiveError.slice('Responsive checks error:'.length).trim()}`
-        : 'At 320 CSS pixels, overflow, clipping, interactive-element overlap, focus visibility, and functionality retained after text spacing were sampled; permitted exceptions and complete content loss still require human review.'
+        : 'At 320 CSS pixels, overflow, clipping and interactive overlap were sampled in the default state, with a 200% root text resize, and with WCAG text spacing; browser zoom, permitted exceptions, and complete content loss still require human review.'
     ),
     resultForFindings(
       'contrast-and-non-colour-cues',

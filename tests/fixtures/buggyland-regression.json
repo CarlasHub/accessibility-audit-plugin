@@ -25,13 +25,28 @@
   ],
   "classifications": {
     "confirmed": 32,
-    "review": 27,
+    "review": 37,
     "blocker": 1,
     "manualChecks": 55,
-    "totalFindings": 60
+    "totalFindings": 70
   },
   "fullyCompletedPages": 2,
   "partialPages": 2,
   "blockerSelector": "div.modal-backdrop",
-  "findingIdentitySha256": "eeb314e636e2954c4552f6c989f897ceda2829b7c34f6dec8305314c3f3cd97d"
+  "configuredJourneys": {
+    "ids": [
+      "theme-toggle-keyboard",
+      "form-error-announcement",
+      "form-keyboard-entry",
+      "custom-tabs-keyboard",
+      "modal-initial-focus",
+      "modal-escape-key",
+      "toast-announcement"
+    ],
+    "passed": 12,
+    "failed": 30,
+    "inconclusive": 0,
+    "total": 42
+  },
+  "findingIdentitySha256": "097e0499c2e5fc10d5c148d727ea715c1b16cf062a2d760e022526454861a21a"
 }

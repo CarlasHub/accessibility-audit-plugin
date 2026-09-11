@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, '..');
 const baselinePath = resolve(repositoryRoot, 'tests', 'fixtures', 'buggyland-regression.json');
+const journeysPath = resolve(repositoryRoot, 'examples', 'buggyland-journeys.json');
 const outputRoot = resolve(process.env.BUGGYLAND_OUTPUT_DIR ?? resolve(repositoryRoot, 'buggyland-regression-results'));
 const baseline = JSON.parse(await readFile(baselinePath, 'utf8'));
 const executable = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -34,6 +35,8 @@ for (const runNumber of [1, 2]) {
     '--',
     ...baseline.urls,
     '--yes',
+    '--config',
+    journeysPath,
     '--auditor',
     'CarlasHub BuggyLand regression',
     '--landing-page',

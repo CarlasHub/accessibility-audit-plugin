@@ -145426,11 +145426,11 @@ function getDiscriminatedOption(union, value) {
 }
 const $ZodDiscriminatedUnion = 
 /*@__PURE__*/
-(/* unused pure expression or super */ null && (core.$constructor("$ZodDiscriminatedUnion", (inst, def) => {
+$constructor("$ZodDiscriminatedUnion", (inst, def) => {
     def.inclusive = false;
     $ZodUnion.init(inst, def);
     const _super = inst._zod.parse;
-    util.defineLazyInternal(inst, "propValues", (zod) => {
+    defineLazyInternal(inst, "propValues", (zod) => {
         const propValues = {};
         for (const option of zod.def.options) {
             const pv = option._zod.propValues;
@@ -145438,7 +145438,7 @@ const $ZodDiscriminatedUnion =
                 throw new Error(`Invalid discriminated union option at index "${zod.def.options.indexOf(option)}"`);
             for (const [k, v] of Object.entries(pv)) {
                 if (!Object.prototype.hasOwnProperty.call(propValues, k)) {
-                    util.assignProp(propValues, k, new Set());
+                    util_assignProp(propValues, k, new Set());
                 }
                 for (const val of v) {
                     propValues[k].add(val);
@@ -145454,7 +145454,7 @@ const $ZodDiscriminatedUnion =
             throw new Error(`Invalid discriminated union option at index "${i}"`);
         }
     });
-    const disc = util.cached(() => {
+    const disc = cached(() => {
         const opts = def.options;
         const map = new Map();
         for (const o of opts) {
@@ -145472,7 +145472,7 @@ const $ZodDiscriminatedUnion =
     });
     inst._zod.parse = (payload, ctx) => {
         const input = payload.value;
-        if (!util.isObject(input)) {
+        if (!util_isObject(input)) {
             payload.issues.push({
                 code: "invalid_type",
                 expected: "object",
@@ -145504,7 +145504,7 @@ const $ZodDiscriminatedUnion =
         });
         return payload;
     };
-})));
+});
 const $ZodIntersection = /*@__PURE__*/ $constructor("$ZodIntersection", (inst, def) => {
     $ZodType.init(inst, def);
     inst._zod.parse = (payload, ctx) => {
@@ -146044,14 +146044,14 @@ const $ZodEnum = /*@__PURE__*/ $constructor("$ZodEnum", (inst, def) => {
         return payload;
     };
 });
-const $ZodLiteral = /*@__PURE__*/ (/* unused pure expression or super */ null && (core.$constructor("$ZodLiteral", (inst, def) => {
+const $ZodLiteral = /*@__PURE__*/ $constructor("$ZodLiteral", (inst, def) => {
     $ZodType.init(inst, def);
     const values = new Set(def.values);
     inst._zod.values = values;
     // unmatchable fallback, RE2-safe: an empty alternation would compile to /^()$/, which matches ""
     inst._zod.pattern = new RegExp(def.values.length
         ? `^(${def.values
-            .map((o) => (typeof o === "string" ? util.escapeRegex(o) : o ? util.escapeRegex(o.toString()) : String(o)))
+            .map((o) => (typeof o === "string" ? escapeRegex(o) : o ? escapeRegex(o.toString()) : String(o)))
             .join("|")})$`
         : "^[^\\s\\S]$");
     inst._zod.parse = (payload, _ctx) => {
@@ -146067,7 +146067,7 @@ const $ZodLiteral = /*@__PURE__*/ (/* unused pure expression or super */ null &&
         });
         return payload;
     };
-})));
+});
 const $ZodFile = /*@__PURE__*/ (/* unused pure expression or super */ null && (core.$constructor("$ZodFile", (inst, def) => {
     $ZodType.init(inst, def);
     inst._zod.parse = (payload, _ctx) => {
@@ -150282,17 +150282,17 @@ function xor(options, params) {
         ...util.normalizeParams(params),
     });
 }
-const ZodDiscriminatedUnion = /*@__PURE__*/ (/* unused pure expression or super */ null && (core.$constructor("ZodDiscriminatedUnion", (inst, def) => {
+const ZodDiscriminatedUnion = /*@__PURE__*/ $constructor("ZodDiscriminatedUnion", (inst, def) => {
     ZodUnion.init(inst, def);
-    core.$ZodDiscriminatedUnion.init(inst, def);
-})));
+    $ZodDiscriminatedUnion.init(inst, def);
+});
 function discriminatedUnion(discriminator, options, params) {
     // const [options, params] = args;
     return new ZodDiscriminatedUnion({
         type: "union",
         options: options,
         discriminator,
-        ...util.normalizeParams(params),
+        ...normalizeParams(params),
     });
 }
 const ZodIntersection = /*@__PURE__*/ $constructor("ZodIntersection", (inst, def) => {
@@ -150485,10 +150485,10 @@ function nativeEnum(entries, params) {
         ...util.normalizeParams(params),
     });
 }
-const ZodLiteral = /*@__PURE__*/ (/* unused pure expression or super */ null && (core.$constructor("ZodLiteral", (inst, def) => {
-    core.$ZodLiteral.init(inst, def);
+const ZodLiteral = /*@__PURE__*/ $constructor("ZodLiteral", (inst, def) => {
+    $ZodLiteral.init(inst, def);
     ZodType.init(inst, def);
-    inst._zod.processJSONSchema = (ctx, json, params) => processors.literalProcessor(inst, ctx, json, params);
+    inst._zod.processJSONSchema = (ctx, json, params) => literalProcessor(inst, ctx, json, params);
     inst.values = new Set(def.values);
     Object.defineProperty(inst, "value", {
         get() {
@@ -150498,12 +150498,12 @@ const ZodLiteral = /*@__PURE__*/ (/* unused pure expression or super */ null && 
             return def.values[0];
         },
     });
-})));
+});
 function literal(value, params) {
     return new ZodLiteral({
         type: "literal",
         values: Array.isArray(value) ? value : [value],
-        ...util.normalizeParams(params),
+        ...normalizeParams(params),
     });
 }
 const ZodFile = /*@__PURE__*/ (/* unused pure expression or super */ null && (core.$constructor("ZodFile", (inst, def) => {
@@ -150930,6 +150930,44 @@ const viewportSchema = object({
     height: schemas_number().int().positive(),
     isMobile: schemas_boolean().optional()
 });
+const journeyStepSchema = discriminatedUnion('action', [
+    object({ action: literal('focus'), selector: schemas_string().min(1).max(1000) }),
+    object({ action: literal('press'), key: schemas_string().min(1).max(80), selector: schemas_string().min(1).max(1000).optional() }),
+    object({ action: literal('type'), selector: schemas_string().min(1).max(1000), text: schemas_string().max(10_000) }),
+    object({ action: literal('wait'), milliseconds: schemas_number().int().min(0).max(5_000) }),
+    object({
+        action: literal('assert'),
+        expectation: schemas_enum([
+            'focused',
+            'visible',
+            'hidden',
+            'expanded',
+            'collapsed',
+            'pressed',
+            'unpressed',
+            'selected',
+            'checked',
+            'unchecked',
+            'invalid',
+            'valid',
+            'url-contains',
+            'text-contains',
+            'value-equals',
+            'live-region-updated'
+        ]),
+        selector: schemas_string().min(1).max(1000).optional(),
+        value: schemas_string().max(10_000).optional(),
+        timeoutMs: schemas_number().int().min(0).max(10_000).optional()
+    })
+]);
+const journeySchema = object({
+    id: schemas_string().min(1).max(100).regex(/^[a-z0-9][a-z0-9_-]*$/i),
+    title: schemas_string().min(1).max(200),
+    categories: array(schemas_enum(['keyboard', 'forms', 'interaction', 'dynamic-content'])).min(1).max(4),
+    urlIncludes: schemas_string().min(1).max(2000).optional(),
+    viewports: array(schemas_string().min(1).max(100)).min(1).max(20).optional(),
+    steps: array(journeyStepSchema).min(1).max(100)
+});
 const configSchema = object({
     auditor: schemas_string().min(1).default(DEFAULT_AUDITOR),
     wcagLevel: schemas_enum(['AA', 'AAA']).default('AA'),
@@ -150947,7 +150985,8 @@ const configSchema = object({
     maxLinksPerPage: schemas_number().int().min(1).max(1000).default(200),
     concurrency: schemas_number().int().min(1).max(8).default(2),
     captureScreenshots: schemas_boolean().default(true),
-    viewports: array(viewportSchema).min(1).default(DEFAULT_VIEWPORTS)
+    viewports: array(viewportSchema).min(1).default(DEFAULT_VIEWPORTS),
+    journeys: array(journeySchema).max(100).default([])
 });
 function resolveOptions(input = {}) {
     const parsed = configSchema.parse(input);
@@ -150972,6 +151011,26 @@ function resolveOptions(input = {}) {
             width: viewport.width,
             height: viewport.height,
             ...(viewport.isMobile !== undefined ? { isMobile: viewport.isMobile } : {})
+        })),
+        journeys: parsed.journeys.map((journey) => ({
+            id: journey.id,
+            title: journey.title,
+            categories: journey.categories,
+            steps: journey.steps.map((step) => {
+                if (step.action === 'press')
+                    return { action: step.action, key: step.key, ...(step.selector ? { selector: step.selector } : {}) };
+                if (step.action === 'assert')
+                    return {
+                        action: step.action,
+                        expectation: step.expectation,
+                        ...(step.selector ? { selector: step.selector } : {}),
+                        ...(step.value !== undefined ? { value: step.value } : {}),
+                        ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {})
+                    };
+                return step;
+            }),
+            ...(journey.urlIncludes ? { urlIncludes: journey.urlIncludes } : {}),
+            ...(journey.viewports ? { viewports: journey.viewports } : {})
         })),
         ...(parsed.channel ? { channel: parsed.channel } : {}),
         ...(parsed.executablePath ? { executablePath: parsed.executablePath } : {})
@@ -151933,6 +151992,12 @@ async function runResponsiveChecks(page) {
         };
     }, { currentPhase: phase, focusables: focusableSelector });
     const base = await snapshot('default');
+    const textResizeStyle = await page.addStyleTag({
+        content: 'html { font-size: 200% !important; }'
+    });
+    await page.waitForTimeout(100);
+    const resized = await snapshot('text-resize-200');
+    await textResizeStyle.evaluate((element) => element.remove());
     const spacingStyle = await page.addStyleTag({
         content: `
       html body *:not(svg):not(svg *) {
@@ -151949,22 +152014,28 @@ async function runResponsiveChecks(page) {
     const spaced = await snapshot('text-spacing');
     await spacingStyle.evaluate((element) => element.remove());
     const spacedSelectors = new Set(spaced.visibleInteractiveElements.map((element) => element.selector));
+    const resizedSelectors = new Set(resized.visibleInteractiveElements.map((element) => element.selector));
     const lostInteractiveElements = base.visibleInteractiveElements.filter((element) => !spacedSelectors.has(element.selector));
+    const textResizeLostInteractiveElements = base.visibleInteractiveElements.filter((element) => !resizedSelectors.has(element.selector));
     const baseClippingKeys = new Set(base.clippedElements.map((item) => `${item.selector}|${item.axis}`));
     const baseOverlapKeys = new Set(base.overlapPairs.map((item) => [item.firstSelector, item.secondSelector].sort().join('|')));
     return {
         horizontalOverflow: base.horizontalOverflow,
         overflowElements: base.overflowElements,
+        textResizeOverflow: resized.horizontalOverflow,
         textSpacingOverflow: spaced.horizontalOverflow,
         clippedElements: [
             ...base.clippedElements,
+            ...resized.clippedElements.filter((item) => !baseClippingKeys.has(`${item.selector}|${item.axis}`)),
             ...spaced.clippedElements.filter((item) => !baseClippingKeys.has(`${item.selector}|${item.axis}`))
         ],
         overlapPairs: [
             ...base.overlapPairs,
+            ...resized.overlapPairs.filter((item) => !baseOverlapKeys.has([item.firstSelector, item.secondSelector].sort().join('|'))),
             ...spaced.overlapPairs.filter((item) => !baseOverlapKeys.has([item.firstSelector, item.secondSelector].sort().join('|')))
         ],
-        lostInteractiveElements
+        lostInteractiveElements,
+        textResizeLostInteractiveElements
     };
 }
 function locatorDescription(locator) {
@@ -152704,6 +152775,273 @@ async function runTabChecks(page) {
     return results;
 }
 //# sourceMappingURL=browser-checks.js.map
+;// CONCATENATED MODULE: ./dist/audit/journey-checks.js
+function appliesTo(journey, requestedUrl, viewportName) {
+    return (!journey.urlIncludes || requestedUrl.includes(journey.urlIncludes))
+        && (!journey.viewports?.length || journey.viewports.includes(viewportName));
+}
+function requiredSelector(step) {
+    return !['url-contains', 'live-region-updated'].includes(step.expectation);
+}
+function expectedDescription(step) {
+    const target = step.selector ? ` ${step.selector}` : '';
+    const value = step.value
+        ? step.expectation === 'value-equals'
+            ? ` equal to “${step.value}”`
+            : ` containing “${step.value}”`
+        : '';
+    return `${step.expectation}${target}${value}`;
+}
+async function installLiveRegionObserver(page) {
+    await page.evaluate(() => {
+        const auditWindow = window;
+        auditWindow.__carlashubAuditLiveObserver?.disconnect();
+        auditWindow.__carlashubAuditLiveChanges = [];
+        const liveSelector = '[role="alert"], [role="status"], [role="log"], [aria-live]:not([aria-live="off"])';
+        const record = (element) => {
+            const live = element.matches(liveSelector) ? element : element.closest(liveSelector);
+            const text = live?.textContent?.replace(/\s+/g, ' ').trim();
+            if (text && live)
+                auditWindow.__carlashubAuditLiveChanges?.push({ text, element: live });
+        };
+        auditWindow.__carlashubAuditLiveObserver = new MutationObserver((records) => {
+            for (const mutation of records) {
+                if (mutation.target instanceof Element)
+                    record(mutation.target);
+                else if (mutation.target.parentElement)
+                    record(mutation.target.parentElement);
+                for (const node of mutation.addedNodes) {
+                    if (node instanceof Element) {
+                        record(node);
+                        node.querySelectorAll(liveSelector).forEach(record);
+                    }
+                }
+            }
+        });
+        auditWindow.__carlashubAuditLiveObserver.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+            attributes: true,
+            attributeFilter: ['aria-live', 'role']
+        });
+    });
+}
+async function assertionMatches(page, step) {
+    return page.evaluate(({ expectation, selector, value }) => {
+        if (expectation === 'url-contains')
+            return typeof value === 'string' && location.href.includes(value);
+        if (expectation === 'live-region-updated') {
+            const changes = window.__carlashubAuditLiveChanges ?? [];
+            const target = selector ? document.querySelector(selector) : null;
+            const matchingChanges = target
+                ? changes.filter((change) => change.element === target)
+                : changes;
+            return value
+                ? matchingChanges.some((change) => change.text.includes(value))
+                : matchingChanges.length > 0;
+        }
+        if (!selector)
+            return false;
+        const element = document.querySelector(selector);
+        if (expectation === 'hidden') {
+            if (!element)
+                return true;
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.display === 'none' || style.visibility === 'hidden' || style.contentVisibility === 'hidden'
+                || rect.width === 0 || rect.height === 0;
+        }
+        if (!element)
+            return false;
+        const visible = () => {
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && style.display !== 'none'
+                && style.visibility !== 'hidden' && style.contentVisibility !== 'hidden';
+        };
+        if (expectation === 'focused')
+            return document.activeElement === element;
+        if (expectation === 'visible')
+            return visible();
+        if (expectation === 'expanded')
+            return element.getAttribute('aria-expanded') === 'true';
+        if (expectation === 'collapsed')
+            return element.getAttribute('aria-expanded') === 'false';
+        if (expectation === 'pressed')
+            return element.getAttribute('aria-pressed') === 'true';
+        if (expectation === 'unpressed')
+            return element.getAttribute('aria-pressed') === 'false';
+        if (expectation === 'selected')
+            return element.getAttribute('aria-selected') === 'true';
+        if (expectation === 'checked') {
+            return element.getAttribute('aria-checked') === 'true'
+                || (element instanceof HTMLInputElement && element.checked);
+        }
+        if (expectation === 'unchecked') {
+            return element.getAttribute('aria-checked') === 'false'
+                || (element instanceof HTMLInputElement && !element.checked);
+        }
+        if (expectation === 'invalid') {
+            return element.getAttribute('aria-invalid') === 'true'
+                || (element.matches('input, select, textarea') && element.matches(':invalid'));
+        }
+        if (expectation === 'valid') {
+            return element.getAttribute('aria-invalid') !== 'true'
+                && (!element.matches('input, select, textarea') || element.matches(':valid'));
+        }
+        if (expectation === 'text-contains')
+            return typeof value === 'string' && (element.textContent ?? '').includes(value);
+        if (expectation === 'value-equals') {
+            return typeof value === 'string'
+                && (element instanceof HTMLInputElement
+                    || element instanceof HTMLTextAreaElement
+                    || element instanceof HTMLSelectElement)
+                && element.value === value;
+        }
+        return false;
+    }, { expectation: step.expectation, selector: step.selector, value: step.value });
+}
+async function executeAssertion(page, step) {
+    const timeoutMs = step.timeoutMs ?? 2_000;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() <= deadline) {
+        if (await assertionMatches(page, step))
+            return true;
+        if (Date.now() >= deadline)
+            return false;
+        await page.waitForTimeout(Math.min(100, Math.max(1, deadline - Date.now())));
+    }
+    return false;
+}
+async function runConfiguredJourneyChecks(page, definitions, requestedUrl, viewportName, preparePage) {
+    const journeys = definitions.filter((journey) => appliesTo(journey, requestedUrl, viewportName));
+    const results = [];
+    for (const journey of journeys) {
+        const completedSteps = [];
+        const selectors = new Set();
+        let assertionCount = 0;
+        let status = 'passed';
+        let detail = 'Every configured assertion produced the expected result.';
+        try {
+            await page.goto(requestedUrl, { waitUntil: 'domcontentloaded' });
+            await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+            await preparePage?.();
+            await installLiveRegionObserver(page);
+            for (const step of journey.steps) {
+                if ('selector' in step && step.selector)
+                    selectors.add(step.selector);
+                if (step.action === 'focus') {
+                    const locator = page.locator(step.selector);
+                    if (await locator.count() === 0) {
+                        status = 'inconclusive';
+                        detail = `Configured focus target ${step.selector} was not found, so the journey could not complete.`;
+                        break;
+                    }
+                    try {
+                        await locator.first().focus();
+                    }
+                    catch {
+                        status = 'failed';
+                        detail = `Configured keyboard target ${step.selector} exists but could not receive focus.`;
+                        completedSteps.push(`Attempted to focus ${step.selector}`);
+                        break;
+                    }
+                    if (!await locator.first().evaluate((element) => document.activeElement === element)) {
+                        status = 'failed';
+                        detail = `Configured keyboard target ${step.selector} exists but did not retain focus.`;
+                        completedSteps.push(`Attempted to focus ${step.selector}`);
+                        break;
+                    }
+                    completedSteps.push(`Focused ${step.selector}`);
+                }
+                else if (step.action === 'press') {
+                    if (step.selector) {
+                        const locator = page.locator(step.selector);
+                        if (await locator.count() === 0) {
+                            status = 'inconclusive';
+                            detail = `Configured key target ${step.selector} was not found, so the journey could not complete.`;
+                            break;
+                        }
+                        try {
+                            await locator.first().focus();
+                        }
+                        catch {
+                            status = 'failed';
+                            detail = `Configured keyboard target ${step.selector} exists but could not receive focus before ${step.key}.`;
+                            completedSteps.push(`Attempted to focus ${step.selector}`);
+                            break;
+                        }
+                        if (!await locator.first().evaluate((element) => document.activeElement === element)) {
+                            status = 'failed';
+                            detail = `Configured keyboard target ${step.selector} exists but did not retain focus before ${step.key}.`;
+                            completedSteps.push(`Attempted to focus ${step.selector}`);
+                            break;
+                        }
+                    }
+                    await page.keyboard.press(step.key);
+                    await page.waitForTimeout(50);
+                    completedSteps.push(`Pressed ${step.key}${step.selector ? ` on ${step.selector}` : ''}`);
+                }
+                else if (step.action === 'type') {
+                    const locator = page.locator(step.selector);
+                    if (await locator.count() === 0) {
+                        status = 'inconclusive';
+                        detail = `Configured text field ${step.selector} was not found, so the journey could not complete.`;
+                        break;
+                    }
+                    await locator.first().fill(step.text);
+                    completedSteps.push(`Entered configured text in ${step.selector}`);
+                }
+                else if (step.action === 'wait') {
+                    await page.waitForTimeout(step.milliseconds);
+                    completedSteps.push(`Waited ${step.milliseconds} ms`);
+                }
+                else {
+                    assertionCount += 1;
+                    if (requiredSelector(step) && !step.selector) {
+                        status = 'inconclusive';
+                        detail = `The ${step.expectation} assertion requires a selector.`;
+                        break;
+                    }
+                    if (['url-contains', 'text-contains', 'value-equals'].includes(step.expectation) && step.value === undefined) {
+                        status = 'inconclusive';
+                        detail = `The ${step.expectation} assertion requires a value.`;
+                        break;
+                    }
+                    const matched = await executeAssertion(page, step);
+                    completedSteps.push(`Asserted ${expectedDescription(step)}`);
+                    if (!matched) {
+                        status = 'failed';
+                        detail = `Expected ${expectedDescription(step)}, but the expected state was not observed within ${step.timeoutMs ?? 2_000} ms.`;
+                        break;
+                    }
+                }
+            }
+            if (status === 'passed' && assertionCount === 0) {
+                status = 'inconclusive';
+                detail = 'The configured journey performed actions but contained no assertion, so it did not establish an outcome.';
+            }
+        }
+        catch (error) {
+            status = 'inconclusive';
+            detail = `The configured journey could not complete: ${error instanceof Error ? error.message : String(error)}`;
+        }
+        results.push({
+            id: journey.id,
+            title: journey.title,
+            status,
+            steps: completedSteps,
+            detail,
+            source: 'configured',
+            categories: journey.categories,
+            assertionCount,
+            selectors: [...selectors]
+        });
+    }
+    return results;
+}
+//# sourceMappingURL=journey-checks.js.map
 ;// CONCATENATED MODULE: ./dist/audit/page-preparation.js
 const consentSurfaceSelector = [
     '#onetrust-banner-sdk',
@@ -153850,15 +154188,42 @@ function domFindings(audit) {
             translationRequired: 'No'
         }));
     }
+    if ((audit.responsive.textResizeOverflow ?? 0) > Math.max(2, audit.responsive.horizontalOverflow + 2)) {
+        findings.push(makeFinding({
+            identity: 'text-resize-200|page',
+            ruleId: 'text-resize-200-overflow',
+            classification: 'review',
+            severity: 'Serious',
+            wcag: ['1.4.4', '1.4.10'],
+            summary: 'A 200% text resize may cause content loss or overflow',
+            issue: `After resizing root text to 200%, overflow increased to ${audit.responsive.textResizeOverflow}px. Visual inspection is required to distinguish content loss from a permitted two-dimensional layout.`,
+            impact: 'People who enlarge text may need to scroll in two directions or may lose content or functionality.',
+            testing: 'The root font size was overridden to 200% and document overflow was remeasured at the configured viewport.',
+            remediation: 'Use relative sizing and flexible containers so text can enlarge to 200% without clipping, overlap, or loss of functionality.',
+            component: 'page layout',
+            urls: [audit.url],
+            viewports: [audit.viewport.name],
+            selectors: [],
+            evidence: [evidence('responsive', undefined, `200% text-resize overflow: ${audit.responsive.textResizeOverflow}px`)],
+            assignment: 'Development',
+            effort: 'Medium',
+            translationRequired: 'No'
+        }));
+    }
     for (const clipped of audit.responsive.clippedElements) {
-        const criteria = clipped.phase === 'text-spacing' ? ['1.4.10', '1.4.12'] : ['1.4.10'];
+        const criteria = clipped.phase === 'text-spacing'
+            ? ['1.4.10', '1.4.12']
+            : clipped.phase === 'text-resize-200' ? ['1.4.4', '1.4.10'] : ['1.4.10'];
+        const phaseLabel = clipped.phase === 'text-spacing'
+            ? ' after text spacing'
+            : clipped.phase === 'text-resize-200' ? ' after 200% text resize' : ' at the narrow viewport';
         findings.push(makeFinding({
             identity: `responsive-clipped|${clipped.phase}|${normalizeComponent(clipped.selector)}`,
             ruleId: 'responsive-content-clipped',
             classification: 'review',
             severity: 'Moderate',
             wcag: criteria,
-            summary: `Content may be clipped${clipped.phase === 'text-spacing' ? ' after text spacing' : ' at the narrow viewport'}`,
+            summary: `Content may be clipped${phaseLabel}`,
             issue: `${clipped.selector} has ${clipped.axis} scroll dimensions larger than its visible box while its overflow styling can clip content.`,
             impact: 'Users who zoom, reflow content, or increase text spacing may be unable to perceive content or reach functionality.',
             testing: `At the ${clipped.phase} phase, the element measured ${clipped.clientWidth}×${clipped.clientHeight} CSS pixels with scroll dimensions ${clipped.scrollWidth}×${clipped.scrollHeight}.`,
@@ -153875,14 +154240,19 @@ function domFindings(audit) {
     }
     for (const overlap of audit.responsive.overlapPairs) {
         const selectors = [overlap.firstSelector, overlap.secondSelector];
-        const criteria = overlap.phase === 'text-spacing' ? ['1.4.10', '1.4.12'] : ['1.4.10'];
+        const criteria = overlap.phase === 'text-spacing'
+            ? ['1.4.10', '1.4.12']
+            : overlap.phase === 'text-resize-200' ? ['1.4.4', '1.4.10'] : ['1.4.10'];
+        const phaseLabel = overlap.phase === 'text-spacing'
+            ? ' after text spacing'
+            : overlap.phase === 'text-resize-200' ? ' after 200% text resize' : ' at the narrow viewport';
         findings.push(makeFinding({
             identity: `responsive-overlap|${overlap.phase}|${selectors.map(normalizeComponent).sort().join('|')}`,
             ruleId: 'responsive-controls-overlap',
             classification: 'review',
             severity: 'Moderate',
             wcag: criteria,
-            summary: `Interactive elements overlap${overlap.phase === 'text-spacing' ? ' after text spacing' : ' at the narrow viewport'}`,
+            summary: `Interactive elements overlap${phaseLabel}`,
             issue: `Two visible interactive elements overlap by ${overlap.overlapWidth}×${overlap.overlapHeight} CSS pixels. Review whether either control, label, or focus indicator is obscured.`,
             impact: 'Overlapping controls can hide information, make a target difficult to activate, or obscure keyboard focus.',
             testing: `Rendered bounds were compared during the ${overlap.phase} reflow phase at ${audit.viewport.width} CSS pixels.`,
@@ -153915,6 +154285,30 @@ function domFindings(audit) {
             viewports: [audit.viewport.name],
             selectors,
             evidence: audit.responsive.lostInteractiveElements.map((item) => evidence('responsive', item.selector, `Previously visible control disappeared: ${item.name || 'unnamed control'}.`)),
+            assignment: 'Development',
+            effort: 'Medium',
+            translationRequired: 'Review'
+        }));
+    }
+    if ((audit.responsive.textResizeLostInteractiveElements?.length ?? 0) > 0) {
+        const lost = audit.responsive.textResizeLostInteractiveElements ?? [];
+        const selectors = lost.map((item) => item.selector);
+        findings.push(makeFinding({
+            identity: `text-resize-lost-functionality|${selectors.map(normalizeComponent).sort().join('|')}`,
+            ruleId: 'text-resize-functionality-lost',
+            classification: 'review',
+            severity: 'Serious',
+            wcag: ['1.4.4', '1.4.10'],
+            summary: 'Interactive content may disappear after text is resized to 200%',
+            issue: `${lost.length} control(s) visible before the 200% text resize were no longer visibly rendered afterwards.`,
+            impact: 'People who enlarge text may lose access to controls or functionality.',
+            testing: 'Visible interactive elements were inventoried before and after the 200% root text-size override, then compared by stable selector.',
+            remediation: 'Use relative sizing and flexible layouts so every control remains visible and operable when text is enlarged to 200%.',
+            component: 'responsive layout',
+            urls: [audit.url],
+            viewports: [audit.viewport.name],
+            selectors,
+            evidence: lost.map((item) => evidence('responsive', item.selector, `Previously visible control disappeared: ${item.name || 'unnamed control'}.`)),
             assignment: 'Development',
             effort: 'Medium',
             translationRequired: 'Review'
@@ -153978,25 +154372,36 @@ function domFindings(audit) {
     }
     for (const journey of audit.keyboard.journeys.filter((item) => item.status === 'failed')) {
         const isBypass = journey.id === 'bypass-blocks';
+        const configured = journey.source === 'configured';
+        const configuredCriteria = [
+            ...(journey.categories?.includes('keyboard') ? ['2.1.1', '2.4.3'] : []),
+            ...(journey.categories?.includes('forms') ? ['3.3.1', '3.3.2'] : []),
+            ...(journey.categories?.includes('interaction') ? ['4.1.2'] : []),
+            ...(journey.categories?.includes('dynamic-content') ? ['4.1.3'] : [])
+        ].filter((criterion, index, all) => all.indexOf(criterion) === index);
         findings.push(makeFinding({
             identity: `keyboard-journey|${journey.id}|${audit.url}`,
             ruleId: `keyboard-journey-${journey.id}`,
             classification: 'review',
             severity: 'Serious',
-            wcag: [isBypass ? '2.4.1' : '2.4.3'],
+            wcag: configured ? (configuredCriteria.length ? configuredCriteria : ['2.1.1']) : [isBypass ? '2.4.1' : '2.4.3'],
             summary: `${journey.title} did not produce the expected result`,
             issue: journey.detail,
-            impact: isBypass
-                ? 'Keyboard users may be forced to traverse repeated content before reaching the main page content.'
-                : 'Keyboard users may encounter an unexpected or illogical focus sequence.',
+            impact: configured
+                ? 'Users may be unable to complete the configured task or receive its expected state, validation, or status feedback.'
+                : isBypass
+                    ? 'Keyboard users may be forced to traverse repeated content before reaching the main page content.'
+                    : 'Keyboard users may encounter an unexpected or illogical focus sequence.',
             testing: `Executed deterministic journey: ${journey.steps.join(' → ') || 'no completed steps'}.`,
-            remediation: isBypass
-                ? 'Provide an operable bypass mechanism whose target exists, becomes visible, and receives or immediately precedes focus.'
-                : 'Keep DOM and visual order aligned and ensure forward and reverse sequential navigation are predictable.',
-            component: 'page keyboard journey',
+            remediation: configured
+                ? 'Repair the failed state transition or assertion, then rerun this journey and manually verify the equivalent task with keyboard and assistive technology.'
+                : isBypass
+                    ? 'Provide an operable bypass mechanism whose target exists, becomes visible, and receives or immediately precedes focus.'
+                    : 'Keep DOM and visual order aligned and ensure forward and reverse sequential navigation are predictable.',
+            component: configured ? 'configured user journey' : 'page keyboard journey',
             urls: [audit.url],
             viewports: [audit.viewport.name],
-            selectors: [],
+            selectors: journey.selectors ?? [],
             evidence: [evidence('keyboard', undefined, JSON.stringify(journey))],
             assignment: 'Development',
             effort: 'Medium',
@@ -154391,19 +154796,30 @@ function viewportCoverage(audit, findings) {
     const checkError = (prefix) => audit.errors.find((message) => message.startsWith(prefix));
     const domError = checkError('DOM checks error:');
     const keyboardError = checkError('Keyboard checks error:');
+    const configuredJourneyError = checkError('Configured journey checks error:');
     const disclosureError = checkError('Disclosure checks error:');
     const tabError = checkError('Tab checks error:');
     const responsiveError = checkError('Responsive checks error:');
     const contextError = checkError('Element context check error:');
     const screenshotError = checkError('Screenshot check error:');
     const journeyResults = audit.keyboard.journeys.map((journey) => `${journey.title}: ${journey.status}`).join('; ');
+    const configuredJourneys = audit.keyboard.journeys.filter((journey) => journey.source === 'configured');
+    const configuredByCategory = (category) => (configuredJourneys.filter((journey) => journey.categories?.includes(category)));
+    const configuredDetail = (category) => {
+        const matches = configuredByCategory(category);
+        return matches.length
+            ? matches.map((journey) => `${journey.title}: ${journey.status} (${journey.assertionCount ?? 0} assertion(s))`).join('; ')
+            : 'No configured journey covered this area.';
+    };
     const keyboardDetail = blocker
         ? `Interaction coverage was blocked by ${blocker.selector}: ${blocker.reason}`
         : keyboardError
             ? `Keyboard checks did not complete: ${keyboardError.slice('Keyboard checks error:'.length).trim()}`
             : audit.keyboard.truncated
                 ? `The keyboard sequence reached its configured limit after ${audit.keyboard.sequence.length} controls.`
-                : `Deterministic forward/reverse and bypass journeys accompanied ${audit.keyboard.sequence.length} focus samples${journeyResults ? ` (${journeyResults})` : ''}; complete task-based keyboard testing still requires manual review.`;
+                : configuredJourneyError
+                    ? `Configured journeys did not complete: ${configuredJourneyError.slice('Configured journey checks error:'.length).trim()}`
+                    : `Deterministic forward/reverse and bypass journeys accompanied ${audit.keyboard.sequence.length} focus samples${journeyResults ? ` (${journeyResults})` : ''}; configured tasks add repeatable evidence, but complete keyboard testing still requires manual review.`;
     const relevant = affectingFindings(findings, audit);
     const autoplayPresent = audit.dom.autoplayMedia.length > 0;
     const axeStatus = !audit.axeRun.completed
@@ -154440,16 +154856,16 @@ function viewportCoverage(audit, findings) {
             : 'Image-alt presence was checked automatically; purpose, equivalence and decorative treatment require manual review.'),
         resultForFindings('forms-errors-and-validation', relevant, (finding) => /form|field|label|error|validation/i.test(finding.ruleId), domError
             ? `DOM form checks did not complete: ${domError.slice('DOM checks error:'.length).trim()}`
-            : 'Initial field labels were inspected, but forms were not submitted with valid and invalid data; errors and status announcements are inconclusive.'),
+            : `${configuredDetail('forms')} Initial field labels were inspected; only the explicitly configured form states were submitted or asserted, and human review remains required.`),
         resultForFindings('interactive-components', relevant, (finding) => /disclosure|tabs|dialog|menu|carousel|filter/i.test(`${finding.ruleId} ${finding.component}`), blocker
             ? keyboardDetail
             : disclosureError || tabError
                 ? `Interactive component checks did not complete: ${(disclosureError ?? tabError)?.replace(/^(?:Disclosure|Tab) checks error:\s*/, '')}`
-                : 'Disclosures and tab patterns were sampled; every open/closed/validated state and other widget pattern still requires completion.'),
-        assessment('dynamic-content-and-status', 'not-tested', 'No complete status-message or asynchronous-update announcement test was recorded.'),
+                : `${configuredDetail('interaction')} Disclosures and tab patterns were sampled; unconfigured widgets and assistive-technology behaviour remain inconclusive.`),
+        assessment('dynamic-content-and-status', configuredByCategory('dynamic-content').length ? 'tested-inconclusive' : 'not-tested', `${configuredDetail('dynamic-content')} A DOM live-region mutation is evidence of an update, not proof that every screen reader announces it correctly.`),
         resultForFindings('zoom-text-spacing-and-responsive', relevant, (finding) => /reflow|responsive|overflow|text-spacing/i.test(finding.ruleId), responsiveError
             ? `Responsive checks did not complete: ${responsiveError.slice('Responsive checks error:'.length).trim()}`
-            : 'At 320 CSS pixels, overflow, clipping, interactive-element overlap, focus visibility, and functionality retained after text spacing were sampled; permitted exceptions and complete content loss still require human review.'),
+            : 'At 320 CSS pixels, overflow, clipping and interactive overlap were sampled in the default state, with a 200% root text resize, and with WCAG text spacing; browser zoom, permitted exceptions, and complete content loss still require human review.'),
         resultForFindings('contrast-and-non-colour-cues', relevant, (finding) => /contrast|use-of-color|colour/i.test(finding.ruleId), 'Axe inspected supported initial-state text contrast; non-text contrast, colour-only cues and all interaction states remain inconclusive.'),
         assessment('motion-autoplay-and-controls', autoplayPresent ? 'manual-review-required' : 'tested-inconclusive', autoplayPresent
             ? 'Autoplay media was detected; duration, audio, motion and pause/stop/hide controls require timed manual testing.'
@@ -155252,6 +155668,7 @@ async function collectUrls(inputs, options = {}) {
 
 
 
+
 const CANCELLED_REASON = 'The audit was stopped by the user. Results include only work completed before cancellation.';
 const MAX_CAPTURED_RUNTIME_ERRORS = 50;
 const runner_require = (0,external_node_module_namespaceObject.createRequire)(import.meta.url);
@@ -155572,6 +155989,7 @@ const defaultAuditViewportDependencies = {
     runAxe,
     runDomChecks: runDomChecks,
     runKeyboardChecks: runKeyboardChecks,
+    runConfiguredJourneyChecks: runConfiguredJourneyChecks,
     runDisclosureChecks: runDisclosureChecks,
     runTabChecks: runTabChecks,
     runResponsiveChecks: runResponsiveChecks,
@@ -155588,7 +156006,7 @@ const defaultAuditViewportDependencies = {
 function isPartialAudit(errors, axeRun, blocker) {
     return Boolean(blocker)
         || !axeRun.completed
-        || errors.some((message) => /^(?:DOM|Keyboard|Disclosure|Tab|Responsive|Link|Element context|Screenshot) checks? error:/i.test(message));
+        || errors.some((message) => /^(?:DOM|Keyboard|Configured journey|Disclosure|Tab|Responsive|Link|Element context|Screenshot) checks? error:/i.test(message));
 }
 async function auditViewport(browser, url, options, viewport, signal, dependencyOverrides = {}) {
     const dependencies = { ...defaultAuditViewportDependencies, ...dependencyOverrides };
@@ -155811,6 +156229,22 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
                 scope: 'blocked',
                 error: `Link checks were blocked by ${interactionBlocker.selector}.`
             };
+        }
+        if (!interactionBlocker && options.journeys.length > 0) {
+            try {
+                const configuredJourneys = await dependencies.runConfiguredJourneyChecks(page, options.journeys, url, viewport.name, async () => {
+                    const journeyConsent = await dependencies.dismissConsentBanner(page);
+                    if (journeyConsent.error)
+                        throw new Error(`Consent handling failed: ${journeyConsent.error}`);
+                });
+                keyboard.journeys.push(...configuredJourneys);
+                await page.goto(finalUrl, { waitUntil: 'domcontentloaded' });
+                await page.waitForLoadState('networkidle', { timeout: Math.min(options.timeoutMs, 5_000) }).catch(() => undefined);
+                await dependencies.dismissConsentBanner(page);
+            }
+            catch (error) {
+                errors.push(`Configured journey checks error: ${error instanceof Error ? error.message : String(error)}`);
+            }
         }
         if (signal?.aborted)
             throw new Error(CANCELLED_REASON);
@@ -157193,6 +157627,11 @@ function pageRows(summary) {
 function coverageRows(summary) {
     return summary.coverage.flatMap((page) => page.viewports.flatMap((viewport) => viewport.assessments.map((assessment) => (`<tr><td>${html_link(page.url)}</td><td>${escapeHtml(viewport.viewport)}</td><td>${escapeHtml(assessment.area.replaceAll('-', ' '))}</td><td><span class="coverage coverage-${escapeHtml(assessment.status)}">${escapeHtml(STATUS_LABELS[assessment.status] || assessment.status)}</span></td><td>${escapeHtml(assessment.detail)}</td></tr>`)))).join('') || '<tr><td colspan="5" class="empty">No coverage results were recorded.</td></tr>';
 }
+function configuredJourneyRows(summary) {
+    return summary.pages.flatMap((page) => page.viewports.flatMap((viewport) => (viewport.keyboard.journeys
+        .filter((journey) => journey.source === 'configured')
+        .map((journey) => `<tr><td>${html_link(page.url)}</td><td>${escapeHtml(viewport.viewport.name)}</td><td><strong>${escapeHtml(journey.title)}</strong><br><span class="muted">${escapeHtml(journey.id)}</span></td><td>${escapeHtml(journey.categories?.join(', ') || 'Not specified')}</td><td><span class="coverage coverage-${escapeHtml(journey.status)}">${escapeHtml(STATUS_LABELS[journey.status] || journey.status)}</span></td><td>${escapeHtml(`${journey.assertionCount ?? 0} assertion(s). ${journey.detail}`)}</td><td>${list(journey.steps, 'No steps completed.')}</td></tr>`)))).join('') || '<tr><td colspan="7" class="empty">No configured task journeys were supplied for this audit.</td></tr>';
+}
 function manualRows(summary) {
     return summary.manualChecks.map((check) => `<tr><td><span class="finding-id">${escapeHtml(check.id)}</span></td><td><strong>${escapeHtml(check.title)}</strong></td><td>${check.wcag.map((criterion) => `<span class="criterion">${escapeHtml(criterion)}</span>`).join(' ') || 'Advisory'}</td><td>${escapeHtml(check.applicableTo)}</td><td>${escapeHtml(check.procedure)}</td><td>${escapeHtml(check.expectedEvidence ?? 'Record the tested scope, method, result, evidence, and reviewer verdict.')}</td><td><span class="coverage coverage-manual-review-required">Not tested</span></td></tr>`).join('') || '<tr><td colspan="7" class="empty">No guided manual checks were generated.</td></tr>';
 }
@@ -157249,7 +157688,7 @@ function renderReport(summary, outputPath) {
       <div class="metric"><span>Manual checks</span><strong>${summary.manualChecks.length}</strong></div>
     </section>
     ${blockers ? `<div class="notice"><strong>${blockers} audit blocker${blockers === 1 ? '' : 's'}:</strong> review the findings before treating coverage as complete.</div>` : ''}
-    <nav aria-label="Report sections"><a href="#findings">Findings</a><a href="#criteria">WCAG criteria</a><a href="#pages">Pages</a><a href="#coverage">Coverage</a><a href="#manual">Manual checks</a><a href="#method">Method and limitations</a></nav>
+    <nav aria-label="Report sections"><a href="#findings">Findings</a><a href="#criteria">WCAG criteria</a><a href="#pages">Pages</a><a href="#coverage">Coverage</a><a href="#journeys">Task journeys</a><a href="#manual">Manual checks</a><a href="#method">Method and limitations</a></nav>
 
     <section id="findings" aria-labelledby="findings-title"><h2 id="findings-title">Findings</h2><p class="lede">Search and filter the evidence. Expand a finding for its impact, verification steps, remediation and linked screenshots.</p>
       <div class="toolbar"><div class="field"><label for="finding-search">Search findings</label><input id="finding-search" type="search" placeholder="Rule, issue, page or WCAG criterion"></div><div class="field"><label for="classification-filter">Classification</label><select id="classification-filter"><option value="">All classifications</option><option value="confirmed">Confirmed</option><option value="review">Review</option><option value="blocker">Blocker</option><option value="manual">Manual</option></select></div><div class="field"><label for="severity-filter">Severity</label><select id="severity-filter"><option value="">All severities</option><option>Critical</option><option>Serious</option><option>Moderate</option><option>Minor</option><option>Advisory</option></select></div><div id="result-count" class="result-count" aria-live="polite"></div></div>
@@ -157260,8 +157699,9 @@ function renderReport(summary, outputPath) {
 
     <section id="pages" aria-labelledby="pages-title"><h2 id="pages-title">Page inventory</h2><div class="table-wrap"><table><caption>Requested targets and audit status</caption><thead><tr><th scope="col">URL</th><th scope="col">Status</th><th scope="col">Viewports</th><th scope="col">Notes</th></tr></thead><tbody>${pageRows(summary)}</tbody></table></div></section>
     <section id="coverage" aria-labelledby="coverage-title"><h2 id="coverage-title">Test coverage</h2><p class="lede">“Manual review”, “inconclusive” and “not tested” are unresolved outcomes—not passes.</p><div class="table-wrap"><table><caption>Coverage by page, viewport and audit area</caption><thead><tr><th scope="col">Page</th><th scope="col">Viewport</th><th scope="col">Area</th><th scope="col">Outcome</th><th scope="col">Evidence note</th></tr></thead><tbody>${coverageRows(summary)}</tbody></table></div></section>
+    <section id="journeys" aria-labelledby="journeys-title"><h2 id="journeys-title">Configured task journeys</h2><p class="lede">Repeatable keyboard, form, interaction and live-region assertions supplied for this site. A DOM live-region result does not prove the quality of a screen-reader announcement.</p><div class="table-wrap"><table><caption>Site-specific task journey evidence</caption><thead><tr><th scope="col">Page</th><th scope="col">Viewport</th><th scope="col">Journey</th><th scope="col">Areas</th><th scope="col">Outcome</th><th scope="col">Result</th><th scope="col">Completed steps</th></tr></thead><tbody>${configuredJourneyRows(summary)}</tbody></table></div></section>
     <section id="manual" aria-labelledby="manual-title"><h2 id="manual-title">WCAG 2.2 A/AA human verification</h2><p class="lede">All 55 Level A and AA success criteria have a criterion-specific procedure and evidence prompt. Record an explicit verdict for each applicable criterion; “not tested” is unresolved, not a pass.</p><div class="table-wrap"><table><caption>Criterion-specific human assessment plan</caption><thead><tr><th scope="col">ID</th><th scope="col">Check</th><th scope="col">WCAG</th><th scope="col">Applies to</th><th scope="col">Procedure</th><th scope="col">Evidence to record</th><th scope="col">Status</th></tr></thead><tbody>${manualRows(summary)}</tbody></table></div></section>
-    <section id="method" aria-labelledby="method-title"><h2 id="method-title">Method and limitations</h2><div class="limitations"><div class="panel"><h3>Audit scope</h3><ul><li>${escapeHtml(conformance)}</li><li>${summary.requestedUrls.length} requested URL${summary.requestedUrls.length === 1 ? '' : 's'}; ${summary.auditedUrls.length} audited</li><li>${summary.pages.flatMap((page) => page.viewports).length} page-and-viewport runs</li><li>Automated axe rules plus DOM, deterministic keyboard journeys, responsive/reflow, disclosure, tab and link checks</li><li>Native screen-reader transcripts, when supplied, are supporting evidence and do not replace expert assessment</li></ul></div><div class="panel"><h3>Known limitations</h3>${list([...summary.limitations, `${summary.manualChecks.length} guided manual check(s) require human completion.`, 'A qualified human must complete applicable checks and make the final conformance decision.'], 'No limitations recorded.')}</div></div></section>
+    <section id="method" aria-labelledby="method-title"><h2 id="method-title">Method and limitations</h2><div class="limitations"><div class="panel"><h3>Audit scope</h3><ul><li>${escapeHtml(conformance)}</li><li>${summary.requestedUrls.length} requested URL${summary.requestedUrls.length === 1 ? '' : 's'}; ${summary.auditedUrls.length} audited</li><li>${summary.pages.flatMap((page) => page.viewports).length} page-and-viewport runs</li><li>Automated axe rules plus DOM, generic and configured keyboard journeys, 200% root-text resizing, text spacing, responsive/reflow, disclosure, tab and link checks</li><li>Native screen-reader transcripts, when supplied, are supporting evidence and do not replace expert assessment</li></ul></div><div class="panel"><h3>Known limitations</h3>${list([...summary.limitations, `${summary.manualChecks.length} guided manual check(s) require human completion.`, 'A qualified human must complete applicable checks and make the final conformance decision.'], 'No limitations recorded.')}</div></div></section>
     <footer class="footer">Generated by CarlasHub Accessibility Audit. Keep this file beside the <code>screenshots</code> folder so evidence links continue to work.</footer>
   </main>
   <script>
@@ -157438,6 +157878,7 @@ async function executeAudit(request) {
 
 
 
+
 const FAILURE_POLICIES = ['none', 'blockers', 'confirmed', 'critical', 'serious', 'moderate', 'minor'];
 const severityRank = {
     Advisory: 0,
@@ -157517,6 +157958,20 @@ function parsePositiveInteger(value, fallback, name, maximum) {
         throw new Error(`${name} must be between 1 and ${maximum}.`);
     return parsed;
 }
+function parseJourneysInput(value) {
+    if (!value.trim())
+        return [];
+    const parsed = JSON.parse(value);
+    const journeys = Array.isArray(parsed)
+        ? parsed
+        : parsed && typeof parsed === 'object' && 'journeys' in parsed
+            ? parsed.journeys
+            : undefined;
+    if (!Array.isArray(journeys)) {
+        throw new Error('journeys must be a JSON array or an object containing a journeys array.');
+    }
+    return resolveOptions({ journeys: journeys }).journeys;
+}
 function evaluateGate(policy, findings = []) {
     if (policy === 'none')
         return { policy, failed: false, matchedCount: 0, label: 'Informational only' };
@@ -157545,6 +158000,24 @@ function resolveOutputDirectory(environment, value) {
     if ((0,external_node_path_.isAbsolute)(requested))
         return (0,external_node_path_.resolve)(requested);
     return (0,external_node_path_.resolve)(environment.GITHUB_WORKSPACE || process.cwd(), requested);
+}
+async function loadActionJourneys(environment) {
+    const inline = getInput(environment, 'JOURNEYS');
+    const file = getInput(environment, 'JOURNEYS-FILE');
+    if (inline && file)
+        throw new Error('Use either journeys or journeys-file, not both.');
+    if (inline)
+        return parseJourneysInput(inline);
+    if (!file)
+        return [];
+    const path = (0,external_node_path_.isAbsolute)(file) ? file : (0,external_node_path_.resolve)(environment.GITHUB_WORKSPACE || process.cwd(), file);
+    try {
+        return parseJourneysInput(await (0,promises_.readFile)(path, 'utf8'));
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Could not load journeys-file ${file}: ${message}`);
+    }
 }
 async function setOutput(environment, name, value) {
     const outputFile = environment.GITHUB_OUTPUT;
@@ -157652,6 +158125,7 @@ async function runGitHubAction(environment = process.env, signal) {
     const outputDir = resolveOutputDirectory(environment, getInput(environment, 'OUTPUT-DIR'));
     const allowedHosts = resolveAllowedHosts(inputs, parseListInput(getInput(environment, 'ALLOWED-HOSTS'), true));
     const failurePolicy = parseFailurePolicy(getInput(environment, 'FAIL-ON'));
+    const journeys = await loadActionJourneys(environment);
     const templatePath = environment.GITHUB_ACTION_PATH
         ? (0,external_node_path_.resolve)(environment.GITHUB_ACTION_PATH, 'assets', 'accessibility-report-template.xlsx')
         : undefined;
@@ -157671,6 +158145,7 @@ async function runGitHubAction(environment = process.env, signal) {
             timeoutMs: parsePositiveInteger(getInput(environment, 'TIMEOUT-MS'), 30_000, 'timeout-ms'),
             concurrency: parsePositiveInteger(getInput(environment, 'CONCURRENCY'), 2, 'concurrency', 8),
             captureScreenshots: parseBooleanInput(getInput(environment, 'CAPTURE-SCREENSHOTS'), true),
+            journeys,
             ...(getInput(environment, 'BROWSER-CHANNEL') ? { channel: getInput(environment, 'BROWSER-CHANNEL') } : {}),
             ...(templatePath ? { templatePath } : {})
         },

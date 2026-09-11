@@ -72,6 +72,8 @@ describe('HTML accessibility report', () => {
     expect(html).toContain('CarlasHub &lt;script&gt;alert(1)&lt;/script&gt;');
     expect(html).toContain('<strong>Source:</strong> direct input</span>');
     expect(html).toContain('Page, screen reader, reading sequence, announcement, and verdict.');
+    expect(html).toContain('Configured task journeys');
+    expect(html).toContain('No configured task journeys were supplied');
     expect(html).not.toContain('direct input, direct input');
     expect(html).not.toContain('CarlasHub <script>alert(1)</script>');
     expect(html).not.toMatch(/https?:\/\/[^"']+\.(?:css|js)/i);

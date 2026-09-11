@@ -189,22 +189,71 @@ export interface KeyboardCheckResult {
   journeys: KeyboardJourneyResult[];
 }
 
+export type AuditJourneyCategory = 'keyboard' | 'forms' | 'interaction' | 'dynamic-content';
+
+export type AuditJourneyStep =
+  | { action: 'focus'; selector: string }
+  | { action: 'press'; key: string; selector?: string }
+  | { action: 'type'; selector: string; text: string }
+  | { action: 'wait'; milliseconds: number }
+  | {
+      action: 'assert';
+      expectation:
+        | 'focused'
+        | 'visible'
+        | 'hidden'
+        | 'expanded'
+        | 'collapsed'
+        | 'pressed'
+        | 'unpressed'
+        | 'selected'
+        | 'checked'
+        | 'unchecked'
+        | 'invalid'
+        | 'valid'
+        | 'url-contains'
+        | 'text-contains'
+        | 'value-equals'
+        | 'live-region-updated';
+      selector?: string;
+      value?: string;
+      timeoutMs?: number;
+    };
+
+/** A repeatable, site-specific keyboard task executed against matching pages and viewports. */
+export interface AuditJourneyDefinition {
+  id: string;
+  title: string;
+  categories: AuditJourneyCategory[];
+  /** A case-sensitive substring of the requested URL. Omit to run on every requested page. */
+  urlIncludes?: string;
+  /** Viewport names on which to run the journey. Omit to run on every configured viewport. */
+  viewports?: string[];
+  steps: AuditJourneyStep[];
+}
+
 export interface KeyboardJourneyResult {
-  id: 'forward-reverse-focus-order' | 'bypass-blocks';
+  id: string;
   title: string;
   status: 'passed' | 'failed' | 'not-applicable' | 'inconclusive';
   steps: string[];
   detail: string;
+  source?: 'built-in' | 'configured';
+  categories?: AuditJourneyCategory[];
+  assertionCount?: number;
+  selectors?: string[];
 }
 
 export interface ResponsiveCheckResult {
   horizontalOverflow: number;
   overflowElements: Array<{ selector: string; right: number; width: number }>;
   textSpacingOverflow: number;
+  /** Root-font 200% stress-test overflow. This is evidence, not a substitute for browser zoom review. */
+  textResizeOverflow?: number;
   clippedElements: Array<{
     selector: string;
     axis: 'horizontal' | 'vertical' | 'both';
-    phase: 'default' | 'text-spacing';
+    phase: 'default' | 'text-resize-200' | 'text-spacing';
     clientWidth: number;
     clientHeight: number;
     scrollWidth: number;
@@ -213,11 +262,12 @@ export interface ResponsiveCheckResult {
   overlapPairs: Array<{
     firstSelector: string;
     secondSelector: string;
-    phase: 'default' | 'text-spacing';
+    phase: 'default' | 'text-resize-200' | 'text-spacing';
     overlapWidth: number;
     overlapHeight: number;
   }>;
   lostInteractiveElements: Array<{ selector: string; name: string }>;
+  textResizeLostInteractiveElements?: Array<{ selector: string; name: string }>;
 }
 
 export interface DisclosureCheckResult {
@@ -454,4 +504,5 @@ export interface AuditOptions {
   concurrency: number;
   captureScreenshots: boolean;
   viewports: ViewportDefinition[];
+  journeys: AuditJourneyDefinition[];
 }

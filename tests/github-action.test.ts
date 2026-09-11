@@ -3,6 +3,7 @@ import {
   evaluateGate,
   parseBooleanInput,
   parseFailurePolicy,
+  parseJourneysInput,
   parseListInput,
   parsePositiveInteger,
   parseWcagLevel,
@@ -34,6 +35,20 @@ describe('GitHub Action inputs', () => {
     expect(parsePositiveInteger('', 2, 'concurrency', 8)).toBe(2);
     expect(parsePositiveInteger('8', 2, 'concurrency', 8)).toBe(8);
     expect(() => parsePositiveInteger('9', 2, 'concurrency', 8)).toThrow('between 1 and 8');
+  });
+
+  it('validates configured keyboard and interaction journeys', () => {
+    expect(parseJourneysInput(JSON.stringify({ journeys: [{
+      id: 'open-menu',
+      title: 'Open the primary menu',
+      categories: ['keyboard', 'interaction'],
+      steps: [
+        { action: 'focus', selector: '#menu' },
+        { action: 'press', key: 'Enter' },
+        { action: 'assert', expectation: 'expanded', selector: '#menu' }
+      ]
+    }] }))).toEqual([expect.objectContaining({ id: 'open-menu', categories: ['keyboard', 'interaction'] })]);
+    expect(() => parseJourneysInput('[{"id":"unsafe","title":"Missing assertions","categories":["keyboard"],"steps":[]}]')).toThrow();
   });
 
   it('derives a safe hostname allowlist when users provide only URLs', () => {

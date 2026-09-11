@@ -720,7 +720,7 @@ export async function runKeyboardChecks(page: Page, maxTabStops: number): Promis
 }
 
 export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckResult> {
-  const snapshot = (phase: 'default' | 'text-spacing') => page.evaluate(({ currentPhase, focusables }) => {
+  const snapshot = (phase: 'default' | 'text-resize-200' | 'text-spacing') => page.evaluate(({ currentPhase, focusables }) => {
     const cssPath = (element: Element): string => {
       if (element.id) return `#${CSS.escape(element.id)}`;
       const parts: string[] = [];
@@ -837,6 +837,13 @@ export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckRe
 
   const base = await snapshot('default');
 
+  const textResizeStyle = await page.addStyleTag({
+    content: 'html { font-size: 200% !important; }'
+  });
+  await page.waitForTimeout(100);
+  const resized = await snapshot('text-resize-200');
+  await textResizeStyle.evaluate((element) => (element as Element).remove());
+
   const spacingStyle = await page.addStyleTag({
     content: `
       html body *:not(svg):not(svg *) {
@@ -853,22 +860,28 @@ export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckRe
   const spaced = await snapshot('text-spacing');
   await spacingStyle.evaluate((element) => (element as Element).remove());
   const spacedSelectors = new Set(spaced.visibleInteractiveElements.map((element) => element.selector));
+  const resizedSelectors = new Set(resized.visibleInteractiveElements.map((element) => element.selector));
   const lostInteractiveElements = base.visibleInteractiveElements.filter((element) => !spacedSelectors.has(element.selector));
+  const textResizeLostInteractiveElements = base.visibleInteractiveElements.filter((element) => !resizedSelectors.has(element.selector));
   const baseClippingKeys = new Set(base.clippedElements.map((item) => `${item.selector}|${item.axis}`));
   const baseOverlapKeys = new Set(base.overlapPairs.map((item) => [item.firstSelector, item.secondSelector].sort().join('|')));
   return {
     horizontalOverflow: base.horizontalOverflow,
     overflowElements: base.overflowElements,
+    textResizeOverflow: resized.horizontalOverflow,
     textSpacingOverflow: spaced.horizontalOverflow,
     clippedElements: [
       ...base.clippedElements,
+      ...resized.clippedElements.filter((item) => !baseClippingKeys.has(`${item.selector}|${item.axis}`)),
       ...spaced.clippedElements.filter((item) => !baseClippingKeys.has(`${item.selector}|${item.axis}`))
     ],
     overlapPairs: [
       ...base.overlapPairs,
+      ...resized.overlapPairs.filter((item) => !baseOverlapKeys.has([item.firstSelector, item.secondSelector].sort().join('|'))),
       ...spaced.overlapPairs.filter((item) => !baseOverlapKeys.has([item.firstSelector, item.secondSelector].sort().join('|')))
     ],
-    lostInteractiveElements
+    lostInteractiveElements,
+    textResizeLostInteractiveElements
   };
 }
 

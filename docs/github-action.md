@@ -70,10 +70,47 @@ The Action uses the GitHub REST API only to list, create, or update its marked p
 | `auto-install-browser` | `true` | Install Playwright Chromium when no compatible browser is available. |
 | `concurrency` | `2` | Concurrent pages, from 1 to 8. |
 | `timeout-ms` | `30000` | Per-operation timeout in milliseconds. |
+| `journeys` | Empty | JSON array of project-specific keyboard, form, interaction, and dynamic-content journeys. |
+| `journeys-file` | Empty | Workspace-relative JSON file containing the journey array. Check out the caller repository first when using the standalone Action. Mutually exclusive with `journeys`. |
 | `report-name` | `Accessibility_Audit_Report.xlsx` | Excel report filename. |
 | `fail-on` | `none` | `none`, `blockers`, `confirmed`, `critical`, `serious`, `moderate`, or `minor`. |
 | `comment-on-pr` | `true` | Attempt the marked pull-request summary when a token is supplied. |
 | `github-token` | Empty | Token used only for the pull-request summary. |
+
+## Project-specific task journeys
+
+Generic automation cannot know the meaningful tasks in an application. Add a version-controlled journey file to test the exact keyboard and interaction outcomes your users depend on. With the reusable workflow, the complete job remains:
+
+```yaml
+jobs:
+  audit:
+    uses: CarlasHub/accessibility-audit-plugin/.github/workflows/reusable-accessibility-audit.yml@v1
+    with:
+      url: https://preview.example.test/
+      journeys-file: .github/a11y-journeys.json
+```
+
+Create `.github/a11y-journeys.json` in the caller repository:
+
+```json
+[
+  {
+    "id": "submit-empty-contact-form",
+    "title": "Receive an announced error after keyboard submission",
+    "categories": ["keyboard", "forms", "dynamic-content"],
+    "steps": [
+      { "action": "focus", "selector": "#submit-contact" },
+      { "action": "press", "key": "Enter" },
+      { "action": "assert", "expectation": "invalid", "selector": "#email" },
+      { "action": "assert", "expectation": "live-region-updated", "selector": "#form-errors", "value": "Email is required" }
+    ]
+  }
+]
+```
+
+Supported actions are `focus`, `press`, `type`, `wait`, and `assert`. Assertions cover focus, visibility, expanded/pressed/selected/checked/valid states, URL and text content, input values, and scoped live-region updates. Optional `urlIncludes` and `viewports` filters keep a journey within its intended route and layout. Every journey starts from the requested URL, records its executed steps and selectors in JSON, and appears in the HTML evidence table.
+
+Use [the maintained BuggyLand pack](../examples/buggyland-journeys.json) for complete examples covering keyboard entry, form errors, custom tabs, modal focus/Escape behavior, and status messages. A passing scripted DOM journey does not establish equivalent screen-reader output or complete WCAG conformance; retain native assistive-technology and human task testing.
 
 ## Quality gates
 

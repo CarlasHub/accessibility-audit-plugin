@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveOptions } from '../src/config.js';
 import { auditViewport, runAudit, type AuditViewportDependencies } from '../src/audit/runner.js';
 import { runResponsiveChecks } from '../src/audit/browser-checks.js';
+import { runConfiguredJourneyChecks } from '../src/audit/journey-checks.js';
 import { buildCoverageMatrix } from '../src/audit/coverage.js';
 import { findingsFromPage } from '../src/audit/findings.js';
 import { detectInteractionBlocker } from '../src/audit/page-preparation.js';
@@ -168,6 +169,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
           .track { display: flex; width: 300px; }
           .carousel-slide { flex: 0 0 150px; }
           .wide { width: 300px; height: 20px; }
+          .resize-width { width: 20rem; }
           .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
         </style>
         <main>
@@ -178,6 +180,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
             </div>
           </div>
           <div id="genuine-clipping" class="viewport"><div class="wide">Clipped content</div></div>
+          <p class="resize-width">This line fits at the default text size and overflows when root text is resized to 200%.</p>
           <span id="assistive-copy" class="sr-only">Useful screen reader instructions that are intentionally hidden visually.</span>
         </main>
       `);
@@ -187,6 +190,81 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       expect(result.clippedElements.some((element) => element.selector === '#genuine-clipping')).toBe(true);
       expect(result.clippedElements.filter((element) => element.selector === '#genuine-clipping')).toHaveLength(1);
       expect(result.clippedElements.some((element) => element.selector === '#assistive-copy')).toBe(false);
+      expect(result.textResizeOverflow).toBeGreaterThan(result.horizontalOverflow);
+      expect(result.textResizeLostInteractiveElements).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('executes configured keyboard, form, interaction, and dynamic-content assertions', async () => {
+    const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+    const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
+    try {
+      const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+      const html = `<!doctype html><html lang="en"><head><title>Journey fixture</title></head><body>
+        <button id="menu" aria-expanded="false" aria-controls="panel">Menu</button>
+        <nav id="panel" hidden>Primary navigation</nav>
+        <label>Email <input id="email" type="email" required></label>
+        <button id="submit" type="button">Submit</button>
+        <div id="fake-tab">Unfocusable custom tab</div>
+        <div id="status" role="status"></div>
+        <script>
+          menu.addEventListener('click', () => { const open = menu.getAttribute('aria-expanded') !== 'true'; menu.setAttribute('aria-expanded', String(open)); panel.hidden = !open; });
+          submit.addEventListener('click', () => { email.setAttribute('aria-invalid', 'true'); document.querySelector('#status').textContent = 'Email is required'; });
+        </script>
+      </body></html>`;
+      const url = `data:text/html,${encodeURIComponent(html)}`;
+      const results = await runConfiguredJourneyChecks(page, [
+        {
+          id: 'open-menu',
+          title: 'Open the menu with a keyboard',
+          categories: ['keyboard', 'interaction'],
+          steps: [
+            { action: 'focus', selector: '#menu' },
+            { action: 'press', key: 'Enter' },
+            { action: 'assert', expectation: 'expanded', selector: '#menu' },
+            { action: 'assert', expectation: 'visible', selector: '#panel' }
+          ]
+        },
+        {
+          id: 'complete-form-field',
+          title: 'Enter a value in a form field',
+          categories: ['keyboard', 'forms'],
+          steps: [
+            { action: 'focus', selector: '#email' },
+            { action: 'type', selector: '#email', text: 'carla@example.com' },
+            { action: 'assert', expectation: 'value-equals', selector: '#email', value: 'carla@example.com' }
+          ]
+        },
+        {
+          id: 'submit-empty-form',
+          title: 'Submit an empty form',
+          categories: ['keyboard', 'forms', 'dynamic-content'],
+          steps: [
+            { action: 'focus', selector: '#submit' },
+            { action: 'press', key: 'Enter' },
+            { action: 'assert', expectation: 'invalid', selector: '#email' },
+            { action: 'assert', expectation: 'live-region-updated', value: 'Email is required' }
+          ]
+        },
+        {
+          id: 'unfocusable-custom-control',
+          title: 'Reach the custom tab with a keyboard',
+          categories: ['keyboard', 'interaction'],
+          steps: [
+            { action: 'focus', selector: '#fake-tab' },
+            { action: 'assert', expectation: 'focused', selector: '#fake-tab' }
+          ]
+        }
+      ], url, 'desktop');
+
+      expect(results).toEqual([
+        expect.objectContaining({ id: 'open-menu', status: 'passed', assertionCount: 2 }),
+        expect.objectContaining({ id: 'complete-form-field', status: 'passed', assertionCount: 1 }),
+        expect.objectContaining({ id: 'submit-empty-form', status: 'passed', assertionCount: 2 }),
+        expect.objectContaining({ id: 'unfocusable-custom-control', status: 'failed', assertionCount: 0 })
+      ]);
     } finally {
       await browser.close();
     }

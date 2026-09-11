@@ -55,6 +55,12 @@ inputs:
     description: Per-operation browser timeout in milliseconds.
     required: false
     default: '30000'
+  journeys:
+    description: Optional JSON array of site-specific keyboard, form, interaction, and dynamic-content journeys.
+    required: false
+  journeys-file:
+    description: Optional JSON file containing a journeys array. The caller must check out its repository first.
+    required: false
   report-name:
     description: Optional Excel report filename.
     required: false

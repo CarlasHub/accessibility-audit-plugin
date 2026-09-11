@@ -42,7 +42,7 @@ The demonstrated audit of [A11y Test Cases](https://carlashub.github.io/a11y-tes
 
 The two [BuggyLand](https://carlashub.github.io/buggyland/) pages declare 172 intentional failure fixtures across all 86 active WCAG 2.2 success criteria. The historical v1.2.0 walkthrough produced 70 consolidated machine results: 52 confirmed failures and 18 items for review, with zero execution errors. Those numbers should not match: automated rules inspect rendered behaviour, consolidate repeated evidence, and cannot decide every WCAG requirement. The [benchmark evidence guide](docs/buggyland-benchmark.md) provides the complete criteria matrix, fixture inventory, downloadable enhanced workbook, raw JSON, and manual verification plan.
 
-The current v1.5.1 release gate audits four page and fragment states at desktop, mobile, and 320px reflow sizes, then repeats the complete run to detect unstable results. Its reviewed baseline is 60 consolidated records: 32 confirmed failures, 27 items for review, and 1 interaction blocker, plus all 55 A/AA criterion-specific checks. The earlier v1.3.1 baseline contained 66 records; v1.4.1 removed six duplicate or unreliable review signals without suppressing confirmed failures. Two blocked `#special` states remain visibly partial instead of being reported as passes. The exact machine-result baseline is enforced by the [regression fixture](tests/fixtures/buggyland-regression.json) and the [scheduled public workflow](.github/workflows/buggyland-regression.yml).
+The current v1.6.0 release gate audits four page and fragment states at desktop, mobile, and 320px reflow sizes, then repeats the complete run to detect unstable results. Its reviewed baseline is 70 consolidated records: 32 confirmed failures, 37 items for review, and 1 interaction blocker, plus all 55 A/AA criterion-specific checks. It also executes 42 site-specific journey instances across the unblocked page and viewport combinations: 12 pass and 30 deliberately expose broken form announcements, tabs, modal focus management, Escape handling, and toast announcements. Independent 200% text-resize and 320px reflow phases prevent one responsive check from being mistaken for the other. Two blocked `#special` states remain visibly partial instead of being reported as passes. The exact machine-result baseline is enforced by the [regression fixture](tests/fixtures/buggyland-regression.json) and the [scheduled public workflow](.github/workflows/buggyland-regression.yml).
 
 For a client-neutral example, [watch the sanitised plugin demonstration](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4) or read its [transcript](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/accessibility-audit-demo-transcript.md).
 
@@ -126,8 +126,8 @@ Every supplied page is checked at desktop (1440×1000), mobile (390×844), and 3
 - images, links, buttons, and form fields that do not have usable names;
 - incorrect page structure or broken relationships between controls and content;
 - keyboard focus that is unreachable, out of order, outside the viewport, invisible, or fully covered, including forward/reverse order and bypass-block journeys;
-- menus, disclosures, and tabs whose state or keyboard operation is broken;
-- content that overflows, clips, overlaps, disappears, or loses focus visibility/functionality at narrow widths or after WCAG text-spacing overrides;
+- menus, disclosures, and tabs whose state or keyboard operation is broken, plus configured site-specific keyboard, form, interaction, and live-region task journeys;
+- content that overflows, clips, overlaps, disappears, or loses focus visibility/functionality at narrow widths, at 200% root-text size, or after WCAG text-spacing overrides;
 - same-site links that are empty, placeholders, missing fragments, or consistently return 404/410;
 - target-size spacing conflicts, plus selected table, media, and responsive-layout signals that require review.
 
@@ -159,9 +159,10 @@ See [Understanding the report](docs/reporting.md) for a worksheet and column gui
 - axe-core WCAG 2.2 A/AA rules plus selected best-practice signals, which remain review items when no WCAG success criterion is mapped.
 - DOM and semantic checks for page structure, image alternatives, controls, fields, landmarks, duplicate ids, tables, and media.
 - Deterministic forward/reverse keyboard journeys, bypass-block activation, focus visibility/viewport/obscuration checks, and disclosure state/relationship interaction tests.
+- Configurable, repeatable task journeys for project-specific keyboard operation, forms, widget state, focus management, URL changes, and scoped live-region DOM updates.
 - Tab-component state, roving tabindex, arrow navigation, activation, and tab/panel relationship checks.
 - Conservative same-origin link validation for empty names, placeholders, missing fragments, confirmed 404/410 destinations, and server-error review signals.
-- Desktop, 390px mobile, and 320px reflow viewports with overflow, clipping, overlap, focus, and lost-functionality evidence before and after WCAG text spacing.
+- Desktop, 390px mobile, and 320px reflow viewports with independent default, 200% root-text, and WCAG text-spacing states covering overflow, clipping, overlap, focus, and lost-functionality evidence.
 - Consent-banner detection and dismissal before interaction testing and evidence capture; reject or necessary-only actions are preferred.
 - At most one representative contextual component screenshot per final confirmed, blocker, or review reporting unit, with the affected element outlined inside its navigation, form, tablist, card, section, or other component boundary.
 - Full-page screenshots only for page-level failures or unresolved blocking surfaces; a failed component capture never falls back to unrelated full-page evidence.
@@ -455,9 +456,24 @@ Pass `--config audit.config.json`. Command-line values override the file.
   "timeoutMs": 30000,
   "maxTabStops": 120,
   "maxLinksPerPage": 200,
-  "captureScreenshots": true
+  "captureScreenshots": true,
+  "journeys": [
+    {
+      "id": "open-primary-menu",
+      "title": "Open the primary menu with Enter",
+      "categories": ["keyboard", "interaction"],
+      "steps": [
+        { "action": "focus", "selector": "#menu-button" },
+        { "action": "press", "key": "Enter" },
+        { "action": "assert", "expectation": "expanded", "selector": "#menu-button" },
+        { "action": "assert", "expectation": "visible", "selector": "#primary-menu" }
+      ]
+    }
+  ]
 }
 ```
+
+Journeys restart from the requested URL and run at every applicable viewport. They may be limited with `urlIncludes` and `viewports`. Missing selectors are reported as inconclusive; reproduced assertion or keyboard-focus failures are confirmed. Use the complete [BuggyLand journey pack](examples/buggyland-journeys.json) as a working keyboard, form, modal, tabs, and live-region example. The GitHub Action also accepts the same array through `journeys` or a checked-in JSON file through `journeys-file`.
 
 Use `--headed` only when debugging. Normal and CI execution should remain headless.
 
@@ -476,12 +492,12 @@ The server also publishes the `run-accessibility-audit` MCP prompt.
 
 Automation cannot establish complete WCAG conformance. Manual work remains necessary for:
 
-- Supported screen-reader/browser combinations and dynamic announcements.
+- The user experience of supported screen-reader/browser combinations; a configured live-region journey proves only the observed DOM announcement contract.
 - Physical mobile devices, touch gestures, orientation, and drag alternatives.
 - Alternative-text meaning, captions, audio descriptions, language changes, and heading/label quality.
 - Complete contrast over gradients, images, and every component state.
 - Timing, flashing, cognitive consistency, error quality, accessible authentication, and exception analysis.
-- Complete keyboard journeys and application-specific workflows not safely submitted by automation.
+- Unconfigured, destructive, authentication-sensitive, or context-dependent keyboard journeys and application-specific workflows.
 
 Use `list_guided_manual_checks`, the workbook Overview, and [docs/manual-verification.md](docs/manual-verification.md) to complete those procedures.
 

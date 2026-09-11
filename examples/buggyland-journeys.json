@@ -1,0 +1,97 @@
+{
+  "journeys": [
+    {
+      "id": "theme-toggle-keyboard",
+      "title": "Change the colour theme with the keyboard",
+      "categories": ["keyboard", "interaction"],
+      "steps": [
+        { "action": "focus", "selector": "[data-theme-toggle]" },
+        { "action": "assert", "expectation": "focused", "selector": "[data-theme-toggle]" },
+        { "action": "press", "key": "Enter" },
+        { "action": "assert", "expectation": "focused", "selector": "[data-theme-toggle]" }
+      ]
+    },
+    {
+      "id": "form-error-announcement",
+      "title": "Submit the special form and receive an announced error",
+      "categories": ["keyboard", "forms", "dynamic-content"],
+      "steps": [
+        { "action": "focus", "selector": "a[href=\"#special\"]" },
+        { "action": "press", "key": "Enter" },
+        { "action": "assert", "expectation": "url-contains", "value": "#special" },
+        { "action": "focus", "selector": "[data-special-form] button" },
+        { "action": "press", "key": "Enter" },
+        { "action": "assert", "expectation": "text-contains", "selector": ".form-errors", "value": "Please fill out the required fields." },
+        { "action": "assert", "expectation": "live-region-updated", "selector": ".form-errors", "value": "Please fill out the required fields." }
+      ]
+    },
+    {
+      "id": "form-keyboard-entry",
+      "title": "Complete the special form fields with the keyboard",
+      "categories": ["keyboard", "forms"],
+      "steps": [
+        { "action": "focus", "selector": "a[href=\"#special\"]" },
+        { "action": "press", "key": "Enter" },
+        { "action": "focus", "selector": "[data-special-form] input:nth-of-type(1)" },
+        { "action": "type", "selector": "[data-special-form] input:nth-of-type(1)", "text": "Carla" },
+        { "action": "assert", "expectation": "value-equals", "selector": "[data-special-form] input:nth-of-type(1)", "value": "Carla" },
+        { "action": "focus", "selector": "[data-special-form] input:nth-of-type(2)" },
+        { "action": "type", "selector": "[data-special-form] input:nth-of-type(2)", "text": "carla@example.com" },
+        { "action": "assert", "expectation": "value-equals", "selector": "[data-special-form] input:nth-of-type(2)", "value": "carla@example.com" }
+      ]
+    },
+    {
+      "id": "custom-tabs-keyboard",
+      "title": "Reach and change the custom tabs with the keyboard",
+      "categories": ["keyboard", "interaction"],
+      "steps": [
+        { "action": "focus", "selector": "a[href=\"#special\"]" },
+        { "action": "press", "key": "Enter" },
+        { "action": "focus", "selector": "[data-fake-tabs] .tab:nth-child(2)" },
+        { "action": "assert", "expectation": "focused", "selector": "[data-fake-tabs] .tab:nth-child(2)" },
+        { "action": "press", "key": "ArrowRight" },
+        { "action": "assert", "expectation": "selected", "selector": "[data-fake-tabs] .tab:nth-child(3)" }
+      ]
+    },
+    {
+      "id": "modal-initial-focus",
+      "title": "Move focus into the modal when it opens",
+      "categories": ["keyboard", "interaction"],
+      "steps": [
+        { "action": "focus", "selector": "a[href=\"#special\"]" },
+        { "action": "press", "key": "Enter" },
+        { "action": "focus", "selector": "[data-open-modal]" },
+        { "action": "press", "key": "Enter" },
+        { "action": "assert", "expectation": "visible", "selector": "[data-modal]" },
+        { "action": "assert", "expectation": "focused", "selector": "[data-close-modal]" }
+      ]
+    },
+    {
+      "id": "modal-escape-key",
+      "title": "Dismiss the modal with Escape",
+      "categories": ["keyboard", "interaction"],
+      "steps": [
+        { "action": "focus", "selector": "a[href=\"#special\"]" },
+        { "action": "press", "key": "Enter" },
+        { "action": "focus", "selector": "[data-open-modal]" },
+        { "action": "press", "key": "Enter" },
+        { "action": "assert", "expectation": "visible", "selector": "[data-modal]" },
+        { "action": "press", "key": "Escape" },
+        { "action": "assert", "expectation": "hidden", "selector": "[data-modal]" }
+      ]
+    },
+    {
+      "id": "toast-announcement",
+      "title": "Trigger and announce the saved-status toast",
+      "categories": ["keyboard", "dynamic-content"],
+      "steps": [
+        { "action": "focus", "selector": "a[href=\"#special\"]" },
+        { "action": "press", "key": "Enter" },
+        { "action": "focus", "selector": "[data-toast-btn]" },
+        { "action": "press", "key": "Enter" },
+        { "action": "assert", "expectation": "visible", "selector": "[data-toast]" },
+        { "action": "assert", "expectation": "live-region-updated", "selector": "[data-toast]", "value": "Saved successfully." }
+      ]
+    }
+  ]
+}

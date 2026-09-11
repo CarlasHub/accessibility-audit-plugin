@@ -826,15 +826,43 @@ function domFindings(audit: ViewportAudit): Finding[] {
     }));
   }
 
+  if ((audit.responsive.textResizeOverflow ?? 0) > Math.max(2, audit.responsive.horizontalOverflow + 2)) {
+    findings.push(makeFinding({
+      identity: 'text-resize-200|page',
+      ruleId: 'text-resize-200-overflow',
+      classification: 'review',
+      severity: 'Serious',
+      wcag: ['1.4.4', '1.4.10'],
+      summary: 'A 200% text resize may cause content loss or overflow',
+      issue: `After resizing root text to 200%, overflow increased to ${audit.responsive.textResizeOverflow}px. Visual inspection is required to distinguish content loss from a permitted two-dimensional layout.`,
+      impact: 'People who enlarge text may need to scroll in two directions or may lose content or functionality.',
+      testing: 'The root font size was overridden to 200% and document overflow was remeasured at the configured viewport.',
+      remediation: 'Use relative sizing and flexible containers so text can enlarge to 200% without clipping, overlap, or loss of functionality.',
+      component: 'page layout',
+      urls: [audit.url],
+      viewports: [audit.viewport.name],
+      selectors: [],
+      evidence: [evidence('responsive', undefined, `200% text-resize overflow: ${audit.responsive.textResizeOverflow}px`)],
+      assignment: 'Development',
+      effort: 'Medium',
+      translationRequired: 'No'
+    }));
+  }
+
   for (const clipped of audit.responsive.clippedElements) {
-    const criteria = clipped.phase === 'text-spacing' ? ['1.4.10', '1.4.12'] : ['1.4.10'];
+    const criteria = clipped.phase === 'text-spacing'
+      ? ['1.4.10', '1.4.12']
+      : clipped.phase === 'text-resize-200' ? ['1.4.4', '1.4.10'] : ['1.4.10'];
+    const phaseLabel = clipped.phase === 'text-spacing'
+      ? ' after text spacing'
+      : clipped.phase === 'text-resize-200' ? ' after 200% text resize' : ' at the narrow viewport';
     findings.push(makeFinding({
       identity: `responsive-clipped|${clipped.phase}|${normalizeComponent(clipped.selector)}`,
       ruleId: 'responsive-content-clipped',
       classification: 'review',
       severity: 'Moderate',
       wcag: criteria,
-      summary: `Content may be clipped${clipped.phase === 'text-spacing' ? ' after text spacing' : ' at the narrow viewport'}`,
+      summary: `Content may be clipped${phaseLabel}`,
       issue: `${clipped.selector} has ${clipped.axis} scroll dimensions larger than its visible box while its overflow styling can clip content.`,
       impact: 'Users who zoom, reflow content, or increase text spacing may be unable to perceive content or reach functionality.',
       testing: `At the ${clipped.phase} phase, the element measured ${clipped.clientWidth}×${clipped.clientHeight} CSS pixels with scroll dimensions ${clipped.scrollWidth}×${clipped.scrollHeight}.`,
@@ -852,14 +880,19 @@ function domFindings(audit: ViewportAudit): Finding[] {
 
   for (const overlap of audit.responsive.overlapPairs) {
     const selectors = [overlap.firstSelector, overlap.secondSelector];
-    const criteria = overlap.phase === 'text-spacing' ? ['1.4.10', '1.4.12'] : ['1.4.10'];
+    const criteria = overlap.phase === 'text-spacing'
+      ? ['1.4.10', '1.4.12']
+      : overlap.phase === 'text-resize-200' ? ['1.4.4', '1.4.10'] : ['1.4.10'];
+    const phaseLabel = overlap.phase === 'text-spacing'
+      ? ' after text spacing'
+      : overlap.phase === 'text-resize-200' ? ' after 200% text resize' : ' at the narrow viewport';
     findings.push(makeFinding({
       identity: `responsive-overlap|${overlap.phase}|${selectors.map(normalizeComponent).sort().join('|')}`,
       ruleId: 'responsive-controls-overlap',
       classification: 'review',
       severity: 'Moderate',
       wcag: criteria,
-      summary: `Interactive elements overlap${overlap.phase === 'text-spacing' ? ' after text spacing' : ' at the narrow viewport'}`,
+      summary: `Interactive elements overlap${phaseLabel}`,
       issue: `Two visible interactive elements overlap by ${overlap.overlapWidth}×${overlap.overlapHeight} CSS pixels. Review whether either control, label, or focus indicator is obscured.`,
       impact: 'Overlapping controls can hide information, make a target difficult to activate, or obscure keyboard focus.',
       testing: `Rendered bounds were compared during the ${overlap.phase} reflow phase at ${audit.viewport.width} CSS pixels.`,
@@ -893,6 +926,31 @@ function domFindings(audit: ViewportAudit): Finding[] {
       viewports: [audit.viewport.name],
       selectors,
       evidence: audit.responsive.lostInteractiveElements.map((item) => evidence('responsive', item.selector, `Previously visible control disappeared: ${item.name || 'unnamed control'}.`)),
+      assignment: 'Development',
+      effort: 'Medium',
+      translationRequired: 'Review'
+    }));
+  }
+
+  if ((audit.responsive.textResizeLostInteractiveElements?.length ?? 0) > 0) {
+    const lost = audit.responsive.textResizeLostInteractiveElements ?? [];
+    const selectors = lost.map((item) => item.selector);
+    findings.push(makeFinding({
+      identity: `text-resize-lost-functionality|${selectors.map(normalizeComponent).sort().join('|')}`,
+      ruleId: 'text-resize-functionality-lost',
+      classification: 'review',
+      severity: 'Serious',
+      wcag: ['1.4.4', '1.4.10'],
+      summary: 'Interactive content may disappear after text is resized to 200%',
+      issue: `${lost.length} control(s) visible before the 200% text resize were no longer visibly rendered afterwards.`,
+      impact: 'People who enlarge text may lose access to controls or functionality.',
+      testing: 'Visible interactive elements were inventoried before and after the 200% root text-size override, then compared by stable selector.',
+      remediation: 'Use relative sizing and flexible layouts so every control remains visible and operable when text is enlarged to 200%.',
+      component: 'responsive layout',
+      urls: [audit.url],
+      viewports: [audit.viewport.name],
+      selectors,
+      evidence: lost.map((item) => evidence('responsive', item.selector, `Previously visible control disappeared: ${item.name || 'unnamed control'}.`)),
       assignment: 'Development',
       effort: 'Medium',
       translationRequired: 'Review'
@@ -959,25 +1017,36 @@ function domFindings(audit: ViewportAudit): Finding[] {
 
   for (const journey of audit.keyboard.journeys.filter((item) => item.status === 'failed')) {
     const isBypass = journey.id === 'bypass-blocks';
+    const configured = journey.source === 'configured';
+    const configuredCriteria = [
+      ...(journey.categories?.includes('keyboard') ? ['2.1.1', '2.4.3'] : []),
+      ...(journey.categories?.includes('forms') ? ['3.3.1', '3.3.2'] : []),
+      ...(journey.categories?.includes('interaction') ? ['4.1.2'] : []),
+      ...(journey.categories?.includes('dynamic-content') ? ['4.1.3'] : [])
+    ].filter((criterion, index, all) => all.indexOf(criterion) === index);
     findings.push(makeFinding({
       identity: `keyboard-journey|${journey.id}|${audit.url}`,
       ruleId: `keyboard-journey-${journey.id}`,
       classification: 'review',
       severity: 'Serious',
-      wcag: [isBypass ? '2.4.1' : '2.4.3'],
+      wcag: configured ? (configuredCriteria.length ? configuredCriteria : ['2.1.1']) : [isBypass ? '2.4.1' : '2.4.3'],
       summary: `${journey.title} did not produce the expected result`,
       issue: journey.detail,
-      impact: isBypass
+      impact: configured
+        ? 'Users may be unable to complete the configured task or receive its expected state, validation, or status feedback.'
+        : isBypass
         ? 'Keyboard users may be forced to traverse repeated content before reaching the main page content.'
         : 'Keyboard users may encounter an unexpected or illogical focus sequence.',
       testing: `Executed deterministic journey: ${journey.steps.join(' → ') || 'no completed steps'}.`,
-      remediation: isBypass
+      remediation: configured
+        ? 'Repair the failed state transition or assertion, then rerun this journey and manually verify the equivalent task with keyboard and assistive technology.'
+        : isBypass
         ? 'Provide an operable bypass mechanism whose target exists, becomes visible, and receives or immediately precedes focus.'
         : 'Keep DOM and visual order aligned and ensure forward and reverse sequential navigation are predictable.',
-      component: 'page keyboard journey',
+      component: configured ? 'configured user journey' : 'page keyboard journey',
       urls: [audit.url],
       viewports: [audit.viewport.name],
-      selectors: [],
+      selectors: journey.selectors ?? [],
       evidence: [evidence('keyboard', undefined, JSON.stringify(journey))],
       assignment: 'Development',
       effort: 'Medium',

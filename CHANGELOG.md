@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.0 - 2026-09-11
+
+- Added configurable, isolated site task journeys for keyboard operation, forms, interaction states, focus management, URL changes, input values, and scoped live-region DOM updates.
+- Added an independent 200% root-text responsive phase alongside 320-pixel reflow and WCAG text-spacing checks, retaining overflow and lost-functionality evidence.
+- Added Action inputs, reusable-workflow support, HTML evidence, documentation, and a deterministic BuggyLand keyboard/form/tabs/modal/status-message journey pack.
+- Extended unit, Chromium, and live BuggyLand regression contracts so configured journeys and their evidence cannot silently disappear or become inconclusive.
+
 ## 1.5.1 - 2026-09-11
 
 - Corrected the WCAG criterion ledger so only retained confirmed failures can fail a criterion; review candidates and coverage blockers now remain explicitly inconclusive.

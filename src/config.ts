@@ -17,6 +17,46 @@ const viewportSchema = z.object({
   isMobile: z.boolean().optional()
 });
 
+const journeyStepSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('focus'), selector: z.string().min(1).max(1000) }),
+  z.object({ action: z.literal('press'), key: z.string().min(1).max(80), selector: z.string().min(1).max(1000).optional() }),
+  z.object({ action: z.literal('type'), selector: z.string().min(1).max(1000), text: z.string().max(10_000) }),
+  z.object({ action: z.literal('wait'), milliseconds: z.number().int().min(0).max(5_000) }),
+  z.object({
+    action: z.literal('assert'),
+    expectation: z.enum([
+      'focused',
+      'visible',
+      'hidden',
+      'expanded',
+      'collapsed',
+      'pressed',
+      'unpressed',
+      'selected',
+      'checked',
+      'unchecked',
+      'invalid',
+      'valid',
+      'url-contains',
+      'text-contains',
+      'value-equals',
+      'live-region-updated'
+    ]),
+    selector: z.string().min(1).max(1000).optional(),
+    value: z.string().max(10_000).optional(),
+    timeoutMs: z.number().int().min(0).max(10_000).optional()
+  })
+]);
+
+const journeySchema = z.object({
+  id: z.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9_-]*$/i),
+  title: z.string().min(1).max(200),
+  categories: z.array(z.enum(['keyboard', 'forms', 'interaction', 'dynamic-content'])).min(1).max(4),
+  urlIncludes: z.string().min(1).max(2000).optional(),
+  viewports: z.array(z.string().min(1).max(100)).min(1).max(20).optional(),
+  steps: z.array(journeyStepSchema).min(1).max(100)
+});
+
 const configSchema = z.object({
   auditor: z.string().min(1).default(DEFAULT_AUDITOR),
   wcagLevel: z.enum(['AA', 'AAA']).default('AA'),
@@ -34,7 +74,8 @@ const configSchema = z.object({
   maxLinksPerPage: z.number().int().min(1).max(1000).default(200),
   concurrency: z.number().int().min(1).max(8).default(2),
   captureScreenshots: z.boolean().default(true),
-  viewports: z.array(viewportSchema).min(1).default(DEFAULT_VIEWPORTS)
+  viewports: z.array(viewportSchema).min(1).default(DEFAULT_VIEWPORTS),
+  journeys: z.array(journeySchema).max(100).default([])
 });
 
 export type AuditConfigInput = z.input<typeof configSchema>;
@@ -62,6 +103,24 @@ export function resolveOptions(input: Partial<AuditConfigInput> = {}): AuditOpti
       width: viewport.width,
       height: viewport.height,
       ...(viewport.isMobile !== undefined ? { isMobile: viewport.isMobile } : {})
+    })),
+    journeys: parsed.journeys.map((journey) => ({
+      id: journey.id,
+      title: journey.title,
+      categories: journey.categories,
+      steps: journey.steps.map((step) => {
+        if (step.action === 'press') return { action: step.action, key: step.key, ...(step.selector ? { selector: step.selector } : {}) };
+        if (step.action === 'assert') return {
+          action: step.action,
+          expectation: step.expectation,
+          ...(step.selector ? { selector: step.selector } : {}),
+          ...(step.value !== undefined ? { value: step.value } : {}),
+          ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {})
+        };
+        return step;
+      }),
+      ...(journey.urlIncludes ? { urlIncludes: journey.urlIncludes } : {}),
+      ...(journey.viewports ? { viewports: journey.viewports } : {})
     })),
     ...(parsed.channel ? { channel: parsed.channel } : {}),
     ...(parsed.executablePath ? { executablePath: parsed.executablePath } : {})

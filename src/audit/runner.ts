@@ -24,6 +24,7 @@ import type {
 } from '../types.js';
 import { REQUIRED_MANUAL_CHECKS } from './manual-checks.js';
 import { runDisclosureChecks, runDomChecks, runKeyboardChecks, runLinkChecks, runResponsiveChecks, runTabChecks } from './browser-checks.js';
+import { runConfiguredJourneyChecks } from './journey-checks.js';
 import { collectElementContexts, detectInteractionBlocker, dismissConsentBanner } from './page-preparation.js';
 import { findingsFromPage } from './findings.js';
 import { buildCoverageMatrix } from './coverage.js';
@@ -404,6 +405,7 @@ export interface AuditViewportDependencies {
   runAxe: typeof runAxe;
   runDomChecks: typeof runDomChecks;
   runKeyboardChecks: typeof runKeyboardChecks;
+  runConfiguredJourneyChecks: typeof runConfiguredJourneyChecks;
   runDisclosureChecks: typeof runDisclosureChecks;
   runTabChecks: typeof runTabChecks;
   runResponsiveChecks: typeof runResponsiveChecks;
@@ -419,6 +421,7 @@ const defaultAuditViewportDependencies: AuditViewportDependencies = {
   runAxe,
   runDomChecks,
   runKeyboardChecks,
+  runConfiguredJourneyChecks,
   runDisclosureChecks,
   runTabChecks,
   runResponsiveChecks,
@@ -436,7 +439,7 @@ const defaultAuditViewportDependencies: AuditViewportDependencies = {
 function isPartialAudit(errors: string[], axeRun: AxeRunMetadata, blocker: InteractionBlocker | null): boolean {
   return Boolean(blocker)
     || !axeRun.completed
-    || errors.some((message) => /^(?:DOM|Keyboard|Disclosure|Tab|Responsive|Link|Element context|Screenshot) checks? error:/i.test(message));
+    || errors.some((message) => /^(?:DOM|Keyboard|Configured journey|Disclosure|Tab|Responsive|Link|Element context|Screenshot) checks? error:/i.test(message));
 }
 
 export async function auditViewport(
@@ -652,6 +655,26 @@ export async function auditViewport(
         scope: 'blocked',
         error: `Link checks were blocked by ${interactionBlocker.selector}.`
       };
+    }
+    if (!interactionBlocker && options.journeys.length > 0) {
+      try {
+        const configuredJourneys = await dependencies.runConfiguredJourneyChecks(
+          page,
+          options.journeys,
+          url,
+          viewport.name,
+          async () => {
+            const journeyConsent = await dependencies.dismissConsentBanner(page);
+            if (journeyConsent.error) throw new Error(`Consent handling failed: ${journeyConsent.error}`);
+          }
+        );
+        keyboard.journeys.push(...configuredJourneys);
+        await page.goto(finalUrl, { waitUntil: 'domcontentloaded' });
+        await page.waitForLoadState('networkidle', { timeout: Math.min(options.timeoutMs, 5_000) }).catch(() => undefined);
+        await dependencies.dismissConsentBanner(page);
+      } catch (error) {
+        errors.push(`Configured journey checks error: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
     if (signal?.aborted) throw new Error(CANCELLED_REASON);
     const preliminaryAudit: ViewportAudit = {

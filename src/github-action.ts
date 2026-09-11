@@ -1,6 +1,7 @@
 import { appendFile, readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
-import type { AuditProgressEvent, Finding, Severity } from './types.js';
+import { resolveOptions, type AuditConfigInput } from './config.js';
+import type { AuditJourneyDefinition, AuditProgressEvent, Finding, Severity } from './types.js';
 import { executeAudit, type AuditRunResult } from './service.js';
 
 export const FAILURE_POLICIES = ['none', 'blockers', 'confirmed', 'critical', 'serious', 'moderate', 'minor'] as const;
@@ -101,6 +102,20 @@ export function parsePositiveInteger(value: string, fallback: number, name: stri
   return parsed;
 }
 
+export function parseJourneysInput(value: string): AuditJourneyDefinition[] {
+  if (!value.trim()) return [];
+  const parsed: unknown = JSON.parse(value);
+  const journeys = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === 'object' && 'journeys' in parsed
+      ? (parsed as { journeys: unknown }).journeys
+      : undefined;
+  if (!Array.isArray(journeys)) {
+    throw new Error('journeys must be a JSON array or an object containing a journeys array.');
+  }
+  return resolveOptions({ journeys: journeys as AuditConfigInput['journeys'] }).journeys;
+}
+
 export function evaluateGate(policy: FailurePolicy, findings: StoredAuditSummary['findings'] = []): GateEvaluation {
   if (policy === 'none') return { policy, failed: false, matchedCount: 0, label: 'Informational only' };
 
@@ -134,6 +149,21 @@ function resolveOutputDirectory(environment: ActionEnvironment, value: string): 
   const requested = value || 'accessibility-audit-results';
   if (isAbsolute(requested)) return resolve(requested);
   return resolve(environment.GITHUB_WORKSPACE || process.cwd(), requested);
+}
+
+async function loadActionJourneys(environment: ActionEnvironment): Promise<AuditJourneyDefinition[]> {
+  const inline = getInput(environment, 'JOURNEYS');
+  const file = getInput(environment, 'JOURNEYS-FILE');
+  if (inline && file) throw new Error('Use either journeys or journeys-file, not both.');
+  if (inline) return parseJourneysInput(inline);
+  if (!file) return [];
+  const path = isAbsolute(file) ? file : resolve(environment.GITHUB_WORKSPACE || process.cwd(), file);
+  try {
+    return parseJourneysInput(await readFile(path, 'utf8'));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not load journeys-file ${file}: ${message}`);
+  }
 }
 
 async function setOutput(environment: ActionEnvironment, name: string, value: string | number): Promise<void> {
@@ -256,6 +286,7 @@ export async function runGitHubAction(
   const outputDir = resolveOutputDirectory(environment, getInput(environment, 'OUTPUT-DIR'));
   const allowedHosts = resolveAllowedHosts(inputs, parseListInput(getInput(environment, 'ALLOWED-HOSTS'), true));
   const failurePolicy = parseFailurePolicy(getInput(environment, 'FAIL-ON'));
+  const journeys = await loadActionJourneys(environment);
   const templatePath = environment.GITHUB_ACTION_PATH
     ? resolve(environment.GITHUB_ACTION_PATH, 'assets', 'accessibility-report-template.xlsx')
     : undefined;
@@ -275,6 +306,7 @@ export async function runGitHubAction(
       timeoutMs: parsePositiveInteger(getInput(environment, 'TIMEOUT-MS'), 30_000, 'timeout-ms'),
       concurrency: parsePositiveInteger(getInput(environment, 'CONCURRENCY'), 2, 'concurrency', 8),
       captureScreenshots: parseBooleanInput(getInput(environment, 'CAPTURE-SCREENSHOTS'), true),
+      journeys,
       ...(getInput(environment, 'BROWSER-CHANNEL') ? { channel: getInput(environment, 'BROWSER-CHANNEL') } : {}),
       ...(templatePath ? { templatePath } : {})
     },

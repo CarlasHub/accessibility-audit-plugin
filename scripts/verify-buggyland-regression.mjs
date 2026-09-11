@@ -240,6 +240,39 @@ function assertEvidenceContract(report, label) {
   assert(report.manualChecks.every((check) => normalizeText(check.title) && normalizeText(check.procedure) && normalizeText(check.applicableTo) && normalizeText(check.expectedEvidence)), `${label}: every manual check needs a title, procedure, applicability and evidence requirement.`);
 }
 
+function assertConfiguredJourneyContract(report, label, blockedUrls) {
+  const expectedIds = baseline.configuredJourneys.ids;
+  const expectedCategories = ['keyboard', 'forms', 'interaction', 'dynamic-content'];
+  const allConfigured = [];
+  for (const page of report.pages) {
+    for (const viewport of page.viewports) {
+      const configured = viewport.keyboard.journeys.filter((journey) => journey.source === 'configured');
+      if (blockedUrls.has(page.url)) {
+        assert(configured.length === 0, `${label}: configured journeys ran behind the blocker on ${page.url} at ${viewport.viewport.name}.`);
+        continue;
+      }
+      assert(sameValues(configured.map((journey) => journey.id), expectedIds), `${label}: configured journey IDs changed on ${page.url} at ${viewport.viewport.name}.`);
+      assert(sameValues(configured.flatMap((journey) => journey.categories ?? []), expectedCategories), `${label}: configured journeys do not cover all required task categories on ${page.url} at ${viewport.viewport.name}.`);
+      assert(configured.every((journey) => journey.status !== 'inconclusive'), `${label}: a deterministic configured journey was inconclusive on ${page.url} at ${viewport.viewport.name}.`);
+      assert(
+        configured.every((journey) => (journey.assertionCount ?? 0) > 0
+          || (journey.status === 'failed' && /could not receive focus|did not retain focus/.test(journey.detail))),
+        `${label}: a configured journey has neither an executed assertion nor deterministic focus-failure evidence on ${page.url} at ${viewport.viewport.name}.`
+      );
+      assert(configured.every((journey) => journey.steps.length > 0 && normalizeText(journey.detail)), `${label}: configured journey evidence is incomplete on ${page.url} at ${viewport.viewport.name}.`);
+      allConfigured.push(...configured);
+    }
+  }
+  const statuses = Object.fromEntries(['passed', 'failed', 'inconclusive'].map((status) => [
+    status,
+    allConfigured.filter((journey) => journey.status === status).length
+  ]));
+  for (const status of ['passed', 'failed', 'inconclusive']) {
+    assert(statuses[status] === baseline.configuredJourneys[status], `${label}: expected ${baseline.configuredJourneys[status]} configured journeys to be ${status}, received ${statuses[status]}.`);
+  }
+  assert(allConfigured.length === baseline.configuredJourneys.total, `${label}: configured journey total changed.`);
+}
+
 function assertReport(report, label) {
   assert(report.status === 'completed', `${label}: audit status must be completed.`);
   assert(sameValues(report.requestedUrls, baseline.urls), `${label}: requested URL/hash-state coverage changed.`);
@@ -290,6 +323,7 @@ function assertReport(report, label) {
   assertCoverageContract(report, label, blockedUrls);
   assertCriterionContract(report, label);
   assertEvidenceContract(report, label);
+  assertConfiguredJourneyContract(report, label, blockedUrls);
 
   const interactionRule = /^(?:keyboard-|focus-|disclosure-|tabs?-)/;
   for (const finding of report.findings.filter((item) => interactionRule.test(item.ruleId))) {

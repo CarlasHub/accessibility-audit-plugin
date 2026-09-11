@@ -12,6 +12,7 @@
   "maxLinksPerPage": 200,
   "concurrency": 2,
   "captureScreenshots": true,
+  "journeys": [],
   "viewports": [
     { "name": "desktop", "width": 1440, "height": 1000 },
     { "name": "mobile", "width": 390, "height": 844, "isMobile": true },
