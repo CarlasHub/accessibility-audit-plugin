@@ -122,6 +122,28 @@ describe('coverage matrix', () => {
     expect(links?.detail).toContain('left candidates untested');
   });
 
+  it('ties confirmed link and title failures to explicit finding evidence', () => {
+    const audit = viewport({ title: '' });
+    const coverage = buildCoverageMatrix(
+      [{ url: audit.url, viewports: [audit] }],
+      [
+        finding({ key: 'title', ruleId: 'axe-document-title', wcag: ['2.4.2'] }),
+        finding({ key: 'link', ruleId: 'link-broken-destination', wcag: ['2.4.4'] })
+      ]
+    );
+    const assessments = coverage[0]!.viewports[0]!.assessments;
+    expect(assessments.find((item) => item.area === 'page-title')).toEqual({
+      area: 'page-title',
+      status: 'confirmed-failed',
+      detail: 'Confirmed finding(s): axe-document-title.'
+    });
+    expect(assessments.find((item) => item.area === 'broken-or-misleading-links')).toEqual({
+      area: 'broken-or-misleading-links',
+      status: 'confirmed-failed',
+      detail: 'Confirmed finding(s): link-broken-destination.'
+    });
+  });
+
   it('marks the specific affected area failed without claiming complete coverage elsewhere', () => {
     const coverage = buildCoverageMatrix(
       [{ url: 'https://test.example/page', viewports: [viewport()] }],
@@ -145,5 +167,31 @@ describe('coverage matrix', () => {
     const keyboard = coverage[0]!.viewports[0]!.assessments.find((item) => item.area === 'keyboard-only');
     expect(keyboard).toEqual(expect.objectContaining({ status: 'tested-inconclusive' }));
     expect(keyboard?.detail).toContain('#privacy-dialog');
+  });
+
+  it('never turns an audit blocker into a WCAG failure', () => {
+    const blockedFinding = finding({ classification: 'blocker' });
+    const coverage = buildCoverageMatrix(
+      [{ url: 'https://test.example/page', viewports: [viewport()] }],
+      [blockedFinding]
+    );
+    const namesAndRoles = coverage[0]!.viewports[0]!.assessments
+      .find((item) => item.area === 'names-roles-states-relationships');
+
+    expect(namesAndRoles?.status).toBe('tested-inconclusive');
+    expect(namesAndRoles?.detail).not.toContain('Confirmed finding');
+  });
+
+  it('reports every area as not tested when the page cannot load', () => {
+    const unavailable = viewport({ status: 503 });
+    const assessments = buildCoverageMatrix(
+      [{ url: unavailable.url, viewports: [unavailable] }],
+      []
+    )[0]!.viewports[0]!.assessments;
+
+    expect(assessments).toHaveLength(19);
+    expect(new Set(assessments.map((item) => item.area))).toHaveLength(19);
+    expect(assessments.every((item) => item.status === 'not-tested')).toBe(true);
+    expect(assessments.find((item) => item.area === 'viewport-render')?.detail).toContain('503');
   });
 });

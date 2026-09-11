@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.1 - 2026-09-11
+
+- Corrected the WCAG criterion ledger so only retained confirmed failures can fail a criterion; review candidates and coverage blockers now remain explicitly inconclusive.
+- Tightened workbook and BuggyLand regression validation around all 55 active A/AA procedures, all 86 active WCAG 2.2 criteria, evidence provenance, viewport coverage, and the separation of disabled AAA advisory criteria.
+- Prevented failed or blocked page states, truncated link checks, and empty automated results from being presented as confirmed passes.
+- Re-ran the complete two-run live BuggyLand benchmark at desktop, mobile, and 320-pixel reflow sizes with identical validated HTML, XLSX, JSON, and ZIP outputs.
+
 ## 1.5.0 - 2026-09-11
 
 - Added a criterion-specific human verification procedure and evidence prompt for every one of the 55 active WCAG 2.2 Level A and AA success criteria.

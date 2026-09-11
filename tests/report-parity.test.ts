@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
+import { REQUIRED_MANUAL_CHECKS } from '../src/audit/manual-checks.js';
+import { buildWcagCriterionLedger } from '../src/audit/wcag-criteria.js';
 import { createAuditArchive } from '../src/reporting/archive.js';
 import { writeExcelReport } from '../src/reporting/excel.js';
 import { writeHtmlReport } from '../src/reporting/html.js';
@@ -51,7 +53,7 @@ function finding(
 }
 
 function summary(screenshot: string): AuditSummary {
-  return {
+  const audit: AuditSummary = {
     status: 'completed',
     generatedAt: '2026-09-10T12:00:00.000Z',
     auditor: 'CarlasHub',
@@ -79,16 +81,11 @@ function summary(screenshot: string): AuditSummary {
       finding('blocker', screenshot, 3),
       finding('manual', screenshot, 4)
     ],
-    manualChecks: [{
-      id: 'MAN-SR-001',
-      classification: 'manual',
-      title: 'Screen-reader reading order',
-      wcag: ['1.3.2'],
-      applicableTo: 'All rendered content',
-      procedure: 'Read the page with a supported screen reader and record the spoken order.'
-    }],
+    manualChecks: REQUIRED_MANUAL_CHECKS,
     limitations: ['This page is partial because an interaction blocker prevented keyboard coverage.']
   };
+  audit.criteria = buildWcagCriterionLedger(audit.pages, audit.findings, audit.manualChecks, false);
+  return audit;
 }
 
 function htmlFindingIds(html: string): string[] {

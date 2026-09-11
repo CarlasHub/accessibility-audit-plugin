@@ -3,12 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
+import { REQUIRED_MANUAL_CHECKS } from '../src/audit/manual-checks.js';
+import { buildWcagCriterionLedger } from '../src/audit/wcag-criteria.js';
 import { writeExcelReport } from '../src/reporting/excel.js';
 import { EXPECTED_WORKSHEETS, validateExcelReport } from '../src/reporting/validate.js';
 import type { AuditSummary } from '../src/types.js';
 
 function summaryWithScreenshot(screenshot: string): AuditSummary {
-  return {
+  const summary: AuditSummary = {
     status: 'completed', generatedAt: '2026-09-02T10:00:00.000Z', auditor: 'Test Auditor', source: 'test', wcagLevel: 'AA',
     landingPageUrl: 'https://careers.qa.example.org/en', requestedUrls: ['https://careers.qa.example.org/en'],
     auditedUrls: ['https://careers.qa.example.org/en'], skippedUrls: [],
@@ -26,17 +28,11 @@ function summaryWithScreenshot(screenshot: string): AuditSummary {
         detail: '<img src="logo.png">', screenshot
       }], assignment: 'Content', effort: 'Small', translationRequired: 'Review'
     }],
-    manualChecks: [{
-      id: 'manual-image-purpose',
-      classification: 'manual',
-      title: 'Confirm image purpose',
-      wcag: ['1.1.1'],
-      applicableTo: 'Images',
-      procedure: 'Confirm the text alternative conveys the image purpose.',
-      expectedEvidence: 'Page, image, text alternative, context, and verdict.'
-    }],
+    manualChecks: REQUIRED_MANUAL_CHECKS,
     limitations: ['Not a conformance certification.']
   };
+  summary.criteria = buildWcagCriterionLedger(summary.pages, summary.findings, summary.manualChecks, false);
+  return summary;
 }
 
 describe('Excel report', () => {
@@ -85,7 +81,7 @@ describe('Excel report', () => {
 
     const manualChecks = workbook.getWorksheet('Manual Checks')!;
     expect(manualChecks.getCell('F5').value).toBe('Not tested');
-    expect(manualChecks.getCell('G5').value).toBe('Record: Page, image, text alternative, context, and verdict.');
+    expect(manualChecks.getCell('G5').value).toBe(`Record: ${REQUIRED_MANUAL_CHECKS[0]!.expectedEvidence}`);
   });
 
   it('uses readable fallback values for advisory criteria absent from the WCAG reference', async () => {
@@ -94,6 +90,7 @@ describe('Excel report', () => {
     const summary = summaryWithScreenshot('');
     summary.findings[0]!.wcag = ['Best Practice'];
     summary.findings[0]!.classification = 'manual';
+    summary.criteria = buildWcagCriterionLedger(summary.pages, summary.findings, summary.manualChecks, false);
     await writeExcelReport(summary, { outputPath: path });
 
     const workbook = new ExcelJS.Workbook();
@@ -104,6 +101,19 @@ describe('Excel report', () => {
     expect(findings.getCell('G7').value).toBe('Manual or advisory check');
     expect(JSON.stringify(findings.getRow(7).values)).not.toContain('[object Object]');
     expect((await validateExcelReport(path)).valid).toBe(true);
+  });
+
+  it('keeps mapped AAA criteria outside the AA decision when advisory checks are disabled', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'a11y-report-aaa-disabled-'));
+    const path = join(directory, 'report.xlsx');
+    const summary = summaryWithScreenshot('');
+    summary.findings[0]!.wcag = ['1.1.1', '1.2.6'];
+    summary.criteria = buildWcagCriterionLedger(summary.pages, summary.findings, summary.manualChecks, false);
+    await writeExcelReport(summary, { outputPath: path });
+
+    const validation = await validateExcelReport(path);
+    expect(validation.valid).toBe(true);
+    expect(validation.errors).toEqual([]);
   });
 
   it('records evidence without a screenshot explicitly', async () => {
@@ -143,5 +153,28 @@ describe('Excel report', () => {
       'Required finding cell M7 is empty.',
       'Page Inventory!A6 duplicates an earlier URL.'
     ]));
+  });
+
+  it('rejects false criterion claims, incomplete manual coverage, and unsupported evidence', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'a11y-report-contract-'));
+    const path = join(directory, 'report.xlsx');
+    await writeExcelReport(summaryWithScreenshot(''), { outputPath: path });
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(path);
+    workbook.getWorksheet('WCAG Criteria')!.getCell('D5').value = 'passed';
+    workbook.getWorksheet('Manual Checks')!.getCell(4 + REQUIRED_MANUAL_CHECKS.length, 1).value = '';
+    workbook.getWorksheet('Evidence')!.getCell('H5').value = 'guess';
+    await workbook.xlsx.writeFile(path);
+
+    const validation = await validateExcelReport(path);
+    expect(validation.valid).toBe(false);
+    expect(validation.errors).toEqual(expect.arrayContaining([
+      'Evidence!H5 contains an unsupported evidence type.',
+      'Manual Checks must contain exactly 55 unique required checks.',
+      'WCAG Criteria!D5 cannot be marked passed by an automated report.',
+      'WCAG Criteria!D5 must be failed because confirmed finding(s) map to 1.1.1.'
+    ]));
+    expect(validation.errors.some((error) => error.startsWith('Manual Checks is missing 1 required check(s):'))).toBe(true);
   });
 });

@@ -10,6 +10,27 @@ const baselinePath = resolve(repositoryRoot, 'tests', 'fixtures', 'buggyland-reg
 const reportPaths = process.argv.slice(2).filter((argument) => argument !== '--skip-live');
 const skipLive = process.argv.includes('--skip-live');
 
+const standardCriteria = [
+  '1.1.1', '1.2.1', '1.2.2', '1.2.3', '1.2.4', '1.2.5',
+  '1.3.1', '1.3.2', '1.3.3', '1.3.4', '1.3.5',
+  '1.4.1', '1.4.2', '1.4.3', '1.4.4', '1.4.5', '1.4.10', '1.4.11', '1.4.12', '1.4.13',
+  '2.1.1', '2.1.2', '2.1.4', '2.2.1', '2.2.2', '2.3.1',
+  '2.4.1', '2.4.2', '2.4.3', '2.4.4', '2.4.5', '2.4.6', '2.4.7', '2.4.11',
+  '2.5.1', '2.5.2', '2.5.3', '2.5.4', '2.5.7', '2.5.8',
+  '3.1.1', '3.1.2', '3.2.1', '3.2.2', '3.2.3', '3.2.4', '3.2.6',
+  '3.3.1', '3.3.2', '3.3.3', '3.3.4', '3.3.7', '3.3.8', '4.1.2', '4.1.3'
+];
+const coverageAreas = [
+  'viewport-render', 'keyboard-only', 'focus-order-and-visibility',
+  'names-roles-states-relationships', 'structure-headings-landmarks', 'navigation-and-bypass',
+  'links-and-buttons', 'images-and-alternatives', 'forms-errors-and-validation',
+  'interactive-components', 'dynamic-content-and-status', 'zoom-text-spacing-and-responsive',
+  'contrast-and-non-colour-cues', 'motion-autoplay-and-controls',
+  'language-and-language-changes', 'page-title', 'broken-or-misleading-links',
+  'automated-axe', 'manual-assessment'
+];
+const evidenceKinds = new Set(['axe', 'dom', 'keyboard', 'responsive', 'network', 'manual']);
+
 if (reportPaths.length !== 2) {
   throw new Error('Usage: node scripts/verify-buggyland-regression.mjs <first-audit-results.json> <second-audit-results.json> [--skip-live]');
 }
@@ -127,6 +148,98 @@ function assertNoConfirmedIncompleteAxe(report, label) {
   }
 }
 
+function assertCoverageContract(report, label, blockedUrls) {
+  assert(report.coverage.length === baseline.urls.length, `${label}: coverage must include every requested URL state.`);
+  const coverageByUrl = new Map(report.coverage.map((page) => [page.url, page]));
+  assert(coverageByUrl.size === report.coverage.length, `${label}: coverage contains duplicate URL entries.`);
+
+  for (const url of baseline.urls) {
+    const page = coverageByUrl.get(url);
+    assert(page, `${label}: coverage is missing ${url}.`);
+    assert(sameValues(page.viewports.map((item) => item.viewport), baseline.viewports), `${label}: coverage viewports changed for ${url}.`);
+    assert(new Set(page.viewports.map((item) => item.viewport)).size === baseline.viewports.length, `${label}: coverage contains duplicate viewports for ${url}.`);
+    for (const viewport of page.viewports) {
+      assert(sameValues(viewport.assessments.map((item) => item.area), coverageAreas), `${label}: ${url} at ${viewport.viewport} does not cover all 19 audit areas.`);
+      assert(new Set(viewport.assessments.map((item) => item.area)).size === coverageAreas.length, `${label}: duplicate audit areas exist for ${url} at ${viewport.viewport}.`);
+      assert(viewport.assessments.every((item) => normalizeText(item.detail)), `${label}: a coverage result lacks an explanation for ${url} at ${viewport.viewport}.`);
+      assert(viewport.assessments.find((item) => item.area === 'manual-assessment')?.status === 'manual-review-required', `${label}: mandatory human assessment is not disclosed for ${url} at ${viewport.viewport}.`);
+
+      if (blockedUrls.has(url)) {
+        for (const area of ['keyboard-only', 'focus-order-and-visibility', 'navigation-and-bypass', 'interactive-components']) {
+          const status = viewport.assessments.find((item) => item.area === area)?.status;
+          assert(status !== 'confirmed-passed', `${label}: ${area} was falsely passed behind the blocker on ${url} at ${viewport.viewport}.`);
+        }
+      }
+
+      for (const item of viewport.assessments.filter((assessment) => assessment.status === 'confirmed-failed')) {
+        if (item.area === 'automated-axe') continue;
+        assert(item.detail.startsWith('Confirmed finding(s):'), `${label}: ${item.area} claims failure without identified confirmed findings on ${url} at ${viewport.viewport}.`);
+      }
+    }
+  }
+}
+
+function assertCriterionContract(report, label) {
+  assert(Array.isArray(report.criteria) && report.criteria.length === 86, `${label}: the criterion ledger must contain all 86 active WCAG 2.2 criteria.`);
+  assert(new Set(report.criteria.map((item) => item.criterion)).size === 86, `${label}: the criterion ledger contains duplicates.`);
+  assert(!report.criteria.some((item) => item.criterion === '4.1.1'), `${label}: obsolete criterion 4.1.1 must not be reported as active WCAG 2.2.`);
+
+  const standard = report.criteria.filter((item) => item.scope === 'standard');
+  const advisory = report.criteria.filter((item) => item.scope === 'advisory');
+  assert(sameValues(standard.map((item) => item.criterion), standardCriteria), `${label}: the exact 55 WCAG 2.2 A/AA criteria are not represented.`);
+  assert(advisory.length === 31 && advisory.every((item) => item.level === 'AAA'), `${label}: the 31 AAA criteria must be clearly advisory.`);
+  assert(standard.every((item) => item.level === 'A' || item.level === 'AA'), `${label}: the standard ledger contains a criterion outside the A/AA target.`);
+  assert(standard.every((item) => item.status !== 'passed'), `${label}: automation must not claim criterion-level WCAG passes before human review.`);
+
+  const findingById = new Map(report.findings.map((finding) => [finding.id, finding]));
+  assert(findingById.size === report.findings.length, `${label}: finding IDs are not unique.`);
+  for (const criterion of report.criteria) {
+    assert(normalizeText(criterion.detail), `${label}: criterion ${criterion.criterion} has no status explanation.`);
+    assert(criterion.findingIds.every((id) => findingById.has(id)), `${label}: criterion ${criterion.criterion} references an unknown finding.`);
+    assert(criterion.findingIds.every((id) => findingById.get(id).wcag.includes(criterion.criterion)), `${label}: criterion ${criterion.criterion} references a finding not mapped to it.`);
+  }
+
+  for (const criterion of standard) {
+    const confirmedIds = report.findings
+      .filter((finding) => finding.classification === 'confirmed' && finding.wcag.includes(criterion.criterion))
+      .map((finding) => finding.id);
+    assert((criterion.status === 'failed') === (confirmedIds.length > 0), `${label}: criterion ${criterion.criterion} has an unsupported failure status.`);
+    if (criterion.status === 'failed') {
+      assert(criterion.findingIds.length > 0, `${label}: failed criterion ${criterion.criterion} has no finding evidence.`);
+      assert(criterion.findingIds.every((id) => findingById.get(id).classification === 'confirmed'), `${label}: review or blocker evidence was treated as a failure for ${criterion.criterion}.`);
+      assert(sameValues(criterion.findingIds, confirmedIds), `${label}: failed criterion ${criterion.criterion} does not list every confirmed finding.`);
+    }
+  }
+}
+
+function assertEvidenceContract(report, label) {
+  const criterionIds = new Set(report.criteria.map((item) => item.criterion));
+  const pageViewports = new Map(report.pages.map((page) => [page.url, new Set(page.viewports.map((viewport) => viewport.viewport.name))]));
+  for (const finding of report.findings) {
+    assert(finding.urls.length > 0 && finding.urls.every((url) => pageViewports.has(url)), `${label}: ${finding.id} references an unaudited URL.`);
+    assert(finding.viewports.length > 0 && finding.viewports.every((viewport) => baseline.viewports.includes(viewport)), `${label}: ${finding.id} references an unaudited viewport.`);
+    assert(finding.wcag.length > 0 && finding.wcag.every((criterion) => criterionIds.has(criterion) || criterion === 'Best Practice' || criterion === 'None'), `${label}: ${finding.id} has an invalid WCAG reference.`);
+    if (finding.classification === 'blocker') {
+      assert(finding.wcag.every((criterion) => criterion === 'None'), `${label}: blocker ${finding.id} must not be presented as a WCAG failure.`);
+    }
+    assert(finding.evidence.length > 0, `${label}: ${finding.id} has no evidence.`);
+    for (const evidence of finding.evidence) {
+      assert(evidenceKinds.has(evidence.kind), `${label}: ${finding.id} has an invalid evidence kind.`);
+      assert(pageViewports.has(evidence.pageUrl), `${label}: ${finding.id} evidence references an unaudited URL.`);
+      assert(normalizeText(evidence.detail), `${label}: ${finding.id} contains empty evidence.`);
+      if (evidence.viewport) {
+        assert(pageViewports.get(evidence.pageUrl).has(evidence.viewport), `${label}: ${finding.id} evidence references an unaudited URL/viewport pair.`);
+      }
+    }
+  }
+
+  assert(report.manualChecks.length === 55, `${label}: exactly 55 A/AA manual checks are required.`);
+  assert(new Set(report.manualChecks.map((check) => check.id)).size === 55, `${label}: manual-check IDs are not unique.`);
+  assert(sameValues(report.manualChecks.flatMap((check) => check.wcag), standardCriteria), `${label}: the manual plan does not map one-to-one to all 55 A/AA criteria.`);
+  assert(report.manualChecks.every((check) => check.classification === 'manual' && check.wcag.length === 1), `${label}: each manual check must map to exactly one criterion.`);
+  assert(report.manualChecks.every((check) => normalizeText(check.title) && normalizeText(check.procedure) && normalizeText(check.applicableTo) && normalizeText(check.expectedEvidence)), `${label}: every manual check needs a title, procedure, applicability and evidence requirement.`);
+}
+
 function assertReport(report, label) {
   assert(report.status === 'completed', `${label}: audit status must be completed.`);
   assert(sameValues(report.requestedUrls, baseline.urls), `${label}: requested URL/hash-state coverage changed.`);
@@ -173,6 +286,10 @@ function assertReport(report, label) {
   }
   assert(completedPages === baseline.fullyCompletedPages, `${label}: fully completed page count changed.`);
   assert(partialPages === baseline.partialPages, `${label}: partial page count changed.`);
+
+  assertCoverageContract(report, label, blockedUrls);
+  assertCriterionContract(report, label);
+  assertEvidenceContract(report, label);
 
   const interactionRule = /^(?:keyboard-|focus-|disclosure-|tabs?-)/;
   for (const finding of report.findings.filter((item) => interactionRule.test(item.ruleId))) {

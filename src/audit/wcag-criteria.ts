@@ -7,14 +7,14 @@ import type {
 } from '../types.js';
 import { findingId } from '../reporting/finding-id.js';
 
-interface CriterionDefinition {
+export interface CriterionDefinition {
   criterion: string;
   level: 'A' | 'AA' | 'AAA';
   title: string;
   slug: string;
 }
 
-const definitions: CriterionDefinition[] = [
+export const WCAG_CRITERIA_DEFINITIONS: CriterionDefinition[] = [
   ['1.1.1', 'A', 'Non-text Content', 'non-text-content'],
   ['1.2.1', 'A', 'Audio-only and Video-only (Prerecorded)', 'audio-only-and-video-only-prerecorded'],
   ['1.2.2', 'A', 'Captions (Prerecorded)', 'captions-prerecorded'],
@@ -153,7 +153,7 @@ export function buildWcagCriterionLedger(
   const mappedFindings = findingMap(findings);
   const manualCriteria = new Set(manualChecks.flatMap((check) => check.wcag));
 
-  return definitions.map((definition) => {
+  return WCAG_CRITERIA_DEFINITIONS.map((definition) => {
     const scope = definition.level === 'AAA' ? 'advisory' as const : 'standard' as const;
     if (definition.level === 'AAA' && !aaaAdvisory) {
       return {
@@ -168,8 +168,10 @@ export function buildWcagCriterionLedger(
     }
 
     const related = mappedFindings.get(definition.criterion) ?? [];
-    const failed = related.filter(({ finding }) => finding.classification === 'confirmed' || finding.classification === 'blocker');
-    const review = related.filter(({ finding }) => finding.classification === 'review');
+    const failed = related.filter(({ finding }) => finding.classification === 'confirmed');
+    const review = related.filter(
+      ({ finding }) => finding.classification === 'review' || finding.classification === 'blocker',
+    );
     const axe = evidence.get(definition.criterion);
     const automatedEvidence = [
       ...(axe?.passes ?? []),

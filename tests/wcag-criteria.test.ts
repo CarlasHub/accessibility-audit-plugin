@@ -1,6 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { REQUIRED_MANUAL_CHECKS } from '../src/audit/manual-checks.js';
 import { buildWcagCriterionLedger } from '../src/audit/wcag-criteria.js';
+import type { Finding } from '../src/types.js';
+
+function mappedFinding(classification: Finding['classification']): Finding {
+  return {
+    key: `criterion-semantics:${classification}`,
+    ruleId: 'criterion-semantics',
+    classification,
+    severity: 'Serious',
+    wcag: ['4.1.2'],
+    summary: `${classification} result`,
+    issue: 'A test result was recorded.',
+    impact: 'The result needs the correct interpretation.',
+    testing: 'Review the test evidence.',
+    remediation: 'Resolve confirmed accessibility failures.',
+    component: 'test component',
+    componentName: 'Test component',
+    urls: ['https://test.example/page'],
+    viewports: ['desktop'],
+    selectors: ['#test'],
+    evidence: [{ kind: 'manual', pageUrl: 'https://test.example/page', detail: 'Classification evidence.' }],
+    assignment: 'QA',
+    effort: 'Small',
+    translationRequired: 'No'
+  };
+}
 
 describe('WCAG 2.2 criterion ledger', () => {
   it('contains every unique WCAG 2.2 success criterion', () => {
@@ -44,5 +69,30 @@ describe('WCAG 2.2 criterion ledger', () => {
     expect(ledger.some((entry) => entry.status === 'manual-review-required')).toBe(true);
     expect(ledger.some((entry) => entry.status === 'inconclusive')).toBe(true);
     expect(ledger.some((entry) => entry.status === 'passed')).toBe(false);
+  });
+
+  it('only treats confirmed findings as criterion failures', () => {
+    for (const classification of ['review', 'blocker'] as const) {
+      const criterion = buildWcagCriterionLedger(
+        [],
+        [mappedFinding(classification)],
+        REQUIRED_MANUAL_CHECKS,
+        false
+      ).find((entry) => entry.criterion === '4.1.2');
+
+      expect(criterion?.status).toBe('inconclusive');
+      expect(criterion?.findingIds).toHaveLength(1);
+      expect(criterion?.detail).toContain('need qualified human review');
+    }
+
+    const failedCriterion = buildWcagCriterionLedger(
+      [],
+      [mappedFinding('confirmed')],
+      REQUIRED_MANUAL_CHECKS,
+      false
+    ).find((entry) => entry.criterion === '4.1.2');
+
+    expect(failedCriterion?.status).toBe('failed');
+    expect(failedCriterion?.findingIds).toHaveLength(1);
   });
 });

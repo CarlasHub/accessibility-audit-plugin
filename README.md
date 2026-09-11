@@ -34,7 +34,7 @@ The audit protects review quality as well as coverage. It separates confirmed fa
 
 The demonstrated audit of [A11y Test Cases](https://carlashub.github.io/a11y-test-cases/) completed one page and produced 52 findings: 51 confirmed and 1 requiring review, plus the 7 grouped manual checks used by that historical release. Current reports replace those groups with 55 criterion-specific checks. No secret or paid marketplace installation is required for a public URL.
 
-## BuggyLand benchmark and v1.3.1 regression gate
+## BuggyLand benchmark and current regression gate
 
 [![Captioned walkthrough of the CarlasHub Action auditing BuggyLand](https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/buggyland-github-action-tutorial-poster.png)](https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.2.0/BuggyLand_GitHub_Action_Tutorial.mp4)
 
@@ -42,7 +42,7 @@ The demonstrated audit of [A11y Test Cases](https://carlashub.github.io/a11y-tes
 
 The two [BuggyLand](https://carlashub.github.io/buggyland/) pages declare 172 intentional failure fixtures across all 86 active WCAG 2.2 success criteria. The historical v1.2.0 walkthrough produced 70 consolidated machine results: 52 confirmed failures and 18 items for review, with zero execution errors. Those numbers should not match: automated rules inspect rendered behaviour, consolidate repeated evidence, and cannot decide every WCAG requirement. The [benchmark evidence guide](docs/buggyland-benchmark.md) provides the complete criteria matrix, fixture inventory, downloadable enhanced workbook, raw JSON, and manual verification plan.
 
-The current v1.5.0 release gate audits four page and fragment states at desktop, mobile, and 320px reflow sizes, then repeats the complete run to detect unstable results. Its reviewed baseline is 60 consolidated records: 32 confirmed failures, 27 items for review, and 1 interaction blocker, plus all 55 A/AA criterion-specific checks. The earlier v1.3.1 baseline contained 66 records; v1.4.1 removed six duplicate or unreliable review signals without suppressing confirmed failures. Two blocked `#special` states remain visibly partial instead of being reported as passes. The exact machine-result baseline is enforced by the [regression fixture](tests/fixtures/buggyland-regression.json) and the [scheduled public workflow](.github/workflows/buggyland-regression.yml).
+The current v1.5.1 release gate audits four page and fragment states at desktop, mobile, and 320px reflow sizes, then repeats the complete run to detect unstable results. Its reviewed baseline is 60 consolidated records: 32 confirmed failures, 27 items for review, and 1 interaction blocker, plus all 55 A/AA criterion-specific checks. The earlier v1.3.1 baseline contained 66 records; v1.4.1 removed six duplicate or unreliable review signals without suppressing confirmed failures. Two blocked `#special` states remain visibly partial instead of being reported as passes. The exact machine-result baseline is enforced by the [regression fixture](tests/fixtures/buggyland-regression.json) and the [scheduled public workflow](.github/workflows/buggyland-regression.yml).
 
 For a client-neutral example, [watch the sanitised plugin demonstration](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4) or read its [transcript](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/accessibility-audit-demo-transcript.md).
 

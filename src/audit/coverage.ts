@@ -8,6 +8,28 @@ import type {
   ViewportAudit
 } from '../types.js';
 
+const ALL_COVERAGE_AREAS: CoverageArea[] = [
+  'viewport-render',
+  'keyboard-only',
+  'focus-order-and-visibility',
+  'names-roles-states-relationships',
+  'structure-headings-landmarks',
+  'navigation-and-bypass',
+  'links-and-buttons',
+  'images-and-alternatives',
+  'forms-errors-and-validation',
+  'interactive-components',
+  'dynamic-content-and-status',
+  'zoom-text-spacing-and-responsive',
+  'contrast-and-non-colour-cues',
+  'motion-autoplay-and-controls',
+  'language-and-language-changes',
+  'page-title',
+  'broken-or-misleading-links',
+  'automated-axe',
+  'manual-assessment'
+];
+
 function assessment(area: CoverageArea, status: CoverageStatus, detail: string): CoverageAssessment {
   return { area, status, detail };
 }
@@ -20,10 +42,7 @@ function affectingFindings(findings: Finding[], audit: ViewportAudit): Finding[]
 }
 
 function confirmed(findings: Finding[], predicate: (finding: Finding) => boolean): Finding[] {
-  return findings.filter((finding) => (
-    (finding.classification === 'confirmed' || finding.classification === 'blocker')
-    && predicate(finding)
-  ));
+  return findings.filter((finding) => finding.classification === 'confirmed' && predicate(finding));
 }
 
 function resultForFindings(
@@ -44,29 +63,13 @@ function viewportCoverage(audit: ViewportAudit, findings: Finding[]): CoverageAs
     || /^(file|data):/i.test(audit.finalUrl)
   );
   if (!loaded) {
-    return [
-      assessment('viewport-render', 'confirmed-failed', `The page did not load successfully: HTTP ${audit.status ?? 'no response'}.`),
-      ...([
-        'keyboard-only',
-        'focus-order-and-visibility',
-        'names-roles-states-relationships',
-        'structure-headings-landmarks',
-        'navigation-and-bypass',
-        'links-and-buttons',
-        'images-and-alternatives',
-        'forms-errors-and-validation',
-        'interactive-components',
-        'dynamic-content-and-status',
-        'zoom-text-spacing-and-responsive',
-        'contrast-and-non-colour-cues',
-        'motion-autoplay-and-controls',
-        'language-and-language-changes',
-        'page-title',
-        'broken-or-misleading-links',
-        'automated-axe',
-        'manual-assessment'
-      ] as CoverageArea[]).map((area) => assessment(area, 'not-tested', 'The page-load failure prevented this check.'))
-    ];
+    return ALL_COVERAGE_AREAS.map((area) => assessment(
+      area,
+      'not-tested',
+      area === 'viewport-render'
+        ? `The page could not be tested because it did not load: HTTP ${audit.status ?? 'no response'}.`
+        : 'The page-load failure prevented this check.',
+    ));
   }
 
   const blocker = audit.interactionBlocker
@@ -191,16 +194,24 @@ function viewportCoverage(audit: ViewportAudit, findings: Finding[]): CoverageAs
       ? 'Autoplay media was detected; duration, audio, motion and pause/stop/hide controls require timed manual testing.'
       : 'No visible autoplay media attribute was detected; scripted/CSS motion, duration and controls remain inconclusive.'),
     assessment('language-and-language-changes', 'manual-review-required', 'Page and part-language accuracy requires content and assistive-technology review.'),
-    assessment('page-title', audit.title.trim() ? 'tested-inconclusive' : 'confirmed-failed', audit.title.trim()
-      ? `The rendered document title was recorded as “${audit.title.trim()}”; whether it adequately identifies the page still requires review.`
-      : 'The rendered document title was empty.'),
-    assessment('broken-or-misleading-links', audit.viewport.name === 'desktop'
-      ? (confirmed(relevant, (finding) => finding.ruleId === 'link-broken-destination').length ? 'confirmed-failed' : 'tested-inconclusive')
-      : 'not-applicable', audit.viewport.name === 'desktop'
-      ? audit.linkRun.completed
-        ? `Checked ${audit.linkRun.checkedCount} of ${audit.linkRun.candidateCount} rendered link candidate(s). ${audit.linkRun.truncated ? 'The configured limit left candidates untested.' : 'External, destructive, download and non-HTTP destinations remain outside the automated scope.'}`
-        : `Destination checks did not complete: ${audit.linkRun.error ?? 'unknown reason'}.`
-      : 'Destination checks intentionally run once from the desktop DOM; this responsive viewport is not a separate link-check scope.'),
+    resultForFindings(
+      'page-title',
+      relevant,
+      (finding) => /(?:document|page)-title/i.test(finding.ruleId),
+      audit.title.trim()
+        ? `The rendered document title was recorded as “${audit.title.trim()}”; whether it adequately identifies the page still requires review.`
+        : 'The rendered document title was empty, but no completed rule evidence established a confirmed failure.'
+    ),
+    audit.viewport.name === 'desktop'
+      ? resultForFindings(
+        'broken-or-misleading-links',
+        relevant,
+        (finding) => finding.ruleId === 'link-broken-destination',
+        audit.linkRun.completed
+          ? `Checked ${audit.linkRun.checkedCount} of ${audit.linkRun.candidateCount} rendered link candidate(s). ${audit.linkRun.truncated ? 'The configured limit left candidates untested.' : 'External, destructive, download and non-HTTP destinations remain outside the automated scope.'}`
+          : `Destination checks did not complete: ${audit.linkRun.error ?? 'unknown reason'}.`
+      )
+      : assessment('broken-or-misleading-links', 'not-applicable', 'Destination checks intentionally run once from the desktop DOM; this responsive viewport is not a separate link-check scope.'),
     assessment('automated-axe', axeStatus, audit.axeRun.completed
       ? `axe completed with ${audit.axeRun.violationCount} violation result(s), ${audit.axeRun.incompleteCount} incomplete result(s), and ${audit.axeRun.passCount} pass result(s). This status applies only to the executed axe rules and state.`
       : `axe did not complete: ${audit.axeRun.error ?? 'unknown error'}.`),
