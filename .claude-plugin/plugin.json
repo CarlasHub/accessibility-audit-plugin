@@ -6,7 +6,7 @@
     "name": "CarlasHub",
     "url": "https://github.com/CarlasHub"
   },
-  "homepage": "https://github.com/CarlasHub/accessibility-audit-plugin",
+  "homepage": "https://carlashub.github.io/accessibility-audit-plugin/",
   "repository": "https://github.com/CarlasHub/accessibility-audit-plugin",
   "license": "MIT",
   "skills": "./skills/",

@@ -8,13 +8,13 @@
     <meta property="og:description" content="Add your pages, generate one workflow, and collect an evidence-rich accessibility report." />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/accessibility-audit-demo-poster.png" />
-    <meta property="og:url" content="https://carlashub-accessibility-audit.carlawlondon.chatgpt.site/" />
+    <meta property="og:url" content="https://carlashub.github.io/accessibility-audit-plugin/" />
     <meta name="theme-color" content="#111111" />
-    <link rel="canonical" href="https://carlashub-accessibility-audit.carlawlondon.chatgpt.site/" />
+    <link rel="canonical" href="https://carlashub.github.io/accessibility-audit-plugin/" />
     <meta name="twitter:card" content="summary_large_image" />
     <title>CarlasHub Accessibility Audit</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2315151a'/%3E%3Cpath d='M18 32l9 9 19-20' fill='none' stroke='%2393f6b2' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to main content</a>
@@ -30,7 +30,8 @@
         />
         <span><strong>CarlasHub</strong><small>Accessibility audit</small></span>
       </a>
-      <nav aria-label="Main navigation">
+      <nav class="header-nav" aria-label="Main navigation">
+        <a class="header-link" href="#integrations">Install</a>
         <a class="github-link" href="https://github.com/CarlasHub/accessibility-audit-plugin">GitHub <span aria-hidden="true">↗</span></a>
       </nav>
     </header>
@@ -56,7 +57,7 @@
           </div>
         </div>
 
-        <div class="generator-shell">
+        <div class="generator-shell" id="audit-builder">
           <div class="generator-card" aria-labelledby="generator-title">
             <div class="card-topline">
               <p class="card-kicker">Create an audit</p>
@@ -138,6 +139,59 @@
         <ul><li>Accessible HTML</li><li>Excel workbook</li><li>JSON data</li><li>Screenshots</li><li>ZIP archive</li></ul>
       </section>
 
+      <section class="section integrations" id="integrations" aria-labelledby="integrations-title">
+        <div class="section-heading">
+          <p class="eyebrow"><span aria-hidden="true"></span> Use it where you work</p>
+          <h2 id="integrations-title">One audit engine. Six ways to run it.</h2>
+          <p>Choose a ready-to-use option or install the open-source developer package in your preferred coding assistant. Every card states what is available today.</p>
+        </div>
+
+        <div class="integration-grid">
+          <article class="integration-card integration-card-featured">
+            <div class="integration-topline"><h3>GitHub Actions</h3><span class="availability availability-live">Ready</span></div>
+            <p>Generate one workflow on this page, commit it to any repository, and run audits in GitHub without installing the plugin locally.</p>
+            <a class="integration-action" href="#audit-builder">Build a workflow <span aria-hidden="true">→</span></a>
+          </article>
+
+          <article class="integration-card">
+            <div class="integration-topline"><h3>Claude Desktop</h3><span class="availability availability-live">Download</span></div>
+            <p>Upload the packaged custom-plugin ZIP in <strong>Customize → Plugins</strong>. Keep the ZIP compressed.</p>
+            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/releases/download/v1.3.1/accessibility-audit-claude-desktop-1.3.1.zip">Download v1.3.1 ZIP <span aria-hidden="true">↓</span></a>
+          </article>
+
+          <article class="integration-card">
+            <div class="integration-topline"><h3>Claude Code</h3><span class="availability">Developer install</span></div>
+            <p>Clone and build the plugin once, then load that checkout in the project you want to audit.</p>
+            <pre class="install-command" tabindex="0"><code>npm ci &amp;&amp; npm run build
+claude --plugin-dir /path/to/accessibility-audit-plugin</code></pre>
+            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3b-install-in-claude-code">Claude Code instructions <span aria-hidden="true">→</span></a>
+          </article>
+
+          <article class="integration-card">
+            <div class="integration-topline"><h3>Cursor</h3><span class="availability">Developer install</span></div>
+            <p>The repository includes Cursor’s plugin manifest, command, rule, skill, and MCP configuration. Build it, add it to Cursor’s local plugin directory, then reload.</p>
+            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3a-install-in-cursor">Cursor instructions <span aria-hidden="true">→</span></a>
+          </article>
+
+          <article class="integration-card">
+            <div class="integration-topline"><h3>Codex CLI</h3><span class="availability">Package ready</span></div>
+            <p>The repository includes the portable Agent Plugin manifest, Codex fallback manifest, marketplace catalog, skill, and MCP server. Install from a configured marketplace, then open the CLI plugin browser.</p>
+            <pre class="install-command" tabindex="0"><code>/plugins</code></pre>
+            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3d-install-in-codex">Codex instructions <span aria-hidden="true">→</span></a>
+          </article>
+
+          <article class="integration-card">
+            <div class="integration-topline"><h3>GitHub Copilot</h3><span class="availability">Package ready</span></div>
+            <p>Build the included Copilot CLI or VS Code payload locally. Public marketplace listing is a separate submission step.</p>
+            <pre class="install-command" tabindex="0"><code>npm run build:marketplace
+copilot plugin install ./marketplace/carlashub-plugin-marketplace/accessibility-audit/copilot-cli</code></pre>
+            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3e-install-in-github-copilot-cli">Copilot instructions <span aria-hidden="true">→</span></a>
+          </article>
+        </div>
+
+        <p class="integration-note"><strong>Developer-install note:</strong> local agent integrations require Node.js 22 or later and a Playwright-supported browser. The Codex IDE extension does not currently support plugins. Only audit websites you are authorised to test.</p>
+      </section>
+
       <section class="section" id="how-it-works">
         <div class="section-heading">
           <p class="eyebrow"><span aria-hidden="true"></span> A shorter setup</p>
@@ -194,6 +248,6 @@
       </nav>
     </footer>
 
-    <script type="module" src="/app.ts"></script>
+    <script type="module" src="./app.ts"></script>
   </body>
 </html>

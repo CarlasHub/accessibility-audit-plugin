@@ -137,6 +137,22 @@ nav {
   align-items: center;
 }
 
+.header-nav {
+  gap: 0.9rem;
+}
+
+.header-link {
+  color: var(--night-muted);
+  font-size: 0.84rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.header-link:hover {
+  color: var(--night-text);
+  text-decoration: underline;
+}
+
 .github-link {
   display: inline-flex;
   min-height: 2.65rem;
@@ -690,6 +706,88 @@ footer {
   list-style: none;
 }
 
+.integration-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.integration-card {
+  display: flex;
+  min-width: 0;
+  min-height: 18rem;
+  flex-direction: column;
+  padding: clamp(1.25rem, 3vw, 1.8rem);
+  border: 1px solid #cfcec7;
+  border-radius: 1rem;
+  background: #faf9f5;
+}
+
+.integration-card-featured {
+  border-color: #88a8ef;
+  background: #edf2ff;
+}
+
+.integration-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.integration-card h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: -0.025em;
+}
+
+.integration-card p {
+  margin: 1rem 0;
+  color: var(--muted-ink);
+  font-size: 0.92rem;
+}
+
+.availability {
+  flex: 0 0 auto;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid #aaa9a3;
+  border-radius: 999px;
+  color: #4f4f4b;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.availability-live {
+  border-color: #3d7050;
+  background: #dff5e5;
+  color: #194c2b;
+}
+
+.install-command {
+  max-height: none;
+  margin: 0 0 1.1rem;
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.integration-action {
+  margin-top: auto;
+  color: var(--accent-dark);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.integration-note {
+  max-width: 60rem;
+  margin: 1.5rem 0 0;
+  color: var(--muted-ink);
+  font-size: 0.85rem;
+}
+
 .steps li,
 .coverage-grid article {
   min-width: 0;
@@ -808,7 +906,8 @@ footer {
 
   .action-steps,
   .steps,
-  .coverage-grid {
+  .coverage-grid,
+  .integration-grid {
     grid-template-columns: 1fr;
   }
 
@@ -850,6 +949,10 @@ footer {
   }
 
   .brand small {
+    display: none;
+  }
+
+  .header-link {
     display: none;
   }
 
