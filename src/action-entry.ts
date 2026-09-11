@@ -17,7 +17,12 @@ process.on('SIGTERM', stopGracefully);
 
 runGitHubAction(process.env, abortController.signal)
   .then((result) => {
-    if (result.status === 'cancelled') process.exitCode = 130;
+    // A signal can arrive after the audit result is assembled while the Action is
+    // still writing its summary and outputs. The process-level signal state is
+    // authoritative so a cancelled workflow never reports a successful exit.
+    if (stopRequested || abortController.signal.aborted || result.status === 'cancelled') {
+      process.exitCode = 130;
+    }
   })
   .catch(reportActionFailure)
   .finally(() => {

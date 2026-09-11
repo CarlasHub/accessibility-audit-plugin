@@ -1,6 +1,6 @@
 {
   "name": "accessibility-audit",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Evidence-backed WCAG 2.2 A/AA page audits with headless desktop, mobile, reflow, keyboard, link, component evidence, and validated Excel reporting.",
   "author": {
     "name": "CarlasHub"

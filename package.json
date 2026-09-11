@@ -1,6 +1,6 @@
 {
   "name": "accessibility-audit-plugin",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
   "description": "Cross-platform Codex, Claude Code, Claude Desktop, Cursor, and GitHub Copilot plugin for structured WCAG 2.2 accessibility audits.",
   "author": {

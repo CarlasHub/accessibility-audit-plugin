@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.1 - 2026-09-11
+
+- Made the GitHub Action's process-level cancellation state authoritative, preventing a late SIGTERM received during output or summary writing from incorrectly exiting as a successful audit.
+
 ## 1.6.0 - 2026-09-11
 
 - Added configurable, isolated site task journeys for keyboard operation, forms, interaction states, focus management, URL changes, input values, and scoped live-region DOM updates.

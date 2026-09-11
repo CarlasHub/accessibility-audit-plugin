@@ -1,6 +1,6 @@
 {
   "name": "accessibility-audit",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Run evidence-backed WCAG 2.2 A/AA audits at desktop, mobile, and reflow viewports and export a validated Excel report.",
   "author": {
     "name": "CarlasHub"
