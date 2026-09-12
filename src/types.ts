@@ -267,6 +267,16 @@ export interface ResponsiveCheckResult {
     phase: 'default' | 'text-resize-200' | 'text-spacing';
     overlapWidth: number;
     overlapHeight: number;
+    /** Intersection area after clipping the candidate pair to the viewport. */
+    overlapArea?: number;
+    /** Percentage of the smaller control covered by the intersection. */
+    smallerElementOverlapPercent?: number;
+    /** Control shown underneath the other control by hit-testing sampled overlap points. */
+    obscuredSelector?: string;
+    /** Control shown above the obscured control by hit-testing sampled overlap points. */
+    occludingSelector?: string;
+    /** Number of overlap points whose topmost interactive element identified the occluding control. */
+    hitTestSampleCount?: number;
   }>;
   lostInteractiveElements: Array<{ selector: string; name: string }>;
   textResizeLostInteractiveElements?: Array<{ selector: string; name: string }>;
@@ -465,6 +475,14 @@ export interface WcagCriterionAssessment {
   detail: string;
 }
 
+export interface AuditQualityContractMetadata {
+  version: string;
+  standard: 'WCAG 2.2';
+  conformanceTarget: 'A/AA';
+  criterionCount: 55;
+  findingPolicy: 'evidence-gated';
+}
+
 export interface AuditSummary {
   status: AuditStatus;
   cancelledAt?: string;
@@ -476,6 +494,7 @@ export interface AuditSummary {
   aaaAdvisory?: boolean;
   humanAssessmentRequired?: boolean;
   conformanceDecision?: 'not-determined';
+  qualityContract?: AuditQualityContractMetadata;
   landingPageUrl: string;
   requestedUrls: string[];
   auditedUrls: string[];

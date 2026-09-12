@@ -29,6 +29,7 @@ import { collectElementContexts, detectInteractionBlocker, dismissConsentBanner 
 import { findingsFromPage } from './findings.js';
 import { buildCoverageMatrix } from './coverage.js';
 import { buildWcagCriterionLedger } from './wcag-criteria.js';
+import { applyConfirmedFindingConfidenceGate, assertAuditQualityContract, AUDIT_QUALITY_CONTRACT } from './quality-contract.js';
 import { assertRemediationOnlyNotes, consolidateFindings } from '../reporting/consolidate.js';
 import { assignFindingIds } from '../reporting/finding-id.js';
 import { writeJsonReport } from '../reporting/json.js';
@@ -903,7 +904,7 @@ export async function runAudit(
     }
   }
 
-  const findings = assignFindingIds(consolidateFindings(pages.flatMap(findingsFromPage)));
+  const findings = assignFindingIds(consolidateFindings(applyConfirmedFindingConfidenceGate(pages.flatMap(findingsFromPage))));
   retainRepresentativeScreenshotPerFinding(findings);
   assertRemediationOnlyNotes(findings);
   const startedUrls = new Set(pages.map((page) => page.url));
@@ -924,6 +925,7 @@ export async function runAudit(
     aaaAdvisory,
     humanAssessmentRequired: true,
     conformanceDecision: 'not-determined',
+    qualityContract: { ...AUDIT_QUALITY_CONTRACT },
     landingPageUrl: options.landingPageUrl ?? urls[0] ?? '',
     requestedUrls: urls,
     auditedUrls: pages.filter((page) => page.viewports.some((viewport) =>
@@ -946,6 +948,7 @@ export async function runAudit(
       'A qualified reviewer must decide applicability and sign off every WCAG 2.2 A and AA criterion before this evidence can support a conformance claim.'
     ]
   };
+  assertAuditQualityContract(summary);
   await pruneUnreferencedScreenshots(summary, options.outputDir);
   const jsonPath = resolve(options.outputDir, 'audit-results.json');
   await writeJsonReport(summary, jsonPath);

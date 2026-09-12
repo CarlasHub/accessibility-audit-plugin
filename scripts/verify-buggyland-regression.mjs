@@ -275,6 +275,10 @@ function assertConfiguredJourneyContract(report, label, blockedUrls) {
 
 function assertReport(report, label) {
   assert(report.status === 'completed', `${label}: audit status must be completed.`);
+  assert(
+    JSON.stringify(report.qualityContract) === JSON.stringify(baseline.qualityContract),
+    `${label}: audit-quality contract metadata changed or is missing.`
+  );
   assert(sameValues(report.requestedUrls, baseline.urls), `${label}: requested URL/hash-state coverage changed.`);
   assert(sameValues(report.auditedUrls, baseline.urls), `${label}: audited URL/hash-state coverage changed.`);
   assert(report.skippedUrls.length === 0, `${label}: no BuggyLand target may be skipped.`);

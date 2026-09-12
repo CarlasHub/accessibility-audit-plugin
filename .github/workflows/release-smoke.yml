@@ -11,7 +11,7 @@ on:
 jobs:
   release-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -22,7 +22,9 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run lint
       - run: npm run typecheck
+      - run: npm run test:quality-contract
       - run: npm run test:unit
+      - run: npm run test:browser
       - run: npm run test:built-cli
       - run: npm run build:action
       - run: npm run test:action
@@ -32,4 +34,14 @@ jobs:
       - run: npm run validate:marketplace
       - run: npm run test:marketplace
       - run: npm run test:marketplace-compatibility
+      - name: Run and verify BuggyLand twice
+        run: npm run test:buggyland:live
+      - name: Retain release audit evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: audit-quality-contract-${{ github.ref_name }}
+          path: buggyland-regression-results/
+          if-no-files-found: error
+          retention-days: 90
       - run: npm pack --dry-run

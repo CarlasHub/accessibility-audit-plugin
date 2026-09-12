@@ -16,12 +16,19 @@ export interface WorkbookValidation {
   auditor: string;
 }
 
-export const EXPECTED_REPORT_HEADERS = [
+export const EXPECTED_TEMPLATE_REPORT_HEADERS = [
   'Finding ID', 'Evidence type', 'Status', 'Severity', 'WCAG criterion', 'Level', 'WCAG title',
   'Affected URL(s)', 'Viewport(s)', 'Component', 'Location', 'Summary', 'Issue', 'User impact',
   'Technical locator', 'Test method', 'Actual result', 'Expected result', 'Recommendation', 'Owner',
   'Effort', 'Screenshot', 'Rule ID', 'Labels', 'Translation review'
 ];
+
+export const EXPECTED_REPORT_HEADERS = EXPECTED_TEMPLATE_REPORT_HEADERS.map((header, index) => {
+  if (index === 1) return 'Classification';
+  if (index === 3) return 'Impact / review priority';
+  if (index === 16) return 'Observed evidence';
+  return header;
+});
 
 export const EXPECTED_TEMPLATE_WORKSHEETS = [
   'Audit Summary',

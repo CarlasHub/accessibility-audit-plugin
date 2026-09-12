@@ -1,5 +1,7 @@
 # Contributing
 
+All implementation and release decisions are governed by the [Audit Quality Contract](AUDIT_QUALITY_CONTRACT.md). A change that weakens its evidence, classification, coverage, reporting, consumer-action, or release gates is not acceptable without the versioned change-control process defined there.
+
 ## Engineering requirements
 
 - Preserve the distinction between confirmed, review, blocker, and manual results.
@@ -28,6 +30,9 @@ Before opening a pull request:
 ```sh
 npm run check
 npm run test:integration
+npm run test:quality-contract
+npm run test:browser
+npm run test:buggyland:live
 npm run build:marketplace
 npm run validate:marketplace
 npm run test:marketplace

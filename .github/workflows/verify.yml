@@ -27,6 +27,7 @@ jobs:
       - run: npm run audit:dependencies
       - run: npm run lint
       - run: npm run typecheck
+      - run: npm run test:quality-contract
       - run: npm run test:unit
       - run: npm run build
 

@@ -24,7 +24,7 @@ Every new report accounts for all **55 active WCAG 2.2 Level A and Level AA succ
 
 This is complete criteria coverage, not automatic certification. The final verdict still requires a qualified reviewer to complete the applicable procedures across the agreed pages, states, responsive variations, processes, browsers, devices, and assistive technologies. The 31 Level AAA criteria remain optional advisory coverage.
 
-The audit protects review quality as well as coverage. It separates confirmed failures, review candidates, and coverage blockers; suppresses responsive evidence when a modal prevents a valid interaction test; ignores intentionally visually hidden assistive text in clipping checks; and consolidates repeated evidence across viewports and test states. The workbook uses severity and evidence-status colours for triage, but every status is also written as text so colour is never the only cue.
+The audit protects review quality as well as coverage. It separates confirmed failures, review candidates, and coverage blockers; suppresses responsive evidence when a modal prevents a valid interaction test; ignores intentionally visually hidden assistive text in clipping checks; and consolidates repeated evidence across viewports and test states. The workbook uses severity and evidence-status colours for triage, but every status is also written as text so colour is never the only cue. The normative product promise, audit plumbing, acceptance tests, and release rules are defined in the [Audit Quality Contract](AUDIT_QUALITY_CONTRACT.md).
 
 ## GitHub Actions: start-to-results tutorial
 
@@ -520,6 +520,7 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting and data-handling not
 ```sh
 npm run lint
 npm run typecheck
+npm run test:quality-contract
 npm test
 npm run build
 npm run test:integration

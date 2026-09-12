@@ -23,12 +23,20 @@
       "examples": 62
     }
   ],
+  "qualityContract": {
+    "version": "1.0.0",
+    "standard": "WCAG 2.2",
+    "conformanceTarget": "A/AA",
+    "criterionCount": 55,
+    "findingPolicy": "evidence-gated"
+  },
+  "baselineRationale": "Evidence-gated baseline: two unverified overlap candidates were removed by materiality and browser hit-test controls, and an unmapped broken-fragment result is retained for review rather than reported as a confirmed WCAG failure.",
   "classifications": {
-    "confirmed": 32,
-    "review": 37,
+    "confirmed": 31,
+    "review": 36,
     "blocker": 1,
     "manualChecks": 55,
-    "totalFindings": 70
+    "totalFindings": 68
   },
   "fullyCompletedPages": 2,
   "partialPages": 2,
@@ -48,5 +56,5 @@
     "inconclusive": 0,
     "total": 42
   },
-  "findingIdentitySha256": "097e0499c2e5fc10d5c148d727ea715c1b16cf062a2d760e022526454861a21a"
+  "findingIdentitySha256": "5f0894ba632414c416fb511894e74756afca750e94ae474c2982873a580bb9c8"
 }

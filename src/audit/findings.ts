@@ -262,11 +262,13 @@ function axeFindings(audit: ViewportAudit): Finding[] {
         return makeFinding({
           identity: `color-contrast|${signature}`,
           ruleId: 'axe-color-contrast',
-          classification: 'confirmed',
-          severity: severityFromAxe(violation.impact),
+          classification: details ? 'confirmed' : 'review',
+          severity: details ? severityFromAxe(violation.impact) : 'Advisory',
           wcag: wcag.length ? wcag : ['1.4.3'],
-          summary: 'Shared text colour treatment has insufficient contrast',
-          issue: `The same rendered colour treatment is used by the listed text components and does not meet minimum contrast. ${actual}.`,
+          summary: details ? 'Shared text colour treatment has insufficient contrast' : 'Text contrast result needs measurement review',
+          issue: details
+            ? `The same rendered colour treatment is used by the listed text components and does not meet minimum contrast. ${actual}.`
+            : 'The automated engine returned a potential text contrast result without the complete rendered colour and ratio measurements required to confirm a failure.',
           impact: axeUserImpact(violation.id),
           testing: [
             `1. Open the affected page at the ${audit.viewport.name} viewport.`,
@@ -291,7 +293,7 @@ function axeFindings(audit: ViewportAudit): Finding[] {
             screenshot: screenshotFor(audit, node.target[0])
           })),
           assignment: 'Mixed',
-          effort: 'Medium',
+          effort: details ? 'Medium' : 'Review',
           translationRequired: 'No'
         });
       });
@@ -878,8 +880,28 @@ function domFindings(audit: ViewportAudit): Finding[] {
     }));
   }
 
+  const overlapGroups = new Map<string, typeof audit.responsive.overlapPairs>();
   for (const overlap of audit.responsive.overlapPairs) {
-    const selectors = [overlap.firstSelector, overlap.secondSelector];
+    const legacyPair = [overlap.firstSelector, overlap.secondSelector].map(normalizeComponent).sort().join('|');
+    const affectedControl = overlap.obscuredSelector
+      ? normalizeComponent(overlap.obscuredSelector)
+      : legacyPair;
+    const groupKey = `${overlap.phase}|${affectedControl}`;
+    const group = overlapGroups.get(groupKey) ?? [];
+    group.push(overlap);
+    overlapGroups.set(groupKey, group);
+  }
+
+  for (const overlaps of overlapGroups.values()) {
+    const overlap = overlaps.reduce((largest, candidate) =>
+      (candidate.smallerElementOverlapPercent ?? candidate.overlapArea ?? 0)
+        > (largest.smallerElementOverlapPercent ?? largest.overlapArea ?? 0)
+        ? candidate
+        : largest
+    );
+    const selectors = [...new Set(overlaps.flatMap((item) => [item.firstSelector, item.secondSelector]))];
+    const obscuredSelector = overlap.obscuredSelector;
+    const occludingSelectors = [...new Set(overlaps.map((item) => item.occludingSelector).filter((selector): selector is string => Boolean(selector)))];
     const criteria = overlap.phase === 'text-spacing'
       ? ['1.4.10', '1.4.12']
       : overlap.phase === 'text-resize-200' ? ['1.4.4', '1.4.10'] : ['1.4.10'];
@@ -887,21 +909,25 @@ function domFindings(audit: ViewportAudit): Finding[] {
       ? ' after text spacing'
       : overlap.phase === 'text-resize-200' ? ' after 200% text resize' : ' at the narrow viewport';
     findings.push(makeFinding({
-      identity: `responsive-overlap|${overlap.phase}|${selectors.map(normalizeComponent).sort().join('|')}`,
+      identity: `responsive-overlap|${overlap.phase}|${obscuredSelector ? normalizeComponent(obscuredSelector) : selectors.map(normalizeComponent).sort().join('|')}`,
       ruleId: 'responsive-controls-overlap',
       classification: 'review',
       severity: 'Moderate',
       wcag: criteria,
-      summary: `Interactive elements overlap${phaseLabel}`,
-      issue: `Two visible interactive elements overlap by ${overlap.overlapWidth}×${overlap.overlapHeight} CSS pixels. Review whether either control, label, or focus indicator is obscured.`,
+      summary: `Interactive control may be obscured${phaseLabel}`,
+      issue: obscuredSelector
+        ? `${obscuredSelector} was underneath ${occludingSelectors.length === 1 ? occludingSelectors[0] : `${occludingSelectors.length} other controls`} at every sampled point in an overlap covering up to ${Math.round(overlap.smallerElementOverlapPercent ?? 0)}% of the smaller element. Human review must confirm whether this prevents perception, activation, or visible focus.`
+        : `${overlaps.length === 1 ? 'Two visible interactive elements overlap' : `${overlaps.length} related interactive-element overlaps were detected`} by up to ${overlap.overlapWidth}×${overlap.overlapHeight} CSS pixels. Review whether a control, label, or focus indicator is obscured.`,
       impact: 'Overlapping controls can hide information, make a target difficult to activate, or obscure keyboard focus.',
-      testing: `Rendered bounds were compared during the ${overlap.phase} reflow phase at ${audit.viewport.width} CSS pixels.`,
+      testing: obscuredSelector
+        ? `Rendered intersections and browser hit-test stacking were sampled during the ${overlap.phase} reflow phase at ${audit.viewport.width} CSS pixels. The candidate was retained only because one control was consistently above the other at at least three sample points.`
+        : `Rendered bounds were compared during the ${overlap.phase} reflow phase at ${audit.viewport.width} CSS pixels.`,
       remediation: 'Use responsive layout and wrapping so controls do not cover one another at narrow widths or after text spacing is increased.',
-      component: normalizeComponent(overlap.firstSelector),
+      component: normalizeComponent(obscuredSelector ?? overlap.firstSelector),
       urls: [audit.url],
       viewports: [audit.viewport.name],
       selectors,
-      evidence: [evidence('responsive', overlap.firstSelector, JSON.stringify(overlap))],
+      evidence: overlaps.map((item) => evidence('responsive', item.obscuredSelector ?? item.firstSelector, JSON.stringify(item))),
       assignment: 'Development',
       effort: 'Medium',
       translationRequired: 'Review'

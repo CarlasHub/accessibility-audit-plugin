@@ -116,6 +116,30 @@ describe('evidence-gated link and tab findings', () => {
     expect(contrast[0]?.issue).not.toContain('font weight');
   });
 
+  it('keeps contrast output in review when rendered colours and ratios are incomplete', () => {
+    const findings = findingsFromPage(page(viewport({
+      axe: [{
+        id: 'color-contrast',
+        impact: 'serious',
+        tags: ['wcag2aa', 'wcag143'],
+        description: 'Ensure text has sufficient contrast',
+        help: 'Elements must meet contrast thresholds',
+        helpUrl: 'https://dequeuniversity.com/rules/axe/4.13/color-contrast',
+        nodes: [{
+          html: '<p class="muted">Help text</p>',
+          target: ['.muted'],
+          failureSummary: 'Fix the contrast of this element'
+        }]
+      }]
+    })));
+    expect(findings).toContainEqual(expect.objectContaining({
+      ruleId: 'axe-color-contrast',
+      classification: 'review',
+      severity: 'Advisory',
+      effort: 'Review'
+    }));
+  });
+
   it('groups repeated disclosure relationship reviews by component family and does not require Escape', () => {
     const disclosures = ['category', 'country', 'region'].map((name) => ({
       selector: `#${name}-toggle`,
@@ -476,6 +500,52 @@ describe('evidence-gated link and tab findings', () => {
         severity: 'Moderate'
       })
     ]));
+  });
+
+  it('deduplicates responsive overlap candidates by obscured root cause while preserving occluders', () => {
+    const findings = findingsFromPage(page(viewport({
+      responsive: {
+        horizontalOverflow: 0,
+        overflowElements: [],
+        textSpacingOverflow: 0,
+        clippedElements: [],
+        overlapPairs: [
+          {
+            firstSelector: '#submit',
+            secondSelector: '#sticky-one',
+            phase: 'default',
+            overlapWidth: 40,
+            overlapHeight: 20,
+            overlapArea: 800,
+            smallerElementOverlapPercent: 80,
+            obscuredSelector: '#submit',
+            occludingSelector: '#sticky-one',
+            hitTestSampleCount: 3
+          },
+          {
+            firstSelector: '#submit',
+            secondSelector: '#sticky-two',
+            phase: 'default',
+            overlapWidth: 30,
+            overlapHeight: 20,
+            overlapArea: 600,
+            smallerElementOverlapPercent: 60,
+            obscuredSelector: '#submit',
+            occludingSelector: '#sticky-two',
+            hitTestSampleCount: 3
+          }
+        ],
+        lostInteractiveElements: []
+      }
+    })));
+    const overlaps = findings.filter((finding) => finding.ruleId === 'responsive-controls-overlap');
+    expect(overlaps).toHaveLength(1);
+    expect(overlaps[0]).toEqual(expect.objectContaining({
+      classification: 'review',
+      component: '#submit',
+      selectors: ['#submit', '#sticky-one', '#sticky-two']
+    }));
+    expect(overlaps[0]?.evidence).toHaveLength(2);
   });
 
   it('does not flag an organisation-named logo link solely because it points home', () => {

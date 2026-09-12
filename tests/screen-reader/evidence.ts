@@ -2,11 +2,13 @@ import type { Page, TestInfo } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { arch, platform, release } from 'node:os';
 import { resolve } from 'node:path';
+import {
+  assertScreenReaderEvidence,
+  type ScreenReaderEvidenceDocument,
+  type ScreenReaderJourneyEvidenceStep
+} from '../../src/audit/screen-reader-evidence.js';
 
-export interface ScreenReaderJourneyStep {
-  command: string;
-  spokenPhrase: string;
-}
+export type ScreenReaderJourneyStep = ScreenReaderJourneyEvidenceStep;
 
 interface ScreenReaderEvidenceInput {
   page: Page;
@@ -56,7 +58,7 @@ export async function writeScreenReaderEvidence(input: ScreenReaderEvidenceInput
     ...(inventory.headings.length ? [] : ['The page exposes no native heading elements.']),
     ...(inventory.landmarks.length ? [] : ['The page exposes no native or explicit landmark elements.'])
   ];
-  const evidence = {
+  const evidence: ScreenReaderEvidenceDocument = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     targetUrl: input.targetUrl,
@@ -75,6 +77,7 @@ export async function writeScreenReaderEvidence(input: ScreenReaderEvidenceInput
     warnings,
     conformanceNotice: 'This is repeatable assistive-technology evidence, not a WCAG conformance decision. A qualified human must review announcements, reading order, names, roles, states, instructions, and task completion.'
   };
+  assertScreenReaderEvidence(evidence);
   const outputDirectory = resolve(process.env.A11Y_SCREEN_READER_EVIDENCE_DIR ?? `screen-reader-evidence/${input.screenReader.toLowerCase()}`);
   await mkdir(outputDirectory, { recursive: true });
   const baseName = input.screenReader.toLowerCase();

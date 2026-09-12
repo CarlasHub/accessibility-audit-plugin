@@ -69,6 +69,13 @@ function findingRows(summary: AuditSummary, outputPath: string): string {
     const pages = finding.urls.map((url) => `<li>${link(url)}</li>`).join('');
     const selectors = finding.selectors.map((selector) => `<li><code>${escapeHtml(selector)}</code></li>`).join('');
     const id = findingId(finding, index);
+    const impact = finding.classification === 'confirmed'
+      ? { css: `severity-${finding.severity.toLowerCase()}`, label: finding.severity }
+      : finding.classification === 'review'
+        ? { css: 'badge-review', label: `Review priority: ${finding.severity}` }
+        : finding.classification === 'blocker'
+          ? { css: 'badge-blocker', label: 'Coverage blocked' }
+          : { css: 'badge-manual', label: 'Human check' };
     return `<tr id="finding-${escapeHtml(id)}" data-search="${escapeHtml([
       finding.ruleId,
       finding.summary,
@@ -82,7 +89,7 @@ function findingRows(summary: AuditSummary, outputPath: string): string {
     ].filter(Boolean).join(' ').toLowerCase())}" data-classification="${escapeHtml(finding.classification)}" data-severity="${escapeHtml(finding.severity)}">
       <td><span class="finding-id">${escapeHtml(id)}</span><br><span class="muted">${escapeHtml(finding.ruleId)}</span></td>
       <td><span class="badge badge-${escapeHtml(finding.classification)}">${escapeHtml(finding.classification)}</span></td>
-      <td><span class="badge severity-${escapeHtml(finding.severity.toLowerCase())}">${escapeHtml(finding.severity)}</span></td>
+      <td><span class="badge ${escapeHtml(impact.css)}">${escapeHtml(impact.label)}</span></td>
       <td><strong>${escapeHtml(finding.summary)}</strong><p>${escapeHtml(finding.issue)}</p>
         <details><summary>Impact, testing and remediation</summary>
           <h3>Impact</h3><p>${escapeHtml(finding.impact)}</p>
@@ -147,13 +154,13 @@ function renderReport(summary: AuditSummary, outputPath: string): string {
   const confirmed = count(summary, (finding) => finding.classification === 'confirmed');
   const reviews = count(summary, (finding) => finding.classification === 'review');
   const blockers = count(summary, (finding) => finding.classification === 'blocker');
-  const serious = count(summary, (finding) => finding.severity === 'Critical' || finding.severity === 'Serious');
+  const serious = count(summary, (finding) => finding.classification === 'confirmed' && (finding.severity === 'Critical' || finding.severity === 'Serious'));
   const generated = Number.isNaN(Date.parse(summary.generatedAt)) ? summary.generatedAt : new Date(summary.generatedAt).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' });
   const target = summary.landingPageUrl || summary.requestedUrls[0] || 'Not specified';
   const aaaAdvisory = summary.aaaAdvisory ?? summary.wcagLevel === 'AAA';
   const conformance = `WCAG 2.2 Level A and AA${aaaAdvisory ? ', with separate Level AAA advisory checks' : ''}`;
   const criteria = summary.criteria ?? [];
-  const unresolvedCriteria = criteria.filter((criterion) => ['manual-review-required', 'inconclusive'].includes(criterion.status)).length;
+  const unresolvedCriteria = criteria.filter((criterion) => criterion.scope === 'standard' && ['manual-review-required', 'inconclusive'].includes(criterion.status)).length;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -178,27 +185,27 @@ function renderReport(summary: AuditSummary, outputPath: string): string {
     <div class="notice warning"><strong>Conformance decision: ${escapeHtml(summary.conformanceDecision === 'not-determined' || !summary.conformanceDecision ? 'Not determined' : summary.conformanceDecision)}.</strong> Automated evidence cannot certify WCAG conformance. A qualified human assessment and sign-off remain mandatory; failures require remediation and unresolved outcomes are not passes.</div>
     <section class="metrics" aria-label="Audit summary">
       <div class="metric"><span>Pages audited</span><strong>${summary.auditedUrls.length}</strong></div>
-      <div class="metric"><span>Total findings</span><strong>${summary.findings.length}</strong></div>
+      <div class="metric"><span>Report items</span><strong>${summary.findings.length}</strong></div>
       <div class="metric attention"><span>Confirmed</span><strong>${confirmed}</strong></div>
-      <div class="metric attention"><span>Serious / critical</span><strong>${serious}</strong></div>
+      <div class="metric attention"><span>Confirmed serious / critical</span><strong>${serious}</strong></div>
       <div class="metric"><span>Needs review</span><strong>${reviews}</strong></div>
-      <div class="metric"><span>Manual checks</span><strong>${summary.manualChecks.length}</strong></div>
+      <div class="metric"><span>Unresolved AA criteria</span><strong>${unresolvedCriteria}</strong></div>
     </section>
     ${blockers ? `<div class="notice"><strong>${blockers} audit blocker${blockers === 1 ? '' : 's'}:</strong> review the findings before treating coverage as complete.</div>` : ''}
     <nav aria-label="Report sections"><a href="#findings">Findings</a><a href="#criteria">WCAG criteria</a><a href="#pages">Pages</a><a href="#coverage">Coverage</a><a href="#journeys">Task journeys</a><a href="#manual">Manual checks</a><a href="#method">Method and limitations</a></nav>
 
-    <section id="findings" aria-labelledby="findings-title"><h2 id="findings-title">Findings</h2><p class="lede">Search and filter the evidence. Expand a finding for its impact, verification steps, remediation and linked screenshots.</p>
+    <section id="findings" aria-labelledby="findings-title"><h2 id="findings-title">Findings</h2><p class="lede">Confirmed rows are evidence-backed barriers and use impact severity. Review rows are candidates that require human validation; their label is review priority, not a confirmed impact rating. Expand a row for verification steps, remediation and linked evidence.</p>
       <div class="toolbar"><div class="field"><label for="finding-search">Search findings</label><input id="finding-search" type="search" placeholder="Rule, issue, page or WCAG criterion"></div><div class="field"><label for="classification-filter">Classification</label><select id="classification-filter"><option value="">All classifications</option><option value="confirmed">Confirmed</option><option value="review">Review</option><option value="blocker">Blocker</option><option value="manual">Manual</option></select></div><div class="field"><label for="severity-filter">Severity</label><select id="severity-filter"><option value="">All severities</option><option>Critical</option><option>Serious</option><option>Moderate</option><option>Minor</option><option>Advisory</option></select></div><div id="result-count" class="result-count" aria-live="polite"></div></div>
-      <div class="table-wrap"><table><caption>Automated and evidence-backed findings</caption><thead><tr><th scope="col">ID / rule</th><th scope="col">Class</th><th scope="col">Severity</th><th scope="col">Finding</th><th scope="col">WCAG</th><th scope="col">Pages</th></tr></thead><tbody id="finding-rows">${findingRows(summary, outputPath)}</tbody></table></div>
+      <div class="table-wrap"><table><caption>Findings and evidence requiring action or validation</caption><thead><tr><th scope="col">ID / rule</th><th scope="col">Class</th><th scope="col">Impact / priority</th><th scope="col">Finding</th><th scope="col">WCAG</th><th scope="col">Pages</th></tr></thead><tbody id="finding-rows">${findingRows(summary, outputPath)}</tbody></table></div>
     </section>
 
     <section id="criteria" aria-labelledby="criteria-title"><h2 id="criteria-title">WCAG 2.2 criterion ledger</h2><p class="lede">Every success criterion is accounted for. The AA conformance target covers Levels A and AA; Level AAA appears only as optional advisory scope. ${unresolvedCriteria} criterion outcome${unresolvedCriteria === 1 ? '' : 's'} still require a human decision or more evidence.</p><div class="table-wrap"><table><caption>Criterion-by-criterion status and evidence</caption><thead><tr><th scope="col">Criterion</th><th scope="col">Level</th><th scope="col">Scope</th><th scope="col">Status</th><th scope="col">Evidence</th><th scope="col">Decision note</th></tr></thead><tbody>${criterionRows(summary)}</tbody></table></div></section>
 
     <section id="pages" aria-labelledby="pages-title"><h2 id="pages-title">Page inventory</h2><div class="table-wrap"><table><caption>Requested targets and audit status</caption><thead><tr><th scope="col">URL</th><th scope="col">Status</th><th scope="col">Viewports</th><th scope="col">Notes</th></tr></thead><tbody>${pageRows(summary)}</tbody></table></div></section>
-    <section id="coverage" aria-labelledby="coverage-title"><h2 id="coverage-title">Test coverage</h2><p class="lede">“Manual review”, “inconclusive” and “not tested” are unresolved outcomes—not passes.</p><div class="table-wrap"><table><caption>Coverage by page, viewport and audit area</caption><thead><tr><th scope="col">Page</th><th scope="col">Viewport</th><th scope="col">Area</th><th scope="col">Outcome</th><th scope="col">Evidence note</th></tr></thead><tbody>${coverageRows(summary)}</tbody></table></div></section>
+    <section id="coverage" aria-labelledby="coverage-title"><h2 id="coverage-title">Test execution coverage</h2><p class="lede">This records which checks ran and the evidence they produced; it is not a conformance percentage. “Manual review”, “inconclusive” and “not tested” are unresolved outcomes—not passes.</p><div class="table-wrap"><table><caption>Execution evidence by page, viewport and audit area</caption><thead><tr><th scope="col">Page</th><th scope="col">Viewport</th><th scope="col">Area</th><th scope="col">Outcome</th><th scope="col">Evidence note</th></tr></thead><tbody>${coverageRows(summary)}</tbody></table></div></section>
     <section id="journeys" aria-labelledby="journeys-title"><h2 id="journeys-title">Configured task journeys</h2><p class="lede">Repeatable keyboard, form, interaction and live-region assertions supplied for this site. A DOM live-region result does not prove the quality of a screen-reader announcement.</p><div class="table-wrap"><table><caption>Site-specific task journey evidence</caption><thead><tr><th scope="col">Page</th><th scope="col">Viewport</th><th scope="col">Journey</th><th scope="col">Areas</th><th scope="col">Outcome</th><th scope="col">Result</th><th scope="col">Completed steps</th></tr></thead><tbody>${configuredJourneyRows(summary)}</tbody></table></div></section>
     <section id="manual" aria-labelledby="manual-title"><h2 id="manual-title">WCAG 2.2 A/AA human verification</h2><p class="lede">All 55 Level A and AA success criteria have a criterion-specific procedure and evidence prompt. Record an explicit verdict for each applicable criterion; “not tested” is unresolved, not a pass.</p><div class="table-wrap"><table><caption>Criterion-specific human assessment plan</caption><thead><tr><th scope="col">ID</th><th scope="col">Check</th><th scope="col">WCAG</th><th scope="col">Applies to</th><th scope="col">Procedure</th><th scope="col">Evidence to record</th><th scope="col">Status</th></tr></thead><tbody>${manualRows(summary)}</tbody></table></div></section>
-    <section id="method" aria-labelledby="method-title"><h2 id="method-title">Method and limitations</h2><div class="limitations"><div class="panel"><h3>Audit scope</h3><ul><li>${escapeHtml(conformance)}</li><li>${summary.requestedUrls.length} requested URL${summary.requestedUrls.length === 1 ? '' : 's'}; ${summary.auditedUrls.length} audited</li><li>${summary.pages.flatMap((page) => page.viewports).length} page-and-viewport runs</li><li>Automated axe rules plus DOM, generic and configured keyboard journeys, 200% root-text resizing, text spacing, responsive/reflow, disclosure, tab and link checks</li><li>Native screen-reader transcripts, when supplied, are supporting evidence and do not replace expert assessment</li></ul></div><div class="panel"><h3>Known limitations</h3>${list([...summary.limitations, `${summary.manualChecks.length} guided manual check(s) require human completion.`, 'A qualified human must complete applicable checks and make the final conformance decision.'], 'No limitations recorded.')}</div></div></section>
+    <section id="method" aria-labelledby="method-title"><h2 id="method-title">Method and limitations</h2><div class="limitations"><div class="panel"><h3>Audit scope</h3><ul><li>${escapeHtml(conformance)}</li>${summary.qualityContract ? `<li>Audit Quality Contract ${escapeHtml(summary.qualityContract.version)}; ${summary.qualityContract.criterionCount} Level A/AA criteria; ${escapeHtml(summary.qualityContract.findingPolicy)} finding policy</li>` : ''}<li>${summary.requestedUrls.length} requested URL${summary.requestedUrls.length === 1 ? '' : 's'}; ${summary.auditedUrls.length} audited</li><li>${summary.pages.flatMap((page) => page.viewports).length} page-and-viewport runs</li><li>Automated axe rules plus DOM, generic and configured keyboard journeys, 200% root-text resizing, text spacing, responsive/reflow, disclosure, tab and link checks</li><li>Native screen-reader transcripts, when supplied, are supporting evidence and do not replace expert assessment</li></ul></div><div class="panel"><h3>Known limitations</h3>${list([...summary.limitations, `${summary.manualChecks.length} guided manual check(s) require human completion.`, 'A qualified human must complete applicable checks and make the final conformance decision.'], 'No limitations recorded.')}</div></div></section>
     <footer class="footer">Generated by CarlasHub Accessibility Audit. Keep this file beside the <code>screenshots</code> folder so evidence links continue to work.</footer>
   </main>
   <script>

@@ -32,6 +32,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Enforce audit-quality contract
+        run: npm run test:quality-contract
       - name: Configure VoiceOver automation
         run: npx --no-install guidepup setup --ci
       - name: Install pinned VoiceOver assets
@@ -68,6 +70,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Enforce audit-quality contract
+        run: npm run test:quality-contract
       - name: Configure NVDA automation
         run: npx --no-install guidepup setup --ci
       - name: Install pinned NVDA assets

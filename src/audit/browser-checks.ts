@@ -40,7 +40,7 @@ export async function runDomChecks(page: Page, axeTargetSizeSelectors: string[] 
         current = current.parentElement;
       }
       if (rect.top < innerHeight && rect.bottom > 0) {
-        const samplePoints = [
+        const samplePoints: Array<[number, number]> = [
           [Math.max(0, Math.min(innerWidth - 1, rect.left + rect.width / 2)), Math.max(0, Math.min(innerHeight - 1, rect.top + rect.height / 2))],
           [Math.max(0, Math.min(innerWidth - 1, rect.left + 2)), Math.max(0, Math.min(innerHeight - 1, rect.top + 2))]
         ];
@@ -810,15 +810,52 @@ export async function runResponsiveChecks(page: Page): Promise<ResponsiveCheckRe
         const second = interactive[secondIndex]!;
         if (first.contains(second) || second.contains(first)) continue;
         const secondRect = second.getBoundingClientRect();
-        const overlapWidth = Math.min(firstRect.right, secondRect.right) - Math.max(firstRect.left, secondRect.left);
-        const overlapHeight = Math.min(firstRect.bottom, secondRect.bottom) - Math.max(firstRect.top, secondRect.top);
+        const overlapLeft = Math.max(0, firstRect.left, secondRect.left);
+        const overlapTop = Math.max(0, firstRect.top, secondRect.top);
+        const overlapRight = Math.min(innerWidth, firstRect.right, secondRect.right);
+        const overlapBottom = Math.min(innerHeight, firstRect.bottom, secondRect.bottom);
+        const overlapWidth = overlapRight - overlapLeft;
+        const overlapHeight = overlapBottom - overlapTop;
         if (overlapWidth <= 4 || overlapHeight <= 4) continue;
+        const overlapArea = overlapWidth * overlapHeight;
+        const smallerElementArea = Math.min(firstRect.width * firstRect.height, secondRect.width * secondRect.height);
+        const smallerElementOverlapPercent = smallerElementArea > 0 ? (overlapArea / smallerElementArea) * 100 : 0;
+        if (overlapArea < 64 || smallerElementOverlapPercent < 25) continue;
+
+        const insetX = Math.min(2, overlapWidth / 4);
+        const insetY = Math.min(2, overlapHeight / 4);
+        const samplePoints: Array<[number, number]> = [
+          [overlapLeft + overlapWidth / 2, overlapTop + overlapHeight / 2],
+          [overlapLeft + insetX, overlapTop + insetY],
+          [overlapRight - insetX, overlapTop + insetY],
+          [overlapLeft + insetX, overlapBottom - insetY],
+          [overlapRight - insetX, overlapBottom - insetY]
+        ];
+        let firstOnTop = 0;
+        let secondOnTop = 0;
+        for (const [x, y] of samplePoints) {
+          const topTarget = document.elementsFromPoint(x, y).find((candidate) => (
+            candidate === first || first.contains(candidate) || candidate === second || second.contains(candidate)
+          ));
+          if (topTarget === first || (topTarget && first.contains(topTarget))) firstOnTop += 1;
+          else if (topTarget === second || (topTarget && second.contains(topTarget))) secondOnTop += 1;
+        }
+        const firstClearlyOccludes = firstOnTop >= 3 && secondOnTop === 0;
+        const secondClearlyOccludes = secondOnTop >= 3 && firstOnTop === 0;
+        if (!firstClearlyOccludes && !secondClearlyOccludes) continue;
+        const firstSelector = cssPath(first);
+        const secondSelector = cssPath(second);
         overlapPairs.push({
-          firstSelector: cssPath(first),
-          secondSelector: cssPath(second),
+          firstSelector,
+          secondSelector,
           phase: currentPhase,
           overlapWidth: Math.round(overlapWidth * 10) / 10,
-          overlapHeight: Math.round(overlapHeight * 10) / 10
+          overlapHeight: Math.round(overlapHeight * 10) / 10,
+          overlapArea: Math.round(overlapArea * 10) / 10,
+          smallerElementOverlapPercent: Math.round(smallerElementOverlapPercent * 10) / 10,
+          obscuredSelector: firstClearlyOccludes ? secondSelector : firstSelector,
+          occludingSelector: firstClearlyOccludes ? firstSelector : secondSelector,
+          hitTestSampleCount: Math.max(firstOnTop, secondOnTop)
         });
       }
     }

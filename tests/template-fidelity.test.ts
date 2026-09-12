@@ -5,7 +5,12 @@ import { join } from 'node:path';
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import { CANONICAL_TEMPLATE_SHA256, DEFAULT_TEMPLATE, writeExcelReport } from '../src/reporting/excel.js';
-import { EXPECTED_REPORT_HEADERS, EXPECTED_TEMPLATE_WORKSHEETS, EXPECTED_WORKSHEETS } from '../src/reporting/validate.js';
+import {
+  EXPECTED_REPORT_HEADERS,
+  EXPECTED_TEMPLATE_REPORT_HEADERS,
+  EXPECTED_TEMPLATE_WORKSHEETS,
+  EXPECTED_WORKSHEETS
+} from '../src/reporting/validate.js';
 import type { AuditSummary } from '../src/types.js';
 
 function summaryWithEvidence(screenshot: string): AuditSummary {
@@ -64,7 +69,7 @@ describe('CarlasHub WCAG workbook template fidelity', () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(DEFAULT_TEMPLATE);
     expect(workbook.worksheets.map((worksheet) => worksheet.name)).toEqual(EXPECTED_TEMPLATE_WORKSHEETS);
-    expect(workbook.getWorksheet('Findings')?.getRow(6).values).toEqual([undefined, ...EXPECTED_REPORT_HEADERS]);
+    expect(workbook.getWorksheet('Findings')?.getRow(6).values).toEqual([undefined, ...EXPECTED_TEMPLATE_REPORT_HEADERS]);
     expect(workbook.getWorksheet('Page Inventory')?.getRow(4).values).toEqual([
       undefined, 'URL', 'Audit state', 'Viewports planned', 'Viewports completed', 'Consent handling', 'Runtime errors', 'Notes'
     ]);
@@ -114,20 +119,26 @@ describe('CarlasHub WCAG workbook template fidelity', () => {
       expect(generatedSheet?.views[0]?.showGridLines).toBe(false);
     }
 
-    const templateFindings = template.getWorksheet('Findings')!;
     const generatedFindings = generated.getWorksheet('Findings')!;
+    expect(generatedFindings.getRow(6).values).toEqual([undefined, ...EXPECTED_REPORT_HEADERS]);
+    const expectedWidths = [12, 14, 12, 16, 14, 8, 22, 34, 18, 22, 22, 32, 36, 34, 30, 34, 36, 34, 36, 14, 12, 18, 18, 18, 16];
+    const hiddenColumns = new Set([6, 7, 9, 11, 15, 16, 24, 25]);
     for (let column = 1; column <= EXPECTED_REPORT_HEADERS.length; column += 1) {
-      expect(generatedFindings.getColumn(column).width).toBe(templateFindings.getColumn(column).width);
+      expect(generatedFindings.getColumn(column).width).toBe(expectedWidths[column - 1]);
+      expect(generatedFindings.getColumn(column).hidden ?? false).toBe(hiddenColumns.has(column));
       expect((generatedFindings.getCell(6, column).fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FF1A73E8');
       expect(generatedFindings.getCell(6, column).font.color?.argb).toBe('FFFFFFFF');
       expect(generatedFindings.getCell(6, column).font.bold).toBe(true);
     }
-    expect(generatedFindings.views[0]).toEqual(expect.objectContaining({ xSplit: 4, ySplit: 6, showGridLines: false }));
+    expect(generatedFindings.views[0]).toEqual(expect.objectContaining({ xSplit: 2, ySplit: 6, showGridLines: false }));
     expect((generatedFindings.getCell('B9').fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FFFCE8E6');
     expect((generatedFindings.getCell('D9').fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FFC5221F');
     expect(generatedFindings.getCell('D9').font.color?.argb).toBe('FFFFFFFF');
     expect(generatedFindings.getCell('D9').font.bold).toBe(true);
     expect(generatedFindings.getCell('D9').value).toBe('Serious');
+    expect(generatedFindings.getCell('M9').value).toBe('The image has no text alternative.');
+    expect(generatedFindings.getCell('Q9').value).toContain('Contrast Ratio: 2.1');
+    expect(generatedFindings.getCell('Q9').value).not.toContain('{');
     expect(generatedFindings.autoFilter).toBe('A6:Y9');
     expect(generatedFindings.getCell('B9').dataValidation.formulae?.[0]).toContain('manual');
     expect(generatedFindings.getCell('T9').dataValidation.formulae?.[0]).toContain('Development');

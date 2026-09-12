@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import ExcelJS, { type CellValue, type DataValidation, type Style, type Worksheet } from 'exceljs';
 import type { AuditSummary, Finding, PageAudit } from '../types.js';
 import { findingId } from './finding-id.js';
+import { EXPECTED_REPORT_HEADERS } from './validate.js';
 
 interface LookupEntry {
   criterion: string;
@@ -243,7 +244,7 @@ function reportRowValues(finding: Finding, id: string, criteria: LookupEntry[], 
     finding.impact,
     finding.selectors.join('\n') || 'Page-level or structural check',
     finding.testing,
-    finding.issue,
+    finding.evidence.map((item) => `[${item.kind}] ${readableEvidenceDetail(item.detail)}`).join('\n\n') || finding.issue,
     expectedOutcome(finding, criteria),
     finding.remediation,
     finding.assignment,
@@ -444,8 +445,8 @@ function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
   const allViewports = summary.pages.flatMap((page) => page.viewports);
   const classifications = (classification: Finding['classification']): number =>
     summary.findings.filter((finding) => finding.classification === classification).length;
-  const severities = (severity: Finding['severity']): number =>
-    summary.findings.filter((finding) => finding.severity === severity).length;
+  const confirmedSeverities = (severity: Finding['severity']): number =>
+    summary.findings.filter((finding) => finding.classification === 'confirmed' && finding.severity === severity).length;
   worksheet.getCell('B4').value = summary.status === 'completed' ? 'Completed' : 'Cancelled';
   worksheet.getCell('B5').value = new Date(summary.generatedAt);
   worksheet.getCell('B6').value = summary.auditor;
@@ -456,13 +457,17 @@ function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
   worksheet.getCell('B9').value = summary.requestedUrls.length;
   worksheet.getCell('B10').value = summary.pages.length;
   worksheet.getCell('B11').value = allViewports.length;
+  worksheet.getCell('D4').value = 'Report items';
+  worksheet.getCell('D6').value = 'Review candidates';
+  worksheet.getCell('D8').value = 'Manual plan checks';
+  worksheet.getCell('G3').value = 'Confirmed impact';
   worksheet.getCell('E4').value = summary.findings.length;
   worksheet.getCell('E5').value = classifications('confirmed');
   worksheet.getCell('E6').value = classifications('review');
   worksheet.getCell('E7').value = classifications('blocker');
   worksheet.getCell('E8').value = summary.manualChecks.length;
   (['Critical', 'Serious', 'Moderate', 'Minor', 'Advisory'] as const).forEach((severity, index) => {
-    worksheet.getCell(`H${index + 4}`).value = severities(severity);
+    worksheet.getCell(`H${index + 4}`).value = confirmedSeverities(severity);
   });
   worksheet.getCell('A14').value = [
     `Requested URLs: ${summary.requestedUrls.length}`,
@@ -471,6 +476,8 @@ function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
     `Skipped URLs: ${summary.skippedUrls.length}`,
     `Viewports run: ${allViewports.length}`,
     `Conformance target: WCAG 2.2 Level AA`,
+    `Audit Quality Contract: ${summary.qualityContract?.version ?? 'not recorded'}`,
+    `Finding policy: ${summary.qualityContract?.findingPolicy ?? 'not recorded'}`,
     `AAA advisory checks: ${aaaAdvisory ? 'Enabled' : 'Disabled'}`,
     `Source: ${summary.source}`
   ].join('\n');
@@ -518,15 +525,37 @@ function applySummaryPresentation(worksheet: Worksheet): void {
 }
 
 function applyFindingPresentation(worksheet: Worksheet, findings: Finding[]): void {
+  worksheet.getRow(6).values = EXPECTED_REPORT_HEADERS;
+  worksheet.getRow(6).eachCell((cell) => {
+    solidFill(cell, REPORT_COLOURS.primary);
+    cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.alignment = { vertical: 'middle', wrapText: true };
+  });
   worksheet.views = [{
     state: 'frozen',
-    xSplit: 4,
+    xSplit: 2,
     ySplit: 6,
-    topLeftCell: 'E7',
+    topLeftCell: 'C7',
     showGridLines: false,
-    zoomScale: 85
+    zoomScale: 75
   }];
-  worksheet.getCell('A4').value = 'Prioritise confirmed barriers and blockers. Review rows are evidence-led candidates that require human validation; severity is colour-coded and also stated as text.';
+  worksheet.getCell('A4').value = 'Prioritise confirmed barriers and blockers. Review rows are evidence-led candidates requiring human validation; their rating is review priority, not confirmed impact severity.';
+  const widths = [12, 14, 12, 16, 14, 8, 22, 34, 18, 22, 22, 32, 36, 34, 30, 34, 36, 34, 36, 14, 12, 18, 18, 18, 16];
+  const hiddenColumns = new Set([6, 7, 9, 11, 15, 16, 24, 25]);
+  widths.forEach((width, index) => {
+    const column = worksheet.getColumn(index + 1);
+    column.width = width;
+    column.hidden = hiddenColumns.has(index + 1);
+  });
+  worksheet.pageSetup = {
+    ...worksheet.pageSetup,
+    orientation: 'landscape',
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0,
+    horizontalCentered: false,
+    printTitlesRow: '1:6'
+  };
   findings.forEach((finding, index) => {
     const row = worksheet.getRow(index + 7);
     row.height = 72;
@@ -540,8 +569,10 @@ function applyFindingPresentation(worksheet: Worksheet, findings: Finding[]): vo
     const classification = CLASSIFICATION_COLOURS[finding.classification];
     styleBadge(row.getCell(2), classification.background, classification.foreground);
     styleBadge(row.getCell(3), REPORT_COLOURS.open, REPORT_COLOURS.primaryDark);
-    const severity = SEVERITY_COLOURS[finding.severity];
-    styleBadge(row.getCell(4), severity.background, severity.foreground);
+    const priority = finding.classification === 'confirmed'
+      ? SEVERITY_COLOURS[finding.severity]
+      : CLASSIFICATION_COLOURS[finding.classification];
+    styleBadge(row.getCell(4), priority.background, priority.foreground);
   });
 }
 
