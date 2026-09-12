@@ -1,6 +1,6 @@
 {
   "name": "accessibility-audit",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "description": "Evidence-backed WCAG 2.2 A/AA page audits with conservative link and tab checks, element screenshots, and validated Excel reporting.",
   "author": {
     "name": "CarlasHub",
