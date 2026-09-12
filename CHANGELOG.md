@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.0 - 2026-09-12
+
+- Added the repository's normative Audit Quality Master Contract, including the complete WCAG 2.2 A/AA accountability model, release gates, evidence requirements, and honest conformance boundary.
+- Centralised confidence gating so a result is confirmed only when its page state, detector authority, repeatability, evidence, applicability, impact, and deduplication checks are all valid; uncertain results remain review candidates or blockers.
+- Strengthened contrast and overlap validation, deterministic deduplication, screen-reader evidence validation, and keyboard, reflow, zoom, text-spacing, and interaction evidence.
+- Aligned canonical JSON, accessible HTML, and validated XLSX reports with the same provenance, confidence, severity, criterion, and evidence records.
+- Added executable contract tests, adversarial fixtures, native NVDA and VoiceOver workflows, fresh-consumer Action verification, and an exact two-run BuggyLand regression gate.
+
 ## 1.6.2 - 2026-09-11
 
 - Made the default, 200% root text-resize, and WCAG text-spacing phases run against the rendered state even when a modal blocks underlying keyboard interactions.
