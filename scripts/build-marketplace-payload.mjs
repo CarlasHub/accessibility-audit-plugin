@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
+import { createReadStream } from 'node:fs';
 import {
   copyFile,
   cp,
@@ -13,6 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { createGunzip } from 'node:zlib';
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, '..');
@@ -101,6 +103,55 @@ async function sha256(filePath) {
   return hash.digest('hex');
 }
 
+function uncompressedTarSha256(filePath) {
+  return new Promise((resolveHash, rejectHash) => {
+    const hash = createHash('sha256');
+    const archive = createReadStream(filePath);
+    const gunzip = createGunzip();
+
+    archive.once('error', rejectHash);
+    gunzip.once('error', rejectHash);
+    gunzip.on('data', (chunk) => hash.update(chunk));
+    gunzip.once('end', () => resolveHash(hash.digest('hex')));
+    archive.pipe(gunzip);
+  });
+}
+
+async function selectStableTarball(generatedTarball, temporaryRoot) {
+  const tarballName = basename(generatedTarball);
+  const existingTarball = join(payloadRoot, 'claude', '_install-source', tarballName);
+  const existingManifestPath = join(payloadRoot, 'claude', 'install-manifest.json');
+
+  try {
+    const existingManifest = JSON.parse(await readFile(existingManifestPath, 'utf8'));
+    if (
+      existingManifest.version !== version
+      || existingManifest.packageName !== packageJson.name
+      || existingManifest.tarball !== tarballName
+    ) {
+      return { path: generatedTarball, reused: false };
+    }
+
+    const [existingDigest, existingContentDigest, generatedContentDigest] = await Promise.all([
+      sha256(existingTarball),
+      uncompressedTarSha256(existingTarball),
+      uncompressedTarSha256(generatedTarball)
+    ]);
+    if (
+      existingManifest.sha256 !== existingDigest
+      || existingContentDigest !== generatedContentDigest
+    ) {
+      return { path: generatedTarball, reused: false };
+    }
+
+    const stableTarball = join(temporaryRoot, `stable-${tarballName}`);
+    await copyFile(existingTarball, stableTarball);
+    return { path: stableTarball, reused: true };
+  } catch {
+    return { path: generatedTarball, reused: false };
+  }
+}
+
 async function copySharedPayload(destination) {
   await cp(join(root, 'skills'), join(destination, 'skills'), { recursive: true });
   await cp(join(root, 'commands'), join(destination, 'commands'), { recursive: true });
@@ -121,12 +172,13 @@ try {
   const packResult = JSON.parse(stdout);
   const tarballName = packResult[0]?.filename;
   if (!tarballName) throw new Error('npm pack did not return a tarball filename.');
-  const tarballSource = join(temporaryRoot, basename(tarballName));
+  const generatedTarball = join(temporaryRoot, basename(tarballName));
+  const { path: tarballSource, reused } = await selectStableTarball(generatedTarball, temporaryRoot);
   const digest = await sha256(tarballSource);
   const installManifest = {
     version,
     packageName: packageJson.name,
-    tarball: basename(tarballSource),
+    tarball: basename(tarballName),
     sha256: digest,
     entrypoint: 'dist/mcp.js',
     template: 'assets/accessibility-report-template.xlsx',
@@ -138,7 +190,7 @@ try {
     const destination = join(payloadRoot, harness);
     await mkdir(join(destination, '_install-source'), { recursive: true });
     await copySharedPayload(destination);
-    await copyFile(tarballSource, join(destination, '_install-source', basename(tarballSource)));
+    await copyFile(tarballSource, join(destination, '_install-source', basename(tarballName)));
     await writeFile(join(destination, 'install-manifest.json'), json(installManifest), 'utf8');
     await writeFile(join(destination, 'README.md'), payloadReadme(harness), 'utf8');
   }
@@ -208,7 +260,8 @@ try {
     '--require-dist',
     '--include-marketplace'
   ], { cwd: root });
-  process.stdout.write(`Generated marketplace payload ${version}\n${generatedFiles.join('\n')}\nSHA-256: ${digest}\n`);
+  const archiveStatus = reused ? 'reused canonical archive bytes' : 'created new archive bytes';
+  process.stdout.write(`Generated marketplace payload ${version} (${archiveStatus})\n${generatedFiles.join('\n')}\nSHA-256: ${digest}\n`);
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });
 }
