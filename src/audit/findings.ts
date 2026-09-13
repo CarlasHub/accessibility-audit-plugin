@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { AxeNodeResult, AxeViolationResult, DisclosureCheckResult, ElementContext, Finding, PageAudit, Severity, ViewportAudit } from '../types.js';
+import type { AuditCheckId, AxeNodeResult, AxeViolationResult, DisclosureCheckResult, ElementContext, EvidenceItem, Finding, PageAudit, Severity, ViewportAudit } from '../types.js';
 
 function fingerprint(value: string): string {
   return createHash('sha1').update(value).digest('hex').slice(0, 12);
@@ -222,9 +222,67 @@ function assignmentForRule(ruleId: string): Finding['assignment'] {
   return 'Development';
 }
 
+function checkIdForEvidence(ruleId: string, kind: EvidenceItem['kind'], detail: string): AuditCheckId {
+  if (ruleId === 'page-unavailable') return 'navigation';
+  if (ruleId === 'interaction-coverage-blocked') return 'keyboard';
+  if (ruleId.startsWith('axe-')) return 'axe';
+  if (ruleId.startsWith('disclosure-')) return 'disclosures';
+  if (ruleId.startsWith('tabs-')) return 'tabs';
+  if (ruleId.startsWith('keyboard-journey-')) {
+    try {
+      const journey = JSON.parse(detail) as { source?: unknown };
+      return journey.source === 'configured' ? 'journeys' : 'keyboard';
+    } catch {
+      return 'keyboard';
+    }
+  }
+  if (ruleId.startsWith('link-destination-') || ruleId === 'link-broken-destination') return 'links';
+  if (ruleId.startsWith('responsive-') || ruleId.startsWith('text-spacing-') || ruleId.startsWith('text-resize-') || ruleId === 'horizontal-reflow-overflow') return 'responsive';
+  if (kind === 'keyboard') return 'keyboard';
+  if (kind === 'responsive') return 'responsive';
+  if (kind === 'network') return 'links';
+  return 'dom';
+}
+
+function evidenceState(checkId: AuditCheckId): string {
+  if (checkId === 'responsive') return 'responsive-stress-state';
+  if (['keyboard', 'disclosures', 'tabs', 'journeys'].includes(checkId)) return 'interaction-state';
+  return 'rendered-page-state';
+}
+
+function expectedForFinding(finding: Omit<Finding, 'key'>): string {
+  const explicit = /(?:^|\n)Expected:\s*(.+?)(?:\n|$)/i.exec(finding.testing)?.[1]?.trim();
+  return explicit || finding.remediation;
+}
+
 function makeFinding(input: Omit<Finding, 'key'> & { identity: string }): Finding {
   const { identity, ...finding } = input;
-  return { ...finding, key: `${finding.ruleId}:${fingerprint(identity)}` };
+  const evidence = finding.evidence.map((item) => {
+    const checkId = checkIdForEvidence(finding.ruleId, item.kind, item.detail);
+    const target = item.selector || 'page';
+    const observationId = fingerprint(JSON.stringify([
+      checkId,
+      finding.ruleId,
+      item.pageUrl,
+      item.viewport ?? '',
+      evidenceState(checkId),
+      target,
+      item.detail
+    ]));
+    return {
+      ...item,
+      provenance: {
+        observationId,
+        checkId,
+        ruleId: finding.ruleId,
+        state: evidenceState(checkId),
+        target,
+        observed: item.detail,
+        expected: expectedForFinding(finding)
+      }
+    };
+  });
+  return { ...finding, evidence, key: `${finding.ruleId}:${fingerprint(identity)}` };
 }
 
 function axeFindings(audit: ViewportAudit): Finding[] {
@@ -1388,44 +1446,19 @@ export function findingsFromPage(page: PageAudit): Finding[] {
   return page.viewports
     .filter((audit) => !audit.cancelled)
     .flatMap((audit) => {
-      const failed = (prefix: string): boolean => audit.errors.some((message) => message.startsWith(prefix));
-      const interactionUnavailable = Boolean(audit.interactionBlocker);
-      const evidenceGatedAudit: ViewportAudit = {
-        ...audit,
-        ...(failed('DOM checks error:') ? {
-          dom: {
-            h1Count: 1,
-            mainCount: 1,
-            unnamedLandmarks: [],
-            missingAltImages: [],
-            linkedImagesForReview: [],
-            emptyLinks: [],
-            emptyNamedControls: [],
-            unlabeledFields: [],
-            duplicateIds: [],
-            smallTargets: [],
-            tablesForReview: [],
-            autoplayMedia: []
-          }
-        } : {}),
-        ...(interactionUnavailable || failed('Keyboard checks error:') ? {
-          keyboard: { sequence: [], journeys: [], completedCycle: false, truncated: false, scope: 'unknown' }
-        } : {}),
-        ...(interactionUnavailable || failed('Disclosure checks error:') ? { disclosures: [] } : {}),
-        ...(interactionUnavailable || failed('Tab checks error:') ? { tabs: [] } : {}),
-        ...(interactionUnavailable || failed('Link checks error:') ? { links: [] } : {}),
-        ...(interactionUnavailable || failed('Responsive checks error:') ? {
-          responsive: {
-            horizontalOverflow: 0,
-            overflowElements: [],
-            textSpacingOverflow: 0,
-            clippedElements: [],
-            overlapPairs: [],
-            lostInteractiveElements: []
-          }
-        } : {})
-      };
-      return [...axeFindings(audit), ...domFindings(evidenceGatedAudit)]
+      const outcome = (checkId: AuditCheckId) => audit.collectionOutcomes?.find((item) => item.checkId === checkId);
+      const retainsEvidence = (finding: Finding): boolean => finding.evidence.every((item) => {
+        const checkId = item.provenance?.checkId;
+        if (audit.interactionBlocker && checkId === 'responsive' && finding.classification !== 'blocker') {
+          return false;
+        }
+        if (!checkId || !audit.collectionOutcomes) return true;
+        const status = outcome(checkId)?.status;
+        return status === 'completed'
+          || (finding.classification === 'blocker' && (status === 'failed' || status === 'blocked'));
+      });
+      return [...axeFindings(audit), ...domFindings(audit)]
+        .filter(retainsEvidence)
         .map((finding) => enrichComponent(finding, audit));
     });
 }

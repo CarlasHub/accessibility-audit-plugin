@@ -7,12 +7,14 @@ import { chromium, type Browser, type Locator, type Page } from 'playwright';
 import axe from 'axe-core';
 import type {
   AuditExecutionContext,
+  AuditCheckId,
   AuditOptions,
   AuditProgressEvent,
   AuditSummary,
   AxeRunMetadata,
   AxeViolationResult,
   ConsentHandlingResult,
+  CollectionOutcome,
   DomCheckResult,
   ElementContext,
   ElementScreenshot,
@@ -30,7 +32,8 @@ import { findingsFromPage } from './findings.js';
 import { buildCoverageMatrix } from './coverage.js';
 import { buildWcagCriterionLedger } from './wcag-criteria.js';
 import { applyConfirmedFindingConfidenceGate, assertAuditQualityContract, AUDIT_QUALITY_CONTRACT } from './quality-contract.js';
-import { assertRemediationOnlyNotes, consolidateFindings } from '../reporting/consolidate.js';
+import { assertCanonicalAuditSummary, assertCollectionCompleteness } from './canonical-validation.js';
+import { assertLosslessConsolidation, assertRemediationOnlyNotes, consolidateFindings } from '../reporting/consolidate.js';
 import { assignFindingIds } from '../reporting/finding-id.js';
 import { writeJsonReport } from '../reporting/json.js';
 import { singleLineText } from '../text.js';
@@ -59,6 +62,23 @@ function emptyDom(): DomCheckResult {
     tablesForReview: [],
     autoplayMedia: []
   };
+}
+
+function domObservationCount(dom: DomCheckResult): number {
+  return Object.values(dom).reduce((count, value) => count + (Array.isArray(value) ? value.length : 0), 0)
+    + (dom.h1Count === 1 ? 0 : 1)
+    + (dom.mainCount === 1 ? 0 : 1);
+}
+
+function responsiveObservationCount(responsive: ViewportAudit['responsive']): number {
+  return responsive.overflowElements.length
+    + responsive.clippedElements.length
+    + responsive.overlapPairs.length
+    + responsive.lostInteractiveElements.length
+    + (responsive.textResizeLostInteractiveElements?.length ?? 0)
+    + (responsive.horizontalOverflow > 2 ? 1 : 0)
+    + (responsive.textSpacingOverflow > Math.max(2, responsive.horizontalOverflow + 2) ? 1 : 0)
+    + ((responsive.textResizeOverflow ?? 0) > Math.max(2, responsive.horizontalOverflow + 2) ? 1 : 0);
 }
 
 async function emitProgress(execution: AuditExecutionContext, event: AuditProgressEvent): Promise<void> {
@@ -495,6 +515,39 @@ export async function auditViewport(
   let disclosures: ViewportAudit['disclosures'] = [];
   let tabs: ViewportAudit['tabs'] = [];
   let links: ViewportAudit['links'] = [];
+  const checkIds: AuditCheckId[] = [
+    'navigation', 'axe', 'dom', 'keyboard', 'disclosures', 'tabs', 'responsive',
+    'links', 'journeys', 'element-context', 'screenshots'
+  ];
+  const collectionOutcomes: CollectionOutcome[] = checkIds.map((checkId) => ({
+    checkId,
+    status: 'not-run',
+    observationCount: 0
+  }));
+  const recordOutcome = (
+    checkId: AuditCheckId,
+    outcome: Omit<CollectionOutcome, 'checkId'>,
+    onlyIfNotRun = false
+  ): void => {
+    const index = collectionOutcomes.findIndex((item) => item.checkId === checkId);
+    if (onlyIfNotRun && collectionOutcomes[index]?.status !== 'not-run') return;
+    collectionOutcomes[index] = { checkId, ...outcome };
+  };
+  const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
+  const blockPending = (checkIdsToBlock: AuditCheckId[], blockedBy: string): void => {
+    for (const checkId of checkIdsToBlock) {
+      recordOutcome(checkId, { status: 'blocked', observationCount: 0, blockedBy }, true);
+    }
+  };
+  if (viewport.name !== 'desktop') {
+    recordOutcome('links', { status: 'not-applicable', observationCount: 0 });
+  }
+  if (options.journeys.length === 0) {
+    recordOutcome('journeys', { status: 'not-applicable', observationCount: 0 });
+  }
+  if (!options.captureScreenshots) {
+    recordOutcome('screenshots', { status: 'not-applicable', observationCount: 0 });
+  }
   const screenshot = resolve(options.outputDir, 'screenshots', `${safeSlug(url)}-${viewport.name}.png`);
   let context: Awaited<ReturnType<Browser['newContext']>> | undefined;
   const closeOnAbort = (): void => { void context?.close().catch(() => undefined); };
@@ -567,6 +620,7 @@ export async function auditViewport(
       throw new Error(`Navigation blocked: ${finalUrlRestriction}`);
     }
     title = await page.title();
+    recordOutcome('navigation', { status: 'completed', observationCount: 1 });
     consent = await dependencies.dismissConsentBanner(page);
     if (consent.error) errors.push(`Consent handling error: ${consent.error}`);
     if (consent.found && !consent.dismissed) {
@@ -578,8 +632,11 @@ export async function auditViewport(
       const axeOutput = await dependencies.runAxe(page, options.wcagLevel);
       axeResults = axeOutput.results;
       axeRun = axeOutput.metadata;
+      recordOutcome('axe', axeRun.completed
+        ? { status: 'completed', observationCount: axeResults.reduce((count, item) => count + item.nodes.length, 0) }
+        : { status: 'failed', observationCount: 0, error: axeRun.error || 'axe did not complete.' });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       errors.push(`axe-core error: ${message}`);
       axeRun = {
         completed: false,
@@ -589,21 +646,36 @@ export async function auditViewport(
         passCount: 0,
         passes: []
       };
+      recordOutcome('axe', { status: 'failed', observationCount: 0, error: message });
     }
     const axeTargetSizeSelectors = axeResults
       .filter((result) => result.id === 'target-size')
       .flatMap((result) => result.nodes.flatMap((node) => node.target));
     try {
       dom = await dependencies.runDomChecks(page, axeTargetSizeSelectors);
+      recordOutcome('dom', {
+        status: 'completed',
+        observationCount: domObservationCount(dom)
+      });
     } catch (error) {
-      errors.push(`DOM checks error: ${error instanceof Error ? error.message : String(error)}`);
+      const message = errorMessage(error);
+      errors.push(`DOM checks error: ${message}`);
+      recordOutcome('dom', { status: 'failed', observationCount: 0, error: message });
     }
     if (!interactionBlocker) {
       try {
         keyboard = await dependencies.runKeyboardChecks(page, options.maxTabStops);
+        recordOutcome('keyboard', {
+          status: 'completed',
+          observationCount: keyboard.sequence.length + keyboard.journeys.length
+        });
       } catch (error) {
-        errors.push(`Keyboard checks error: ${error instanceof Error ? error.message : String(error)}`);
+        const message = errorMessage(error);
+        errors.push(`Keyboard checks error: ${message}`);
+        recordOutcome('keyboard', { status: 'failed', observationCount: 0, error: message });
       }
+    } else {
+      recordOutcome('keyboard', { status: 'blocked', observationCount: 0, blockedBy: interactionBlocker.selector });
     }
     if (!interactionBlocker && keyboard.scope === 'modal-only') {
       interactionBlocker = {
@@ -614,11 +686,17 @@ export async function auditViewport(
       };
       errors.push(`${interactionBlocker.reason} ${interactionBlocker.selector}`);
     }
+    if (interactionBlocker) {
+      blockPending(['disclosures', 'tabs', 'links', 'journeys'], interactionBlocker.selector);
+    }
     if (!interactionBlocker) {
       try {
         disclosures = await dependencies.runDisclosureChecks(page);
+        recordOutcome('disclosures', { status: 'completed', observationCount: disclosures.length });
       } catch (error) {
-        errors.push(`Disclosure checks error: ${error instanceof Error ? error.message : String(error)}`);
+        const message = errorMessage(error);
+        errors.push(`Disclosure checks error: ${message}`);
+        recordOutcome('disclosures', { status: 'failed', observationCount: 0, error: message });
       }
     }
     for (const disclosure of disclosures.filter((item) => item.error)) {
@@ -627,22 +705,36 @@ export async function auditViewport(
     if (!interactionBlocker) {
       try {
         tabs = await dependencies.runTabChecks(page);
+        recordOutcome('tabs', { status: 'completed', observationCount: tabs.length });
       } catch (error) {
-        errors.push(`Tab checks error: ${error instanceof Error ? error.message : String(error)}`);
+        const message = errorMessage(error);
+        errors.push(`Tab checks error: ${message}`);
+        recordOutcome('tabs', { status: 'failed', observationCount: 0, error: message });
       }
     }
     try {
       responsive = await dependencies.runResponsiveChecks(page);
+      const responsiveCompleted = responsive.completed !== false;
+      recordOutcome('responsive', {
+        status: responsiveCompleted ? 'completed' : 'failed',
+        observationCount: responsiveCompleted ? responsiveObservationCount(responsive) : 0,
+        ...(!responsiveCompleted ? { error: 'Responsive phases did not all complete.' } : {})
+      });
     } catch (error) {
-      errors.push(`Responsive checks error: ${error instanceof Error ? error.message : String(error)}`);
+      const message = errorMessage(error);
+      errors.push(`Responsive checks error: ${message}`);
+      recordOutcome('responsive', { status: 'failed', observationCount: 0, error: message });
     }
     if (!interactionBlocker && viewport.name === 'desktop') {
       try {
         const linkOutput = await dependencies.runLinkChecks(page, options.maxLinksPerPage);
         links = linkOutput.results;
         linkRun = linkOutput.metadata;
+        recordOutcome('links', linkRun.completed
+          ? { status: 'completed', observationCount: links.length }
+          : { status: 'failed', observationCount: 0, error: linkRun.error || 'Link checks did not complete.' });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorMessage(error);
         errors.push(`Link checks error: ${message}`);
         linkRun = {
           completed: false,
@@ -652,6 +744,7 @@ export async function auditViewport(
           scope: 'desktop-same-origin',
           error: message
         };
+        recordOutcome('links', { status: 'failed', observationCount: 0, error: message });
       }
     } else if (interactionBlocker && viewport.name === 'desktop') {
       linkRun = {
@@ -676,11 +769,14 @@ export async function auditViewport(
           }
         );
         keyboard.journeys.push(...configuredJourneys);
+        recordOutcome('journeys', { status: 'completed', observationCount: configuredJourneys.length });
         await page.goto(finalUrl, { waitUntil: 'domcontentloaded' });
         await page.waitForLoadState('networkidle', { timeout: Math.min(options.timeoutMs, 5_000) }).catch(() => undefined);
         await dependencies.dismissConsentBanner(page);
       } catch (error) {
-        errors.push(`Configured journey checks error: ${error instanceof Error ? error.message : String(error)}`);
+        const message = errorMessage(error);
+        errors.push(`Configured journey checks error: ${message}`);
+        recordOutcome('journeys', { status: 'failed', observationCount: 0, error: message });
       }
     }
     if (signal?.aborted) throw new Error(CANCELLED_REASON);
@@ -704,7 +800,8 @@ export async function auditViewport(
       elementContexts: [],
       screenshot: '',
       elementScreenshots: [],
-      errors
+      errors,
+      collectionOutcomes
     };
     const allViewportFindings = findingsFromPage({ url, viewports: [preliminaryAudit] });
     try {
@@ -712,8 +809,14 @@ export async function auditViewport(
         page,
         allViewportFindings.flatMap((finding) => finding.selectors)
       );
+      recordOutcome('element-context', {
+        status: 'completed',
+        observationCount: preliminaryAudit.elementContexts.length
+      });
     } catch (error) {
-      errors.push(`Element context check error: ${error instanceof Error ? error.message : String(error)}`);
+      const message = errorMessage(error);
+      errors.push(`Element context check error: ${message}`);
+      recordOutcome('element-context', { status: 'failed', observationCount: 0, error: message });
     }
     const screenshotFindings = allViewportFindings
       .filter((finding) => finding.classification !== 'manual');
@@ -728,6 +831,11 @@ export async function auditViewport(
           errors.push(`Component screenshot capture was blocked by a visible surface${captureBlocker ? `: ${captureBlocker.selector}` : '.'}`);
           await dependencies.capturePageScreenshot(page, screenshot);
           preliminaryAudit.screenshot = screenshot;
+          recordOutcome('screenshots', {
+            status: 'blocked',
+            observationCount: 1,
+            blockedBy: captureBlocker?.selector || captureConsent.surfaceSelector || 'visible surface'
+          });
         } else {
           await prepareEvidenceStates(page, screenshotFindings);
           preliminaryAudit.elementScreenshots = await dependencies.captureElementScreenshots(
@@ -742,16 +850,27 @@ export async function auditViewport(
             await dependencies.capturePageScreenshot(page, screenshot);
             preliminaryAudit.screenshot = screenshot;
           }
+          recordOutcome('screenshots', {
+            status: 'completed',
+            observationCount: preliminaryAudit.elementScreenshots.length + (preliminaryAudit.screenshot ? 1 : 0)
+          });
         }
       } catch (error) {
-        errors.push(`Screenshot check error: ${error instanceof Error ? error.message : String(error)}`);
+        const message = errorMessage(error);
+        errors.push(`Screenshot check error: ${message}`);
+        recordOutcome('screenshots', { status: 'failed', observationCount: 0, error: message });
       }
+    } else if (options.captureScreenshots) {
+      recordOutcome('screenshots', { status: 'not-applicable', observationCount: 0 });
     }
     preliminaryAudit.partial = isPartialAudit(errors, axeRun, interactionBlocker);
     return preliminaryAudit;
   } catch (error) {
     const cancelled = Boolean(signal?.aborted);
-    errors.push(cancelled ? CANCELLED_REASON : error instanceof Error ? error.message : String(error));
+    const message = cancelled ? CANCELLED_REASON : errorMessage(error);
+    errors.push(message);
+    recordOutcome('navigation', { status: 'failed', observationCount: 0, error: message }, true);
+    blockPending(checkIds.filter((checkId) => checkId !== 'navigation'), 'navigation');
     return {
       viewport,
       url,
@@ -773,6 +892,7 @@ export async function auditViewport(
       screenshot: '',
       elementScreenshots: [],
       errors,
+      collectionOutcomes,
       partial: true,
       ...(cancelled ? { cancelled: true } : {})
     };
@@ -904,7 +1024,15 @@ export async function runAudit(
     }
   }
 
-  const findings = assignFindingIds(consolidateFindings(applyConfirmedFindingConfidenceGate(pages.flatMap(findingsFromPage))));
+  // Contract pipeline: collect raw observations -> validate completeness -> classify ->
+  // consolidate without evidence loss -> build the criterion ledger -> validate the
+  // canonical JSON model -> render downstream formats.
+  assertCollectionCompleteness(pages);
+  const classifiedFindings = pages.flatMap(findingsFromPage);
+  const gatedFindings = applyConfirmedFindingConfidenceGate(classifiedFindings);
+  const consolidatedFindings = consolidateFindings(gatedFindings);
+  assertLosslessConsolidation(gatedFindings, consolidatedFindings);
+  const findings = assignFindingIds(consolidatedFindings);
   retainRepresentativeScreenshotPerFinding(findings);
   assertRemediationOnlyNotes(findings);
   const startedUrls = new Set(pages.map((page) => page.url));
@@ -948,6 +1076,7 @@ export async function runAudit(
       'A qualified reviewer must decide applicability and sign off every WCAG 2.2 A and AA criterion before this evidence can support a conformance claim.'
     ]
   };
+  assertCanonicalAuditSummary(summary);
   assertAuditQualityContract(summary);
   await pruneUnreferencedScreenshots(summary, options.outputDir);
   const jsonPath = resolve(options.outputDir, 'audit-results.json');

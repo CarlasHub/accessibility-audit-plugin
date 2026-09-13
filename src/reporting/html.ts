@@ -1,6 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { dirname, relative } from 'node:path';
 import type { AuditSummary, Finding } from '../types.js';
+import { assertCanonicalAuditSummary } from '../audit/canonical-validation.js';
 import { findingId } from './finding-id.js';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -236,6 +237,7 @@ function renderReport(summary: AuditSummary, outputPath: string): string {
 }
 
 export async function writeHtmlReport(summary: AuditSummary, outputPath: string): Promise<string> {
+  assertCanonicalAuditSummary(summary);
   await writeFile(outputPath, `${renderReport(summary, outputPath)}\n`, 'utf8');
   return outputPath;
 }

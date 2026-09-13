@@ -39,6 +39,41 @@ export interface EvidenceItem {
   selector?: string;
   detail: string;
   screenshot?: string;
+  /** Machine-verifiable lineage from the retained report row back to one observation. */
+  provenance?: EvidenceProvenance;
+}
+
+export type AuditCheckId =
+  | 'navigation'
+  | 'axe'
+  | 'dom'
+  | 'keyboard'
+  | 'disclosures'
+  | 'tabs'
+  | 'responsive'
+  | 'links'
+  | 'journeys'
+  | 'element-context'
+  | 'screenshots';
+
+export type CollectionStatus = 'completed' | 'failed' | 'blocked' | 'not-applicable' | 'not-run';
+
+export interface CollectionOutcome {
+  checkId: AuditCheckId;
+  status: CollectionStatus;
+  observationCount: number;
+  error?: string;
+  blockedBy?: string;
+}
+
+export interface EvidenceProvenance {
+  observationId: string;
+  checkId: AuditCheckId;
+  ruleId: string;
+  state: string;
+  target: string;
+  observed: string;
+  expected: string;
 }
 
 export interface ElementContext {
@@ -242,6 +277,17 @@ export interface KeyboardJourneyResult {
   categories?: AuditJourneyCategory[];
   assertionCount?: number;
   selectors?: string[];
+  stepResults?: JourneyStepResult[];
+  failureStep?: number;
+}
+
+export interface JourneyStepResult {
+  index: number;
+  action: AuditJourneyStep['action'];
+  status: 'passed' | 'failed' | 'inconclusive' | 'not-run';
+  target: string;
+  expected: string;
+  observed: string;
 }
 
 export interface ResponsiveCheckResult {
@@ -441,6 +487,8 @@ export interface ViewportAudit {
   screenshot: string;
   elementScreenshots: ElementScreenshot[];
   errors: string[];
+  /** Explicit collector state; absent only in legacy/imported fixture data. */
+  collectionOutcomes?: CollectionOutcome[];
   cancelled?: boolean;
   partial?: boolean;
 }
@@ -481,6 +529,17 @@ export interface AuditQualityContractMetadata {
   conformanceTarget: 'A/AA';
   criterionCount: 55;
   findingPolicy: 'evidence-gated';
+  guarantees?: Array<'failure-isolation' | 'traceable-evidence' | 'lossless-deduplication' | 'deterministic-output'>;
+}
+
+export interface RegressionSummary {
+  kind: 'software-quality-regression';
+  conformanceEvidence: false;
+  fixtureCount: number;
+  expectedFindingCount: number;
+  exactMatch: boolean;
+  deterministic: boolean;
+  generatedBy: string;
 }
 
 export interface AuditSummary {
@@ -495,6 +554,7 @@ export interface AuditSummary {
   humanAssessmentRequired?: boolean;
   conformanceDecision?: 'not-determined';
   qualityContract?: AuditQualityContractMetadata;
+  regressionSummary?: RegressionSummary;
   landingPageUrl: string;
   requestedUrls: string[];
   auditedUrls: string[];

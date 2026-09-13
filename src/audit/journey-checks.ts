@@ -2,6 +2,7 @@ import type { Page } from 'playwright';
 import type {
   AuditJourneyDefinition,
   AuditJourneyStep,
+  JourneyStepResult,
   KeyboardJourneyResult
 } from '../types.js';
 
@@ -24,6 +25,25 @@ function expectedDescription(step: AssertStep): string {
       : ` containing “${step.value}”`
     : '';
   return `${step.expectation}${target}${value}`;
+}
+
+function journeyStepTarget(step: AuditJourneyStep): string {
+  if ('selector' in step && step.selector) return step.selector;
+  if (step.action === 'press') return 'document keyboard';
+  if (step.action === 'wait') return 'journey timer';
+  if (step.action === 'assert' && step.expectation === 'url-contains') return 'document URL';
+  if (step.action === 'assert' && step.expectation === 'live-region-updated') return 'page live regions';
+  return 'document';
+}
+
+function journeyStepExpected(step: AuditJourneyStep): string {
+  if (step.action === 'focus') return `Focus moves to and remains on ${step.selector}.`;
+  if (step.action === 'press') {
+    return `The ${step.key} key is dispatched${step.selector ? ` from ${step.selector}` : ''}.`;
+  }
+  if (step.action === 'type') return `Configured text is entered in ${step.selector}.`;
+  if (step.action === 'wait') return `The page remains available after waiting ${step.milliseconds} ms.`;
+  return `The page satisfies ${expectedDescription(step)}.`;
 }
 
 async function installLiveRegionObserver(page: Page): Promise<void> {
@@ -153,23 +173,44 @@ export async function runConfiguredJourneyChecks(
 
   for (const journey of journeys) {
     const completedSteps: string[] = [];
+    const stepResults: JourneyStepResult[] = [];
     const selectors = new Set<string>();
     let assertionCount = 0;
     let status: KeyboardJourneyResult['status'] = 'passed';
     let detail = 'Every configured assertion produced the expected result.';
+    let failureStep: number | undefined;
+    let activeStepIndex = 0;
+    const recordStep = (
+      index: number,
+      step: AuditJourneyStep,
+      stepStatus: JourneyStepResult['status'],
+      observed: string
+    ): void => {
+      stepResults.push({
+        index: index + 1,
+        action: step.action,
+        status: stepStatus,
+        target: journeyStepTarget(step),
+        expected: journeyStepExpected(step),
+        observed
+      });
+      if (stepStatus === 'failed' || stepStatus === 'inconclusive') failureStep ??= index + 1;
+    };
     try {
       await page.goto(requestedUrl, { waitUntil: 'domcontentloaded' });
       await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
       await preparePage?.();
       await installLiveRegionObserver(page);
 
-      for (const step of journey.steps) {
+      for (const [index, step] of journey.steps.entries()) {
+        activeStepIndex = index;
         if ('selector' in step && step.selector) selectors.add(step.selector);
         if (step.action === 'focus') {
           const locator = page.locator(step.selector);
           if (await locator.count() === 0) {
             status = 'inconclusive';
             detail = `Configured focus target ${step.selector} was not found, so the journey could not complete.`;
+            recordStep(index, step, 'inconclusive', detail);
             break;
           }
           try {
@@ -178,21 +219,25 @@ export async function runConfiguredJourneyChecks(
             status = 'failed';
             detail = `Configured keyboard target ${step.selector} exists but could not receive focus.`;
             completedSteps.push(`Attempted to focus ${step.selector}`);
+            recordStep(index, step, 'failed', detail);
             break;
           }
           if (!await locator.first().evaluate((element) => document.activeElement === element)) {
             status = 'failed';
             detail = `Configured keyboard target ${step.selector} exists but did not retain focus.`;
             completedSteps.push(`Attempted to focus ${step.selector}`);
+            recordStep(index, step, 'failed', detail);
             break;
           }
           completedSteps.push(`Focused ${step.selector}`);
+          recordStep(index, step, 'passed', `Focus moved to and remained on ${step.selector}.`);
         } else if (step.action === 'press') {
           if (step.selector) {
             const locator = page.locator(step.selector);
             if (await locator.count() === 0) {
               status = 'inconclusive';
               detail = `Configured key target ${step.selector} was not found, so the journey could not complete.`;
+              recordStep(index, step, 'inconclusive', detail);
               break;
             }
             try {
@@ -201,40 +246,53 @@ export async function runConfiguredJourneyChecks(
               status = 'failed';
               detail = `Configured keyboard target ${step.selector} exists but could not receive focus before ${step.key}.`;
               completedSteps.push(`Attempted to focus ${step.selector}`);
+              recordStep(index, step, 'failed', detail);
               break;
             }
             if (!await locator.first().evaluate((element) => document.activeElement === element)) {
               status = 'failed';
               detail = `Configured keyboard target ${step.selector} exists but did not retain focus before ${step.key}.`;
               completedSteps.push(`Attempted to focus ${step.selector}`);
+              recordStep(index, step, 'failed', detail);
               break;
             }
           }
           await page.keyboard.press(step.key);
           await page.waitForTimeout(50);
           completedSteps.push(`Pressed ${step.key}${step.selector ? ` on ${step.selector}` : ''}`);
+          recordStep(
+            index,
+            step,
+            'passed',
+            `The ${step.key} key was dispatched${step.selector ? ` from ${step.selector}` : ''}.`
+          );
         } else if (step.action === 'type') {
           const locator = page.locator(step.selector);
           if (await locator.count() === 0) {
             status = 'inconclusive';
             detail = `Configured text field ${step.selector} was not found, so the journey could not complete.`;
+            recordStep(index, step, 'inconclusive', detail);
             break;
           }
           await locator.first().fill(step.text);
           completedSteps.push(`Entered configured text in ${step.selector}`);
+          recordStep(index, step, 'passed', `Configured text was entered in ${step.selector}.`);
         } else if (step.action === 'wait') {
           await page.waitForTimeout(step.milliseconds);
           completedSteps.push(`Waited ${step.milliseconds} ms`);
+          recordStep(index, step, 'passed', `The page remained available after waiting ${step.milliseconds} ms.`);
         } else {
           assertionCount += 1;
           if (requiredSelector(step) && !step.selector) {
             status = 'inconclusive';
             detail = `The ${step.expectation} assertion requires a selector.`;
+            recordStep(index, step, 'inconclusive', detail);
             break;
           }
           if (['url-contains', 'text-contains', 'value-equals'].includes(step.expectation) && step.value === undefined) {
             status = 'inconclusive';
             detail = `The ${step.expectation} assertion requires a value.`;
+            recordStep(index, step, 'inconclusive', detail);
             break;
           }
           const matched = await executeAssertion(page, step);
@@ -242,8 +300,10 @@ export async function runConfiguredJourneyChecks(
           if (!matched) {
             status = 'failed';
             detail = `Expected ${expectedDescription(step)}, but the expected state was not observed within ${step.timeoutMs ?? 2_000} ms.`;
+            recordStep(index, step, 'failed', detail);
             break;
           }
+          recordStep(index, step, 'passed', `Observed ${expectedDescription(step)} within ${step.timeoutMs ?? 2_000} ms.`);
         }
       }
       if (status === 'passed' && assertionCount === 0) {
@@ -253,7 +313,25 @@ export async function runConfiguredJourneyChecks(
     } catch (error) {
       status = 'inconclusive';
       detail = `The configured journey could not complete: ${error instanceof Error ? error.message : String(error)}`;
+      const activeStep = journey.steps[activeStepIndex];
+      if (activeStep && !stepResults.some((step) => step.index === activeStepIndex + 1)) {
+        recordStep(activeStepIndex, activeStep, 'inconclusive', detail);
+      }
     }
+
+    for (const [index, step] of journey.steps.entries()) {
+      if (!stepResults.some((result) => result.index === index + 1)) {
+        stepResults.push({
+          index: index + 1,
+          action: step.action,
+          status: 'not-run',
+          target: journeyStepTarget(step),
+          expected: journeyStepExpected(step),
+          observed: 'Not run because the journey stopped before this step.'
+        });
+      }
+    }
+    stepResults.sort((left, right) => left.index - right.index);
 
     results.push({
       id: journey.id,
@@ -264,7 +342,9 @@ export async function runConfiguredJourneyChecks(
       source: 'configured',
       categories: journey.categories,
       assertionCount,
-      selectors: [...selectors]
+      selectors: [...selectors],
+      stepResults,
+      ...(failureStep === undefined ? {} : { failureStep })
     });
   }
   return results;

@@ -4,6 +4,10 @@ function uniqueSorted(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))].sort();
 }
 
+function evidenceIdentity(item: Finding['evidence'][number]): string {
+  return JSON.stringify(item);
+}
+
 function conciseMergedText(first?: string, second?: string, limit = 6): string | undefined {
   let hadTruncation = false;
   const values = [...new Set([first, second]
@@ -115,10 +119,12 @@ function mergeFindingContext(findings: Finding[]): Pick<Finding, 'urls' | 'viewp
     urls: uniqueSorted(findings.flatMap((finding) => finding.urls)),
     viewports: uniqueSorted(findings.flatMap((finding) => finding.viewports)),
     selectors: uniqueSorted(findings.flatMap((finding) => finding.selectors)),
-    evidence: [...new Map(findings.flatMap((finding) => finding.evidence).map((item) => [
-      JSON.stringify([item.kind, item.pageUrl, item.viewport ?? '', item.selector ?? '', item.detail, item.screenshot ?? '']),
-      item
-    ])).values()].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+    // Preserve every observed occurrence. Two byte-identical records can still
+    // represent two separately collected failures and must not disappear merely
+    // because their rendered evidence happens to match.
+    evidence: findings
+      .flatMap((finding) => finding.evidence)
+      .sort((a, b) => evidenceIdentity(a).localeCompare(evidenceIdentity(b)))
   };
   const componentName = findings.reduce<string | undefined>(
     (merged, finding) => conciseMergedText(merged, finding.componentName),
@@ -279,7 +285,7 @@ function rollUpDescriptionListStructure(findings: Finding[]): Finding[] {
       urls: uniqueSorted(grouped.flatMap((finding) => finding.urls)),
       viewports: uniqueSorted(grouped.flatMap((finding) => finding.viewports)),
       selectors: uniqueSorted(grouped.flatMap((finding) => finding.selectors)),
-      evidence: grouped.flatMap((finding) => finding.evidence),
+      evidence: mergeFindingContext(grouped).evidence,
       assignment: 'Development',
       effort: 'Small',
       translationRequired: 'No'
@@ -366,6 +372,27 @@ export function consolidateFindings(findings: Finding[]): Finding[] {
       || a.key.localeCompare(b.key)
       || uniqueSorted(a.urls).join('|').localeCompare(uniqueSorted(b.urls).join('|'));
   });
+}
+
+/** Ensures consolidation preserves the multiplicity of every evidence record. */
+export function assertLosslessConsolidation(before: Finding[], after: Finding[]): void {
+  const countEvidence = (findings: Finding[]): Map<string, number> => {
+    const counts = new Map<string, number>();
+    for (const item of findings.flatMap((finding) => finding.evidence)) {
+      const identity = evidenceIdentity(item);
+      counts.set(identity, (counts.get(identity) ?? 0) + 1);
+    }
+    return counts;
+  };
+  const expected = countEvidence(before);
+  const retained = countEvidence(after);
+  const missing = [...expected.entries()].reduce(
+    (total, [identity, count]) => total + Math.max(0, count - (retained.get(identity) ?? 0)),
+    0
+  );
+  if (missing) {
+    throw new Error(`Finding consolidation discarded ${missing} evidence observation occurrence(s).`);
+  }
 }
 
 export function assertRemediationOnlyNotes(findings: Finding[]): void {

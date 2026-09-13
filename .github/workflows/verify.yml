@@ -30,6 +30,13 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:quality-contract
+      - name: Publish software-quality regression evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: software-quality-regression
+          path: test-results/software-quality-regression.json
+          if-no-files-found: error
+          retention-days: 30
       - run: npm run test:unit
       - run: npm run build
 

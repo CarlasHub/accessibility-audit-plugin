@@ -152831,6 +152831,31 @@ function expectedDescription(step) {
         : '';
     return `${step.expectation}${target}${value}`;
 }
+function journeyStepTarget(step) {
+    if ('selector' in step && step.selector)
+        return step.selector;
+    if (step.action === 'press')
+        return 'document keyboard';
+    if (step.action === 'wait')
+        return 'journey timer';
+    if (step.action === 'assert' && step.expectation === 'url-contains')
+        return 'document URL';
+    if (step.action === 'assert' && step.expectation === 'live-region-updated')
+        return 'page live regions';
+    return 'document';
+}
+function journeyStepExpected(step) {
+    if (step.action === 'focus')
+        return `Focus moves to and remains on ${step.selector}.`;
+    if (step.action === 'press') {
+        return `The ${step.key} key is dispatched${step.selector ? ` from ${step.selector}` : ''}.`;
+    }
+    if (step.action === 'type')
+        return `Configured text is entered in ${step.selector}.`;
+    if (step.action === 'wait')
+        return `The page remains available after waiting ${step.milliseconds} ms.`;
+    return `The page satisfies ${expectedDescription(step)}.`;
+}
 async function installLiveRegionObserver(page) {
     await page.evaluate(() => {
         const auditWindow = window;
@@ -152958,16 +152983,32 @@ async function runConfiguredJourneyChecks(page, definitions, requestedUrl, viewp
     const results = [];
     for (const journey of journeys) {
         const completedSteps = [];
+        const stepResults = [];
         const selectors = new Set();
         let assertionCount = 0;
         let status = 'passed';
         let detail = 'Every configured assertion produced the expected result.';
+        let failureStep;
+        let activeStepIndex = 0;
+        const recordStep = (index, step, stepStatus, observed) => {
+            stepResults.push({
+                index: index + 1,
+                action: step.action,
+                status: stepStatus,
+                target: journeyStepTarget(step),
+                expected: journeyStepExpected(step),
+                observed
+            });
+            if (stepStatus === 'failed' || stepStatus === 'inconclusive')
+                failureStep ??= index + 1;
+        };
         try {
             await page.goto(requestedUrl, { waitUntil: 'domcontentloaded' });
             await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
             await preparePage?.();
             await installLiveRegionObserver(page);
-            for (const step of journey.steps) {
+            for (const [index, step] of journey.steps.entries()) {
+                activeStepIndex = index;
                 if ('selector' in step && step.selector)
                     selectors.add(step.selector);
                 if (step.action === 'focus') {
@@ -152975,6 +153016,7 @@ async function runConfiguredJourneyChecks(page, definitions, requestedUrl, viewp
                     if (await locator.count() === 0) {
                         status = 'inconclusive';
                         detail = `Configured focus target ${step.selector} was not found, so the journey could not complete.`;
+                        recordStep(index, step, 'inconclusive', detail);
                         break;
                     }
                     try {
@@ -152984,15 +153026,18 @@ async function runConfiguredJourneyChecks(page, definitions, requestedUrl, viewp
                         status = 'failed';
                         detail = `Configured keyboard target ${step.selector} exists but could not receive focus.`;
                         completedSteps.push(`Attempted to focus ${step.selector}`);
+                        recordStep(index, step, 'failed', detail);
                         break;
                     }
                     if (!await locator.first().evaluate((element) => document.activeElement === element)) {
                         status = 'failed';
                         detail = `Configured keyboard target ${step.selector} exists but did not retain focus.`;
                         completedSteps.push(`Attempted to focus ${step.selector}`);
+                        recordStep(index, step, 'failed', detail);
                         break;
                     }
                     completedSteps.push(`Focused ${step.selector}`);
+                    recordStep(index, step, 'passed', `Focus moved to and remained on ${step.selector}.`);
                 }
                 else if (step.action === 'press') {
                     if (step.selector) {
@@ -153000,6 +153045,7 @@ async function runConfiguredJourneyChecks(page, definitions, requestedUrl, viewp
                         if (await locator.count() === 0) {
                             status = 'inconclusive';
                             detail = `Configured key target ${step.selector} was not found, so the journey could not complete.`;
+                            recordStep(index, step, 'inconclusive', detail);
                             break;
                         }
                         try {
@@ -153009,43 +153055,51 @@ async function runConfiguredJourneyChecks(page, definitions, requestedUrl, viewp
                             status = 'failed';
                             detail = `Configured keyboard target ${step.selector} exists but could not receive focus before ${step.key}.`;
                             completedSteps.push(`Attempted to focus ${step.selector}`);
+                            recordStep(index, step, 'failed', detail);
                             break;
                         }
                         if (!await locator.first().evaluate((element) => document.activeElement === element)) {
                             status = 'failed';
                             detail = `Configured keyboard target ${step.selector} exists but did not retain focus before ${step.key}.`;
                             completedSteps.push(`Attempted to focus ${step.selector}`);
+                            recordStep(index, step, 'failed', detail);
                             break;
                         }
                     }
                     await page.keyboard.press(step.key);
                     await page.waitForTimeout(50);
                     completedSteps.push(`Pressed ${step.key}${step.selector ? ` on ${step.selector}` : ''}`);
+                    recordStep(index, step, 'passed', `The ${step.key} key was dispatched${step.selector ? ` from ${step.selector}` : ''}.`);
                 }
                 else if (step.action === 'type') {
                     const locator = page.locator(step.selector);
                     if (await locator.count() === 0) {
                         status = 'inconclusive';
                         detail = `Configured text field ${step.selector} was not found, so the journey could not complete.`;
+                        recordStep(index, step, 'inconclusive', detail);
                         break;
                     }
                     await locator.first().fill(step.text);
                     completedSteps.push(`Entered configured text in ${step.selector}`);
+                    recordStep(index, step, 'passed', `Configured text was entered in ${step.selector}.`);
                 }
                 else if (step.action === 'wait') {
                     await page.waitForTimeout(step.milliseconds);
                     completedSteps.push(`Waited ${step.milliseconds} ms`);
+                    recordStep(index, step, 'passed', `The page remained available after waiting ${step.milliseconds} ms.`);
                 }
                 else {
                     assertionCount += 1;
                     if (requiredSelector(step) && !step.selector) {
                         status = 'inconclusive';
                         detail = `The ${step.expectation} assertion requires a selector.`;
+                        recordStep(index, step, 'inconclusive', detail);
                         break;
                     }
                     if (['url-contains', 'text-contains', 'value-equals'].includes(step.expectation) && step.value === undefined) {
                         status = 'inconclusive';
                         detail = `The ${step.expectation} assertion requires a value.`;
+                        recordStep(index, step, 'inconclusive', detail);
                         break;
                     }
                     const matched = await executeAssertion(page, step);
@@ -153053,8 +153107,10 @@ async function runConfiguredJourneyChecks(page, definitions, requestedUrl, viewp
                     if (!matched) {
                         status = 'failed';
                         detail = `Expected ${expectedDescription(step)}, but the expected state was not observed within ${step.timeoutMs ?? 2_000} ms.`;
+                        recordStep(index, step, 'failed', detail);
                         break;
                     }
+                    recordStep(index, step, 'passed', `Observed ${expectedDescription(step)} within ${step.timeoutMs ?? 2_000} ms.`);
                 }
             }
             if (status === 'passed' && assertionCount === 0) {
@@ -153065,7 +153121,24 @@ async function runConfiguredJourneyChecks(page, definitions, requestedUrl, viewp
         catch (error) {
             status = 'inconclusive';
             detail = `The configured journey could not complete: ${error instanceof Error ? error.message : String(error)}`;
+            const activeStep = journey.steps[activeStepIndex];
+            if (activeStep && !stepResults.some((step) => step.index === activeStepIndex + 1)) {
+                recordStep(activeStepIndex, activeStep, 'inconclusive', detail);
+            }
         }
+        for (const [index, step] of journey.steps.entries()) {
+            if (!stepResults.some((result) => result.index === index + 1)) {
+                stepResults.push({
+                    index: index + 1,
+                    action: step.action,
+                    status: 'not-run',
+                    target: journeyStepTarget(step),
+                    expected: journeyStepExpected(step),
+                    observed: 'Not run because the journey stopped before this step.'
+                });
+            }
+        }
+        stepResults.sort((left, right) => left.index - right.index);
         results.push({
             id: journey.id,
             title: journey.title,
@@ -153075,7 +153148,9 @@ async function runConfiguredJourneyChecks(page, definitions, requestedUrl, viewp
             source: 'configured',
             categories: journey.categories,
             assertionCount,
-            selectors: [...selectors]
+            selectors: [...selectors],
+            stepResults,
+            ...(failureStep === undefined ? {} : { failureStep })
         });
     }
     return results;
@@ -153643,9 +153718,77 @@ function assignmentForRule(ruleId) {
         return 'Mixed';
     return 'Development';
 }
+function checkIdForEvidence(ruleId, kind, detail) {
+    if (ruleId === 'page-unavailable')
+        return 'navigation';
+    if (ruleId === 'interaction-coverage-blocked')
+        return 'keyboard';
+    if (ruleId.startsWith('axe-'))
+        return 'axe';
+    if (ruleId.startsWith('disclosure-'))
+        return 'disclosures';
+    if (ruleId.startsWith('tabs-'))
+        return 'tabs';
+    if (ruleId.startsWith('keyboard-journey-')) {
+        try {
+            const journey = JSON.parse(detail);
+            return journey.source === 'configured' ? 'journeys' : 'keyboard';
+        }
+        catch {
+            return 'keyboard';
+        }
+    }
+    if (ruleId.startsWith('link-destination-') || ruleId === 'link-broken-destination')
+        return 'links';
+    if (ruleId.startsWith('responsive-') || ruleId.startsWith('text-spacing-') || ruleId.startsWith('text-resize-') || ruleId === 'horizontal-reflow-overflow')
+        return 'responsive';
+    if (kind === 'keyboard')
+        return 'keyboard';
+    if (kind === 'responsive')
+        return 'responsive';
+    if (kind === 'network')
+        return 'links';
+    return 'dom';
+}
+function evidenceState(checkId) {
+    if (checkId === 'responsive')
+        return 'responsive-stress-state';
+    if (['keyboard', 'disclosures', 'tabs', 'journeys'].includes(checkId))
+        return 'interaction-state';
+    return 'rendered-page-state';
+}
+function expectedForFinding(finding) {
+    const explicit = /(?:^|\n)Expected:\s*(.+?)(?:\n|$)/i.exec(finding.testing)?.[1]?.trim();
+    return explicit || finding.remediation;
+}
 function makeFinding(input) {
     const { identity, ...finding } = input;
-    return { ...finding, key: `${finding.ruleId}:${fingerprint(identity)}` };
+    const evidence = finding.evidence.map((item) => {
+        const checkId = checkIdForEvidence(finding.ruleId, item.kind, item.detail);
+        const target = item.selector || 'page';
+        const observationId = fingerprint(JSON.stringify([
+            checkId,
+            finding.ruleId,
+            item.pageUrl,
+            item.viewport ?? '',
+            evidenceState(checkId),
+            target,
+            item.detail
+        ]));
+        return {
+            ...item,
+            provenance: {
+                observationId,
+                checkId,
+                ruleId: finding.ruleId,
+                state: evidenceState(checkId),
+                target,
+                observed: item.detail,
+                expected: expectedForFinding(finding)
+            }
+        };
+    });
+    return { ...finding, evidence, key: `${finding.ruleId}:${fingerprint(identity)}` };
 }
 function axeFindings(audit) {
     return audit.axe.flatMap((violation) => {
@@ -154758,44 +154901,20 @@ function findingsFromPage(page) {
     return page.viewports
         .filter((audit) => !audit.cancelled)
         .flatMap((audit) => {
-        const failed = (prefix) => audit.errors.some((message) => message.startsWith(prefix));
-        const interactionUnavailable = Boolean(audit.interactionBlocker);
-        const evidenceGatedAudit = {
-            ...audit,
-            ...(failed('DOM checks error:') ? {
-                dom: {
-                    h1Count: 1,
-                    mainCount: 1,
-                    unnamedLandmarks: [],
-                    missingAltImages: [],
-                    linkedImagesForReview: [],
-                    emptyLinks: [],
-                    emptyNamedControls: [],
-                    unlabeledFields: [],
-                    duplicateIds: [],
-                    smallTargets: [],
-                    tablesForReview: [],
-                    autoplayMedia: []
-                }
-            } : {}),
-            ...(interactionUnavailable || failed('Keyboard checks error:') ? {
-                keyboard: { sequence: [], journeys: [], completedCycle: false, truncated: false, scope: 'unknown' }
-            } : {}),
-            ...(interactionUnavailable || failed('Disclosure checks error:') ? { disclosures: [] } : {}),
-            ...(interactionUnavailable || failed('Tab checks error:') ? { tabs: [] } : {}),
-            ...(interactionUnavailable || failed('Link checks error:') ? { links: [] } : {}),
-            ...(interactionUnavailable || failed('Responsive checks error:') ? {
-                responsive: {
-                    horizontalOverflow: 0,
-                    overflowElements: [],
-                    textSpacingOverflow: 0,
-                    clippedElements: [],
-                    overlapPairs: [],
-                    lostInteractiveElements: []
-                }
-            } : {})
-        };
-        return [...axeFindings(audit), ...domFindings(evidenceGatedAudit)]
+        const outcome = (checkId) => audit.collectionOutcomes?.find((item) => item.checkId === checkId);
+        const retainsEvidence = (finding) => finding.evidence.every((item) => {
+            const checkId = item.provenance?.checkId;
+            if (audit.interactionBlocker && checkId === 'responsive' && finding.classification !== 'blocker') {
+                return false;
+            }
+            if (!checkId || !audit.collectionOutcomes)
+                return true;
+            const status = outcome(checkId)?.status;
+            return status === 'completed'
+                || (finding.classification === 'blocker' && (status === 'failed' || status === 'blocked'));
+        });
+        return [...axeFindings(audit), ...domFindings(audit)]
+            .filter(retainsEvidence)
             .map((finding) => enrichComponent(finding, audit));
     });
 }
@@ -155164,15 +155283,22 @@ function ledgerStatusCounts(criteria = []) {
 }
 //# sourceMappingURL=wcag-criteria.js.map
 ;// CONCATENATED MODULE: ./dist/audit/quality-contract.js
-const AUDIT_QUALITY_CONTRACT_VERSION = '1.0.0';
+const AUDIT_QUALITY_CONTRACT_VERSION = '1.1.0';
 const WCAG_22_AA_CRITERION_COUNT = 55;
 const AUDIT_QUALITY_CONTRACT = {
     version: AUDIT_QUALITY_CONTRACT_VERSION,
     standard: 'WCAG 2.2',
     conformanceTarget: 'A/AA',
     criterionCount: WCAG_22_AA_CRITERION_COUNT,
-    findingPolicy: 'evidence-gated'
+    findingPolicy: 'evidence-gated',
+    guarantees: [
+        'failure-isolation',
+        'traceable-evidence',
+        'lossless-deduplication',
+        'deterministic-output'
+    ]
 };
+const REQUIRED_GUARANTEES = new Set(AUDIT_QUALITY_CONTRACT.guarantees);
 const WCAG_CRITERION = /^\d\.\d\.\d{1,2}$/;
 function validEvidence(item) {
     return Boolean(item.kind && item.pageUrl.trim() && item.detail.trim());
@@ -155235,6 +155361,11 @@ function assertAuditQualityContract(summary) {
         errors.push('quality-contract version is missing or incorrect');
     if (summary.qualityContract?.criterionCount !== WCAG_22_AA_CRITERION_COUNT)
         errors.push('quality-contract criterion count is not 55');
+    const guarantees = new Set(summary.qualityContract?.guarantees ?? []);
+    for (const guarantee of REQUIRED_GUARANTEES) {
+        if (!guarantees.has(guarantee))
+            errors.push(`quality-contract guarantee ${guarantee} is missing`);
+    }
     if (summary.conformanceTarget !== 'AA')
         errors.push('conformance target is not WCAG 2.2 AA');
     if (summary.humanAssessmentRequired !== true)
@@ -155264,9 +155395,201 @@ function assertAuditQualityContract(summary) {
         throw new Error(`Audit Quality Contract ${AUDIT_QUALITY_CONTRACT_VERSION} failed: ${errors.join('; ')}.`);
 }
 //# sourceMappingURL=quality-contract.js.map
+;// CONCATENATED MODULE: ./dist/audit/canonical-validation.js
+const AUDIT_CHECK_IDS = [
+    'navigation',
+    'axe',
+    'dom',
+    'keyboard',
+    'disclosures',
+    'tabs',
+    'responsive',
+    'links',
+    'journeys',
+    'element-context',
+    'screenshots'
+];
+function hasGuarantee(summary, guarantee) {
+    return summary.qualityContract?.guarantees?.includes(guarantee) === true;
+}
+function outcomeErrors(outcome, label) {
+    const errors = [];
+    if (!Number.isInteger(outcome.observationCount) || outcome.observationCount < 0) {
+        errors.push(`${label} has an invalid observation count`);
+    }
+    if (outcome.status === 'completed' && (outcome.error || outcome.blockedBy)) {
+        errors.push(`${label} is completed but also records an error or blocker`);
+    }
+    if (outcome.status === 'failed' && (!outcome.error?.trim() || outcome.blockedBy)) {
+        errors.push(`${label} failed without exactly one explicit error`);
+    }
+    if (outcome.status === 'blocked' && (!outcome.blockedBy?.trim() || outcome.error)) {
+        errors.push(`${label} is blocked without exactly one explicit dependency`);
+    }
+    if ((outcome.status === 'not-applicable' || outcome.status === 'not-run') && (outcome.error || outcome.blockedBy)) {
+        errors.push(`${label} is ${outcome.status} but also records an error or blocker`);
+    }
+    if ((outcome.status === 'failed' || outcome.status === 'not-applicable' || outcome.status === 'not-run')
+        && outcome.observationCount !== 0) {
+        errors.push(`${label} is ${outcome.status} but records retained observations`);
+    }
+    return errors;
+}
+function collectionCompletenessErrors(pages) {
+    const errors = [];
+    for (const page of pages) {
+        if (!page.viewports.length)
+            errors.push(`${page.url} has no collected viewports`);
+        for (const viewport of page.viewports) {
+            const label = `${page.url} ${viewport.viewport.name}`;
+            const outcomes = viewport.collectionOutcomes;
+            if (!outcomes) {
+                errors.push(`${label} has no collector outcomes`);
+                continue;
+            }
+            const ids = outcomes.map((outcome) => outcome.checkId);
+            if (ids.length !== AUDIT_CHECK_IDS.length || new Set(ids).size !== AUDIT_CHECK_IDS.length
+                || AUDIT_CHECK_IDS.some((checkId) => !ids.includes(checkId))) {
+                errors.push(`${label} does not contain exactly one outcome for every collector`);
+            }
+            for (const outcome of outcomes)
+                errors.push(...outcomeErrors(outcome, `${label} ${outcome.checkId}`));
+            if (!viewport.cancelled && outcomes.some((outcome) => outcome.status === 'not-run')) {
+                errors.push(`${label} completed with one or more collectors still not-run`);
+            }
+        }
+    }
+    return errors;
+}
+/** Enforces collection completeness before raw observations enter classification. */
+function assertCollectionCompleteness(pages) {
+    const errors = collectionCompletenessErrors(pages);
+    if (errors.length)
+        throw new Error(`Audit collection is incomplete: ${errors.join('; ')}.`);
+}
+function viewportKey(pageUrl, viewportName) {
+    return JSON.stringify([pageUrl, viewportName]);
+}
+function viewportIndex(summary) {
+    const index = new Map();
+    for (const page of summary.pages) {
+        for (const viewport of page.viewports) {
+            for (const url of new Set([page.url, viewport.url, viewport.finalUrl])) {
+                if (url)
+                    index.set(viewportKey(url, viewport.viewport.name), viewport);
+            }
+        }
+    }
+    return index;
+}
+function validateFindingEvidence(finding, viewports) {
+    const label = finding.id ?? finding.key;
+    const errors = [];
+    if (!finding.evidence.length)
+        return [`${label} has no retained evidence`];
+    for (const [index, item] of finding.evidence.entries()) {
+        const evidenceLabel = `${label} evidence ${index + 1}`;
+        const provenance = item.provenance;
+        if (!provenance) {
+            errors.push(`${evidenceLabel} has no provenance`);
+            continue;
+        }
+        for (const [field, value] of Object.entries({
+            observationId: provenance.observationId,
+            ruleId: provenance.ruleId,
+            state: provenance.state,
+            target: provenance.target,
+            observed: provenance.observed,
+            expected: provenance.expected
+        })) {
+            if (!value.trim())
+                errors.push(`${evidenceLabel} has an empty provenance ${field}`);
+        }
+        if (provenance.observed !== item.detail) {
+            errors.push(`${evidenceLabel} observed value does not match its evidence detail`);
+        }
+        const viewportName = item.viewport ?? finding.viewports[0] ?? '';
+        const viewport = viewports.get(viewportKey(item.pageUrl, viewportName));
+        if (!viewport) {
+            errors.push(`${evidenceLabel} does not map to a collected page and viewport`);
+            continue;
+        }
+        const outcome = viewport.collectionOutcomes?.find((candidate) => candidate.checkId === provenance.checkId);
+        if (!outcome) {
+            errors.push(`${evidenceLabel} does not map to a collector outcome`);
+            continue;
+        }
+        const allowed = outcome.status === 'completed'
+            || (finding.classification === 'blocker' && (outcome.status === 'failed' || outcome.status === 'blocked'));
+        if (!allowed) {
+            errors.push(`${evidenceLabel} relies on a collector with status ${outcome.status}`);
+        }
+        else if (outcome.status === 'completed' && outcome.observationCount === 0) {
+            errors.push(`${evidenceLabel} relies on a completed collector that recorded no observations`);
+        }
+    }
+    return errors;
+}
+function validateJourneyResults(summary) {
+    const errors = [];
+    for (const page of summary.pages) {
+        for (const viewport of page.viewports) {
+            for (const journey of viewport.keyboard.journeys.filter((item) => item.source === 'configured')) {
+                const label = `${page.url} ${viewport.viewport.name} journey ${journey.id}`;
+                if (!journey.stepResults?.length) {
+                    errors.push(`${label} has no structured step results`);
+                    continue;
+                }
+                for (const [index, step] of journey.stepResults.entries()) {
+                    if (step.index !== index + 1)
+                        errors.push(`${label} has non-contiguous step indexes`);
+                    if (!step.target.trim() || !step.expected.trim() || !step.observed.trim()) {
+                        errors.push(`${label} step ${step.index} has incomplete evidence`);
+                    }
+                }
+                if (journey.status === 'failed' || journey.status === 'inconclusive') {
+                    const stoppedStep = journey.stepResults.find((step) => step.status === 'failed' || step.status === 'inconclusive');
+                    if (stoppedStep && journey.failureStep !== stoppedStep.index) {
+                        errors.push(`${label} does not identify its failure or incomplete step`);
+                    }
+                }
+            }
+        }
+    }
+    return errors;
+}
+/** Rejects impossible or untraceable canonical results before any renderer sees them. */
+function assertCanonicalAuditSummary(summary) {
+    const errors = [];
+    const findingIds = summary.findings.map((finding) => finding.id ?? finding.key);
+    if (new Set(findingIds).size !== findingIds.length)
+        errors.push('finding identities are not unique');
+    if (hasGuarantee(summary, 'failure-isolation')) {
+        errors.push(...collectionCompletenessErrors(summary.pages));
+    }
+    if (hasGuarantee(summary, 'traceable-evidence')) {
+        const viewports = viewportIndex(summary);
+        for (const finding of summary.findings)
+            errors.push(...validateFindingEvidence(finding, viewports));
+        errors.push(...validateJourneyResults(summary));
+    }
+    if (summary.regressionSummary) {
+        if (summary.regressionSummary.conformanceEvidence !== false)
+            errors.push('regression summary is incorrectly marked as conformance evidence');
+        if (summary.regressionSummary.fixtureCount < 0 || summary.regressionSummary.expectedFindingCount < 0) {
+            errors.push('regression summary contains a negative count');
+        }
+    }
+    if (errors.length)
+        throw new Error(`Canonical audit result is invalid: ${errors.join('; ')}.`);
+}
+//# sourceMappingURL=canonical-validation.js.map
 ;// CONCATENATED MODULE: ./dist/reporting/consolidate.js
 function uniqueSorted(values) {
     return [...new Set(values.filter(Boolean))].sort();
+}
+function evidenceIdentity(item) {
+    return JSON.stringify(item);
 }
 function conciseMergedText(first, second, limit = 6) {
     let hadTruncation = false;
@@ -155374,10 +155697,12 @@ function mergeFindingContext(findings) {
         urls: uniqueSorted(findings.flatMap((finding) => finding.urls)),
         viewports: uniqueSorted(findings.flatMap((finding) => finding.viewports)),
         selectors: uniqueSorted(findings.flatMap((finding) => finding.selectors)),
-        evidence: [...new Map(findings.flatMap((finding) => finding.evidence).map((item) => [
-                JSON.stringify([item.kind, item.pageUrl, item.viewport ?? '', item.selector ?? '', item.detail, item.screenshot ?? '']),
-                item
-            ])).values()].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+        // Preserve every observed occurrence. Two byte-identical records can still
+        // represent two separately collected failures and must not disappear merely
+        // because their rendered evidence happens to match.
+        evidence: findings
+            .flatMap((finding) => finding.evidence)
+            .sort((a, b) => evidenceIdentity(a).localeCompare(evidenceIdentity(b)))
     };
     const componentName = findings.reduce((merged, finding) => conciseMergedText(merged, finding.componentName), undefined);
     const componentLocation = findings.reduce((merged, finding) => conciseMergedText(merged, finding.componentLocation), undefined);
@@ -155532,7 +155857,7 @@ function rollUpDescriptionListStructure(findings) {
             urls: uniqueSorted(grouped.flatMap((finding) => finding.urls)),
             viewports: uniqueSorted(grouped.flatMap((finding) => finding.viewports)),
             selectors: uniqueSorted(grouped.flatMap((finding) => finding.selectors)),
-            evidence: grouped.flatMap((finding) => finding.evidence),
+            evidence: mergeFindingContext(grouped).evidence,
             assignment: 'Development',
             effort: 'Small',
             translationRequired: 'No'
@@ -155618,6 +155943,23 @@ function consolidateFindings(findings) {
             || uniqueSorted(a.urls).join('|').localeCompare(uniqueSorted(b.urls).join('|'));
     });
 }
+/** Ensures consolidation preserves the multiplicity of every evidence record. */
+function assertLosslessConsolidation(before, after) {
+    const countEvidence = (findings) => {
+        const counts = new Map();
+        for (const item of findings.flatMap((finding) => finding.evidence)) {
+            const identity = evidenceIdentity(item);
+            counts.set(identity, (counts.get(identity) ?? 0) + 1);
+        }
+        return counts;
+    };
+    const expected = countEvidence(before);
+    const retained = countEvidence(after);
+    const missing = [...expected.entries()].reduce((total, [identity, count]) => total + Math.max(0, count - (retained.get(identity) ?? 0)), 0);
+    if (missing) {
+        throw new Error(`Finding consolidation discarded ${missing} evidence observation occurrence(s).`);
+    }
+}
 function assertRemediationOnlyNotes(findings) {
     for (const finding of findings) {
         if (/jira/i.test(finding.remediation)) {
@@ -155630,6 +155972,7 @@ function assertRemediationOnlyNotes(findings) {
 }
 //# sourceMappingURL=consolidate.js.map
 ;// CONCATENATED MODULE: ./dist/reporting/json.js
+
 
 
 
@@ -155658,6 +156001,7 @@ function portableJsonSummary(summary, outputPath) {
     return portable;
 }
 async function writeJsonReport(summary, outputPath) {
+    assertCanonicalAuditSummary(summary);
     await (0,promises_.writeFile)(outputPath, `${JSON.stringify(portableJsonSummary(summary, outputPath), null, 2)}\n`, 'utf8');
     return outputPath;
 }
@@ -155836,6 +156180,7 @@ async function collectUrls(inputs, options = {}) {
 
 
 
+
 const CANCELLED_REASON = 'The audit was stopped by the user. Results include only work completed before cancellation.';
 const MAX_CAPTURED_RUNTIME_ERRORS = 50;
 const runner_require = (0,external_node_module_namespaceObject.createRequire)(import.meta.url);
@@ -155857,6 +156202,21 @@ function emptyDom() {
         tablesForReview: [],
         autoplayMedia: []
     };
+}
+function domObservationCount(dom) {
+    return Object.values(dom).reduce((count, value) => count + (Array.isArray(value) ? value.length : 0), 0)
+        + (dom.h1Count === 1 ? 0 : 1)
+        + (dom.mainCount === 1 ? 0 : 1);
+}
+function responsiveObservationCount(responsive) {
+    return responsive.overflowElements.length
+        + responsive.clippedElements.length
+        + responsive.overlapPairs.length
+        + responsive.lostInteractiveElements.length
+        + (responsive.textResizeLostInteractiveElements?.length ?? 0)
+        + (responsive.horizontalOverflow > 2 ? 1 : 0)
+        + (responsive.textSpacingOverflow > Math.max(2, responsive.horizontalOverflow + 2) ? 1 : 0)
+        + ((responsive.textResizeOverflow ?? 0) > Math.max(2, responsive.horizontalOverflow + 2) ? 1 : 0);
 }
 async function emitProgress(execution, event) {
     try {
@@ -156219,6 +156579,36 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
     let disclosures = [];
     let tabs = [];
     let links = [];
+    const checkIds = [
+        'navigation', 'axe', 'dom', 'keyboard', 'disclosures', 'tabs', 'responsive',
+        'links', 'journeys', 'element-context', 'screenshots'
+    ];
+    const collectionOutcomes = checkIds.map((checkId) => ({
+        checkId,
+        status: 'not-run',
+        observationCount: 0
+    }));
+    const recordOutcome = (checkId, outcome, onlyIfNotRun = false) => {
+        const index = collectionOutcomes.findIndex((item) => item.checkId === checkId);
+        if (onlyIfNotRun && collectionOutcomes[index]?.status !== 'not-run')
+            return;
+        collectionOutcomes[index] = { checkId, ...outcome };
+    };
+    const errorMessage = (error) => error instanceof Error ? error.message : String(error);
+    const blockPending = (checkIdsToBlock, blockedBy) => {
+        for (const checkId of checkIdsToBlock) {
+            recordOutcome(checkId, { status: 'blocked', observationCount: 0, blockedBy }, true);
+        }
+    };
+    if (viewport.name !== 'desktop') {
+        recordOutcome('links', { status: 'not-applicable', observationCount: 0 });
+    }
+    if (options.journeys.length === 0) {
+        recordOutcome('journeys', { status: 'not-applicable', observationCount: 0 });
+    }
+    if (!options.captureScreenshots) {
+        recordOutcome('screenshots', { status: 'not-applicable', observationCount: 0 });
+    }
     const screenshot = (0,external_node_path_.resolve)(options.outputDir, 'screenshots', `${safeSlug(url)}-${viewport.name}.png`);
     let context;
     const closeOnAbort = () => { void context?.close().catch(() => undefined); };
@@ -156295,6 +156685,7 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
             throw new Error(`Navigation blocked: ${finalUrlRestriction}`);
         }
         title = await page.title();
+        recordOutcome('navigation', { status: 'completed', observationCount: 1 });
         consent = await dependencies.dismissConsentBanner(page);
         if (consent.error)
             errors.push(`Consent handling error: ${consent.error}`);
@@ -156308,9 +156699,12 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
             const axeOutput = await dependencies.runAxe(page, options.wcagLevel);
             axeResults = axeOutput.results;
             axeRun = axeOutput.metadata;
+            recordOutcome('axe', axeRun.completed
+                ? { status: 'completed', observationCount: axeResults.reduce((count, item) => count + item.nodes.length, 0) }
+                : { status: 'failed', observationCount: 0, error: axeRun.error || 'axe did not complete.' });
         }
         catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = errorMessage(error);
             errors.push(`axe-core error: ${message}`);
             axeRun = {
                 completed: false,
@@ -156320,23 +156714,39 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
                 passCount: 0,
                 passes: []
             };
+            recordOutcome('axe', { status: 'failed', observationCount: 0, error: message });
         }
         const axeTargetSizeSelectors = axeResults
             .filter((result) => result.id === 'target-size')
             .flatMap((result) => result.nodes.flatMap((node) => node.target));
         try {
             dom = await dependencies.runDomChecks(page, axeTargetSizeSelectors);
+            recordOutcome('dom', {
+                status: 'completed',
+                observationCount: domObservationCount(dom)
+            });
         }
         catch (error) {
-            errors.push(`DOM checks error: ${error instanceof Error ? error.message : String(error)}`);
+            const message = errorMessage(error);
+            errors.push(`DOM checks error: ${message}`);
+            recordOutcome('dom', { status: 'failed', observationCount: 0, error: message });
         }
         if (!interactionBlocker) {
             try {
                 keyboard = await dependencies.runKeyboardChecks(page, options.maxTabStops);
+                recordOutcome('keyboard', {
+                    status: 'completed',
+                    observationCount: keyboard.sequence.length + keyboard.journeys.length
+                });
             }
             catch (error) {
-                errors.push(`Keyboard checks error: ${error instanceof Error ? error.message : String(error)}`);
+                const message = errorMessage(error);
+                errors.push(`Keyboard checks error: ${message}`);
+                recordOutcome('keyboard', { status: 'failed', observationCount: 0, error: message });
             }
+        }
+        else {
+            recordOutcome('keyboard', { status: 'blocked', observationCount: 0, blockedBy: interactionBlocker.selector });
         }
         if (!interactionBlocker && keyboard.scope === 'modal-only') {
             interactionBlocker = {
@@ -156347,12 +156757,18 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
             };
             errors.push(`${interactionBlocker.reason} ${interactionBlocker.selector}`);
         }
+        if (interactionBlocker) {
+            blockPending(['disclosures', 'tabs', 'links', 'journeys'], interactionBlocker.selector);
+        }
         if (!interactionBlocker) {
             try {
                 disclosures = await dependencies.runDisclosureChecks(page);
+                recordOutcome('disclosures', { status: 'completed', observationCount: disclosures.length });
             }
             catch (error) {
-                errors.push(`Disclosure checks error: ${error instanceof Error ? error.message : String(error)}`);
+                const message = errorMessage(error);
+                errors.push(`Disclosure checks error: ${message}`);
+                recordOutcome('disclosures', { status: 'failed', observationCount: 0, error: message });
             }
         }
         for (const disclosure of disclosures.filter((item) => item.error)) {
@@ -156361,25 +156777,39 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
         if (!interactionBlocker) {
             try {
                 tabs = await dependencies.runTabChecks(page);
+                recordOutcome('tabs', { status: 'completed', observationCount: tabs.length });
             }
             catch (error) {
-                errors.push(`Tab checks error: ${error instanceof Error ? error.message : String(error)}`);
+                const message = errorMessage(error);
+                errors.push(`Tab checks error: ${message}`);
+                recordOutcome('tabs', { status: 'failed', observationCount: 0, error: message });
             }
         }
         try {
             responsive = await dependencies.runResponsiveChecks(page);
+            const responsiveCompleted = responsive.completed !== false;
+            recordOutcome('responsive', {
+                status: responsiveCompleted ? 'completed' : 'failed',
+                observationCount: responsiveCompleted ? responsiveObservationCount(responsive) : 0,
+                ...(!responsiveCompleted ? { error: 'Responsive phases did not all complete.' } : {})
+            });
         }
         catch (error) {
-            errors.push(`Responsive checks error: ${error instanceof Error ? error.message : String(error)}`);
+            const message = errorMessage(error);
+            errors.push(`Responsive checks error: ${message}`);
+            recordOutcome('responsive', { status: 'failed', observationCount: 0, error: message });
         }
         if (!interactionBlocker && viewport.name === 'desktop') {
             try {
                 const linkOutput = await dependencies.runLinkChecks(page, options.maxLinksPerPage);
                 links = linkOutput.results;
                 linkRun = linkOutput.metadata;
+                recordOutcome('links', linkRun.completed
+                    ? { status: 'completed', observationCount: links.length }
+                    : { status: 'failed', observationCount: 0, error: linkRun.error || 'Link checks did not complete.' });
             }
             catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
+                const message = errorMessage(error);
                 errors.push(`Link checks error: ${message}`);
                 linkRun = {
                     completed: false,
@@ -156389,6 +156819,7 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
                     scope: 'desktop-same-origin',
                     error: message
                 };
+                recordOutcome('links', { status: 'failed', observationCount: 0, error: message });
             }
         }
         else if (interactionBlocker && viewport.name === 'desktop') {
@@ -156409,12 +156840,15 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
                         throw new Error(`Consent handling failed: ${journeyConsent.error}`);
                 });
                 keyboard.journeys.push(...configuredJourneys);
+                recordOutcome('journeys', { status: 'completed', observationCount: configuredJourneys.length });
                 await page.goto(finalUrl, { waitUntil: 'domcontentloaded' });
                 await page.waitForLoadState('networkidle', { timeout: Math.min(options.timeoutMs, 5_000) }).catch(() => undefined);
                 await dependencies.dismissConsentBanner(page);
             }
             catch (error) {
-                errors.push(`Configured journey checks error: ${error instanceof Error ? error.message : String(error)}`);
+                const message = errorMessage(error);
+                errors.push(`Configured journey checks error: ${message}`);
+                recordOutcome('journeys', { status: 'failed', observationCount: 0, error: message });
             }
         }
         if (signal?.aborted)
@@ -156439,14 +156873,21 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
             elementContexts: [],
             screenshot: '',
             elementScreenshots: [],
-            errors
+            errors,
+            collectionOutcomes
         };
         const allViewportFindings = findingsFromPage({ url, viewports: [preliminaryAudit] });
         try {
             preliminaryAudit.elementContexts = await dependencies.collectElementContexts(page, allViewportFindings.flatMap((finding) => finding.selectors));
+            recordOutcome('element-context', {
+                status: 'completed',
+                observationCount: preliminaryAudit.elementContexts.length
+            });
         }
         catch (error) {
-            errors.push(`Element context check error: ${error instanceof Error ? error.message : String(error)}`);
+            const message = errorMessage(error);
+            errors.push(`Element context check error: ${message}`);
+            recordOutcome('element-context', { status: 'failed', observationCount: 0, error: message });
         }
         const screenshotFindings = allViewportFindings
             .filter((finding) => finding.classification !== 'manual');
@@ -156461,6 +156902,11 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
                     errors.push(`Component screenshot capture was blocked by a visible surface${captureBlocker ? `: ${captureBlocker.selector}` : '.'}`);
                     await dependencies.capturePageScreenshot(page, screenshot);
                     preliminaryAudit.screenshot = screenshot;
+                    recordOutcome('screenshots', {
+                        status: 'blocked',
+                        observationCount: 1,
+                        blockedBy: captureBlocker?.selector || captureConsent.surfaceSelector || 'visible surface'
+                    });
                 }
                 else {
                     await prepareEvidenceStates(page, screenshotFindings);
@@ -156469,18 +156915,30 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
                         await dependencies.capturePageScreenshot(page, screenshot);
                         preliminaryAudit.screenshot = screenshot;
                     }
+                    recordOutcome('screenshots', {
+                        status: 'completed',
+                        observationCount: preliminaryAudit.elementScreenshots.length + (preliminaryAudit.screenshot ? 1 : 0)
+                    });
                 }
             }
             catch (error) {
-                errors.push(`Screenshot check error: ${error instanceof Error ? error.message : String(error)}`);
+                const message = errorMessage(error);
+                errors.push(`Screenshot check error: ${message}`);
+                recordOutcome('screenshots', { status: 'failed', observationCount: 0, error: message });
             }
+        }
+        else if (options.captureScreenshots) {
+            recordOutcome('screenshots', { status: 'not-applicable', observationCount: 0 });
         }
         preliminaryAudit.partial = isPartialAudit(errors, axeRun, interactionBlocker);
         return preliminaryAudit;
     }
     catch (error) {
         const cancelled = Boolean(signal?.aborted);
-        errors.push(cancelled ? CANCELLED_REASON : error instanceof Error ? error.message : String(error));
+        const message = cancelled ? CANCELLED_REASON : errorMessage(error);
+        errors.push(message);
+        recordOutcome('navigation', { status: 'failed', observationCount: 0, error: message }, true);
+        blockPending(checkIds.filter((checkId) => checkId !== 'navigation'), 'navigation');
         return {
             viewport,
             url,
@@ -156502,6 +156960,7 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
             screenshot: '',
             elementScreenshots: [],
             errors,
+            collectionOutcomes,
             partial: true,
             ...(cancelled ? { cancelled: true } : {})
         };
@@ -156608,7 +157067,15 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}) {
             await browser?.close().catch(() => undefined);
         }
     }
-    const findings = assignFindingIds(consolidateFindings(applyConfirmedFindingConfidenceGate(pages.flatMap(findingsFromPage))));
+    // Contract pipeline: collect raw observations -> validate completeness -> classify ->
+    // consolidate without evidence loss -> build the criterion ledger -> validate the
+    // canonical JSON model -> render downstream formats.
+    assertCollectionCompleteness(pages);
+    const classifiedFindings = pages.flatMap(findingsFromPage);
+    const gatedFindings = applyConfirmedFindingConfidenceGate(classifiedFindings);
+    const consolidatedFindings = consolidateFindings(gatedFindings);
+    assertLosslessConsolidation(gatedFindings, consolidatedFindings);
+    const findings = assignFindingIds(consolidatedFindings);
     retainRepresentativeScreenshotPerFinding(findings);
     assertRemediationOnlyNotes(findings);
     const startedUrls = new Set(pages.map((page) => page.url));
@@ -156648,6 +157115,7 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}) {
             'A qualified reviewer must decide applicability and sign off every WCAG 2.2 A and AA criterion before this evidence can support a conformance claim.'
         ]
     };
+    assertCanonicalAuditSummary(summary);
     assertAuditQualityContract(summary);
     await pruneUnreferencedScreenshots(summary, options.outputDir);
     const jsonPath = (0,external_node_path_.resolve)(options.outputDir, 'audit-results.json');
@@ -157042,6 +157510,7 @@ async function validateExcelReport(path) {
 }
 //# sourceMappingURL=validate.js.map
 ;// CONCATENATED MODULE: ./dist/reporting/excel.js
+
 
 
 
@@ -157650,6 +158119,7 @@ function applyStatusBadges(pageSheet, manualSheet) {
     }
 }
 async function writeExcelReport(summary, options) {
+    assertCanonicalAuditSummary(summary);
     const templatePath = options.templatePath ?? DEFAULT_TEMPLATE;
     await assertCanonicalTemplate(templatePath);
     const workbook = new excel.Workbook();
@@ -157732,6 +158202,7 @@ async function createAuditArchive(outputDir, reportPath, htmlPath, jsonPath) {
 }
 //# sourceMappingURL=archive.js.map
 ;// CONCATENATED MODULE: ./dist/reporting/html.js
+
 
 
 
@@ -157951,6 +158422,7 @@ function renderReport(summary, outputPath) {
 </html>`;
 }
 async function writeHtmlReport(summary, outputPath) {
+    assertCanonicalAuditSummary(summary);
     await (0,promises_.writeFile)(outputPath, `${renderReport(summary, outputPath)}\n`, 'utf8');
     return outputPath;
 }

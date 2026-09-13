@@ -10,6 +10,7 @@ buggyland-regression-results/
 coverage/
 evidence/
 outputs/
+test-results/
 .DS_Store
 *.log
 *.tgz

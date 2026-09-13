@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   applyConfirmedFindingConfidenceGate,
@@ -118,5 +119,21 @@ describe('Audit Quality Contract', () => {
     expect(() => assertAuditQualityContract(summary)).not.toThrow();
     summary.criteria = summary.criteria!.slice(1);
     expect(() => assertAuditQualityContract(summary)).toThrow(/instead of 55/);
+  });
+
+  it('makes AQ-16 through AQ-19 executable contract guarantees', () => {
+    expect(AUDIT_QUALITY_CONTRACT).toMatchObject({
+      version: '1.1.0',
+      guarantees: [
+        'failure-isolation',
+        'traceable-evidence',
+        'lossless-deduplication',
+        'deterministic-output'
+      ]
+    });
+    const masterContract = readFileSync(new URL('../AUDIT_QUALITY_CONTRACT.md', import.meta.url), 'utf8');
+    for (const requirement of ['AQ-16', 'AQ-17', 'AQ-18', 'AQ-19']) {
+      expect(masterContract).toContain(`| ${requirement} |`);
+    }
   });
 });

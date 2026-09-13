@@ -1,6 +1,6 @@
 # Audit Quality Contract
 
-**Contract version:** 1.0.0  
+**Contract version:** 1.1.0
 **Conformance target:** WCAG 2.2 Level A and AA  
 **Authority:** This document is the normative quality and release contract for CarlasHub Accessibility Audit. If product copy, implementation, tests, examples, or release notes conflict with this contract, this contract takes precedence.
 
@@ -181,6 +181,10 @@ Every release must satisfy all gates below. A skipped mandatory gate is a failed
 | AQ-13 | The packaged GitHub Action runs from a fresh consumer fixture using only documented inputs and uploads the complete report. | Packaged Action smoke test |
 | AQ-14 | Live Buggyland runs twice and satisfies maintained exact baseline, classification, blocker-isolation, deduplication and stability checks. | Buggyland regression workflow |
 | AQ-15 | Type checking, linting, unit, browser, integration, documentation, packaging and build checks pass from a clean install. | CI and release workflow |
+| AQ-16 | Every page collector records a completed, failed, blocked, not-applicable or not-run outcome. A collector failure never supplies a fabricated empty, null or false observation to downstream classification. Independent collectors continue when safe; dependent collectors name their blocker. | Fault-injection and canonical-result validation tests |
+| AQ-17 | Every retained finding is traceable to a raw observation through check ID, rule ID, URL, state, viewport, target, observed result and expected result. Impossible states, missing provenance and evidence/collector contradictions are rejected before JSON, HTML or XLSX rendering. | Provenance, schema-integrity and renderer rejection tests |
+| AQ-18 | Consolidation is lossless and order-independent: exact supporting occurrences survive deduplication, a controlled defect yields its exact normalized finding set, removing it removes only that set, and neutral DOM changes do not alter it. | Adversarial deduplication, mutation and metamorphic tests |
+| AQ-19 | Two semantically equivalent runs produce identical semantic results and stable identities. The machine-readable regression summary is explicitly labelled a software-quality metric with `conformanceEvidence: false`; it is never presented as WCAG conformance evidence. | Determinism tests and retained quality-regression summary artifact |
 
 ## 10. Buggyland and adversarial fixtures
 
@@ -229,7 +233,7 @@ This plan is part of the contract. A phase is complete only when its output exis
 | 7. Canonical reporting | Generate JSON once as the decision source; derive accessible HTML and professional XLSX without reclassifying data; package portable relative evidence. | Report parity, HTML accessibility/reflow, workbook structure/render/formula and archive tests. |
 | 8. Product delivery | Build CLI, MCP/plugin packages and a self-contained GitHub Action; validate documented inputs from a fresh consumer fixture; keep the target repository read-only except for the user's committed workflow and generated Actions artifacts. | Built-product, marketplace compatibility, package dry-run and consumer-action tests. |
 | 9. Public regression | Run the public Buggyland fixture twice, compare exact maintained classifications and stable IDs, reject unexpected blockers and retain both reports. | `npm run test:buggyland:live` locally and the Buggyland/release workflow artifacts. |
-| 10. Release decision | Run all AQ-01 through AQ-15 gates from a clean install, record platform limitations, publish no stronger claim than the evidence supports and require qualified human sign-off for conformance. | Green Verify, native evidence where supported, release-smoke and release evidence artifacts. |
+| 10. Release decision | Run all AQ-01 through AQ-19 gates from a clean install, record platform limitations, publish no stronger claim than the evidence supports and require qualified human sign-off for conformance. | Green Verify, native evidence where supported, release-smoke and release evidence artifacts. |
 
 ### Implementation ownership map
 

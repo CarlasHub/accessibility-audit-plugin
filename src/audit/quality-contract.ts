@@ -1,6 +1,6 @@
 import type { AuditQualityContractMetadata, AuditSummary, EvidenceItem, Finding } from '../types.js';
 
-export const AUDIT_QUALITY_CONTRACT_VERSION = '1.0.0';
+export const AUDIT_QUALITY_CONTRACT_VERSION = '1.1.0';
 export const WCAG_22_AA_CRITERION_COUNT = 55 as const;
 
 export const AUDIT_QUALITY_CONTRACT: AuditQualityContractMetadata = {
@@ -8,8 +8,16 @@ export const AUDIT_QUALITY_CONTRACT: AuditQualityContractMetadata = {
   standard: 'WCAG 2.2',
   conformanceTarget: 'A/AA',
   criterionCount: WCAG_22_AA_CRITERION_COUNT,
-  findingPolicy: 'evidence-gated'
+  findingPolicy: 'evidence-gated',
+  guarantees: [
+    'failure-isolation',
+    'traceable-evidence',
+    'lossless-deduplication',
+    'deterministic-output'
+  ]
 };
+
+const REQUIRED_GUARANTEES = new Set(AUDIT_QUALITY_CONTRACT.guarantees);
 
 const WCAG_CRITERION = /^\d\.\d\.\d{1,2}$/;
 
@@ -73,6 +81,10 @@ export function assertAuditQualityContract(summary: AuditSummary): void {
 
   if (summary.qualityContract?.version !== AUDIT_QUALITY_CONTRACT_VERSION) errors.push('quality-contract version is missing or incorrect');
   if (summary.qualityContract?.criterionCount !== WCAG_22_AA_CRITERION_COUNT) errors.push('quality-contract criterion count is not 55');
+  const guarantees = new Set(summary.qualityContract?.guarantees ?? []);
+  for (const guarantee of REQUIRED_GUARANTEES) {
+    if (!guarantees.has(guarantee)) errors.push(`quality-contract guarantee ${guarantee} is missing`);
+  }
   if (summary.conformanceTarget !== 'AA') errors.push('conformance target is not WCAG 2.2 AA');
   if (summary.humanAssessmentRequired !== true) errors.push('mandatory human assessment is not declared');
   if (summary.conformanceDecision !== 'not-determined') errors.push('the automated run attempted a conformance decision');

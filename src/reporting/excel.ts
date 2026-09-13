@@ -4,6 +4,7 @@ import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ExcelJS, { type CellValue, type DataValidation, type Style, type Worksheet } from 'exceljs';
 import type { AuditSummary, Finding, PageAudit } from '../types.js';
+import { assertCanonicalAuditSummary } from '../audit/canonical-validation.js';
 import { findingId } from './finding-id.js';
 import { EXPECTED_REPORT_HEADERS } from './validate.js';
 
@@ -627,6 +628,7 @@ export interface ExcelReportOptions {
 }
 
 export async function writeExcelReport(summary: AuditSummary, options: ExcelReportOptions): Promise<string> {
+  assertCanonicalAuditSummary(summary);
   const templatePath = options.templatePath ?? DEFAULT_TEMPLATE;
   await assertCanonicalTemplate(templatePath);
   const workbook = new ExcelJS.Workbook();

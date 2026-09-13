@@ -1,6 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative } from 'node:path';
 import type { AuditSummary } from '../types.js';
+import { assertCanonicalAuditSummary } from '../audit/canonical-validation.js';
 import { assignFindingIds } from './finding-id.js';
 
 function portablePath(value: string, outputPath: string): string {
@@ -27,6 +28,7 @@ export function portableJsonSummary(summary: AuditSummary, outputPath: string): 
 }
 
 export async function writeJsonReport(summary: AuditSummary, outputPath: string): Promise<string> {
+  assertCanonicalAuditSummary(summary);
   await writeFile(outputPath, `${JSON.stringify(portableJsonSummary(summary, outputPath), null, 2)}\n`, 'utf8');
   return outputPath;
 }
