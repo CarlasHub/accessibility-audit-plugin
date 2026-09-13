@@ -42,4 +42,6 @@ npm pack --dry-run
 
 Generated files under `marketplace/carlashub-plugin-marketplace/accessibility-audit` must be produced by `npm run build:marketplace`, not edited manually. Keep the source version, client manifests, catalog fragments, install manifest, checksum, and packaged runtime aligned. The marketplace smoke test proves packaged installation and MCP protocol startup; it does not prove that Claude, Cursor, Codex, or Copilot client UI integrations behave correctly.
 
+`package.json` is the release-version source of truth. Prepare a version change with `npm version <version> --no-git-tag-version`; its lifecycle synchronises every source manifest and `src/version.ts`, rebuilds the committed Action and marketplace payloads, and verifies their versions before returning. Do not hand-edit the version copies. Run `npm run version:check` whenever release metadata changes.
+
 Changes to workbook output must verify required sheets, formulas, row population, relative Evidence links, absence of embedded audit images, and rendered readability.

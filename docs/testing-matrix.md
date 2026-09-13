@@ -29,6 +29,7 @@ The repository separates deterministic pull-request gates from live-site monitor
 
 | Tier | Exact command or workflow | Release claim protected |
 |---|---|---|
+| Version parity | `npm run version:check` | `package.json`, the lockfile, source manifests, runtime version constant, and generated marketplace manifests identify the same release |
 | Unit and report contracts | `npm run test:unit` | Failure isolation, classification boundaries, blocker detection, URL identity, deduplication, and HTML/XLSX/JSON/ZIP parity |
 | Local browser fixtures | `npm run test:browser` | Desktop, mobile, 320 CSS pixel reflow, keyboard journeys, generated-report accessibility, and local end-to-end audit behaviour |
 | Public built CLI | `npm run test:built-cli` | The documented `npm run audit` command invokes `dist/cli.js` and produces usable artifacts |

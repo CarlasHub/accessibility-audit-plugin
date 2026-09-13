@@ -18,6 +18,7 @@ Use Node.js 22 or later from a clean checkout:
 
 ```sh
 npm ci
+npm version <next-version> --no-git-tag-version
 npm run check
 npm run test:integration
 npm run build:action
@@ -28,11 +29,14 @@ npm run test:marketplace
 npm run test:marketplace-compatibility
 npm pack --dry-run
 git diff --exit-code -- action/dist
+git diff --exit-code -- marketplace
 ```
 
 The browser integration suite requires Playwright Chromium. Install it with `npx playwright install chromium` when the release environment does not already provide a supported browser.
 
-Generated payloads must not be edited by hand. Re-run `npm run build:marketplace` after changing source metadata, instructions, runtime code, dependencies, or the workbook.
+Replace `<next-version>` with the exact SemVer release, such as `1.8.0`. `package.json` is authoritative; the npm version lifecycle updates the lockfile, all client manifests, `src/version.ts`, the committed Action bundle, and every marketplace payload before checking version parity. `--no-git-tag-version` leaves the prepared release changes available for review before an immutable tag is created.
+
+Generated payloads must not be edited by hand. Re-run `npm run build:marketplace` after changing source metadata, instructions, runtime code, dependencies, or the workbook. `npm run version:check` must pass before a release tag is created.
 
 ## Publish from GitHub
 
