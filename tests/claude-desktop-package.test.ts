@@ -59,8 +59,11 @@ describe('Claude Desktop custom-plugin package', () => {
     ]);
     const archiveName = `accessibility-audit-claude-desktop-${PLUGIN_VERSION}.zip`;
     const archive = await readFile(join(outputDirectory, archiveName));
+    const currentArchiveName = 'accessibility-audit-claude-desktop.zip';
+    const currentArchive = await readFile(join(outputDirectory, currentArchiveName));
     const repeatedArchive = await readFile(join(secondOutputDirectory, archiveName));
     const checksum = await readFile(join(outputDirectory, `${archiveName}.sha256`), 'utf8');
+    const currentChecksum = await readFile(join(outputDirectory, `${currentArchiveName}.sha256`), 'utf8');
     const names = archiveEntryNames(archive);
 
     expect(stdout).toContain('Claude Desktop plugin package created and validated.');
@@ -71,6 +74,8 @@ describe('Claude Desktop custom-plugin package', () => {
     expect(names).toContain('_runtime/bin/launch-mcp.mjs');
     expect(names.some((name) => name.startsWith('claude/'))).toBe(false);
     expect(repeatedArchive.equals(archive)).toBe(true);
+    expect(currentArchive.equals(archive)).toBe(true);
     expect(checksum).toBe(`${createHash('sha256').update(archive).digest('hex')}  ${archiveName}\n`);
+    expect(currentChecksum).toBe(`${createHash('sha256').update(archive).digest('hex')}  ${currentArchiveName}\n`);
   }, 30_000);
 });

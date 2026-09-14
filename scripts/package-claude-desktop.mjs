@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import {
   access,
+  copyFile,
   mkdir,
   readFile,
   readdir,
@@ -141,9 +142,14 @@ const destinationDirectory = outputDirectory();
 const archiveName = `accessibility-audit-claude-desktop-${packageJson.version}.zip`;
 const archivePath = join(destinationDirectory, archiveName);
 const checksumPath = `${archivePath}.sha256`;
+const currentArchiveName = 'accessibility-audit-claude-desktop.zip';
+const currentArchivePath = join(destinationDirectory, currentArchiveName);
+const currentChecksumPath = `${currentArchivePath}.sha256`;
 await mkdir(destinationDirectory, { recursive: true });
 await rm(archivePath, { force: true });
 await rm(checksumPath, { force: true });
+await rm(currentArchivePath, { force: true });
+await rm(currentChecksumPath, { force: true });
 await createArchive(archivePath);
 
 const archiveBuffer = await readFile(archivePath);
@@ -159,4 +165,6 @@ if ([...entries].some((entry) => entry.startsWith('claude/'))) {
 
 const digest = sha256(archiveBuffer);
 await writeFile(checksumPath, `${digest}  ${basename(archivePath)}\n`, 'utf8');
-process.stdout.write(`Claude Desktop plugin package created and validated.\n${archivePath}\n${checksumPath}\nSHA-256: ${digest}\n`);
+await copyFile(archivePath, currentArchivePath);
+await writeFile(currentChecksumPath, `${digest}  ${currentArchiveName}\n`, 'utf8');
+process.stdout.write(`Claude Desktop plugin package created and validated.\n${archivePath}\n${checksumPath}\n${currentArchivePath}\n${currentChecksumPath}\nSHA-256: ${digest}\n`);

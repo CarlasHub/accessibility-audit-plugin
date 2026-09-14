@@ -16,7 +16,7 @@ Maintained by CarlasHub and released under the MIT License.
 
 The public builder keeps audit ownership with the user. Choose **Create a new repository** to open the prefilled GitHub template, or **Use an existing repository** to select an App-authorised repository and start its workflow. Every audit run, report, and GitHub Actions usage record stays in that user's account. The optional repository chooser exchanges a narrowly scoped GitHub App credential through a server-side connector, stores it behind an opaque one-hour session, and never exposes it to the page; it does not run audits or receive reports. The manual GitHub editor, workflow preview, and download remain available without connecting an account.
 
-The Action and plugin implementation remain public for Marketplace use and independent review. The editable landing-page and connector source are maintained separately in a private repository; GitHub Pages receives only the compiled browser files on the public `gh-pages` branch. Browser-delivered HTML, CSS, and JavaScript are necessarily inspectable by visitors, but the TypeScript source, tests, deployment workflow, and connector implementation are not published from this branch.
+The Action and plugin implementation remain public for Marketplace use and independent review. The editable landing-page and connector source are maintained separately in a private repository; only the compiled browser files are published to `site-dist` on public `main` and to the public `gh-pages` branch. Browser-delivered HTML, CSS, and JavaScript are necessarily inspectable by visitors, but the TypeScript source, tests, deployment workflow, and connector implementation are not published from this repository.
 
 The audit engine is site-independent. It contains no customer-specific hostnames, page assumptions, selectors, rules, or defaults. Every target URL is supplied at run time, and evidence from one audit is never reused in another. Customer sites used during development are external validation targets only and are not part of the plugin package.
 
@@ -48,7 +48,7 @@ The demonstrated audit of [A11y Test Cases](https://carlashub.github.io/a11y-tes
 
 The two [BuggyLand](https://carlashub.github.io/buggyland/) pages declare 172 intentional failure fixtures across all 86 active WCAG 2.2 success criteria. The historical v1.2.0 walkthrough produced 70 consolidated machine results: 52 confirmed failures and 18 items for review, with zero execution errors. Those numbers should not match: automated rules inspect rendered behaviour, consolidate repeated evidence, and cannot decide every WCAG requirement. The [benchmark evidence guide](docs/buggyland-benchmark.md) provides the complete criteria matrix, fixture inventory, downloadable enhanced workbook, raw JSON, and manual verification plan.
 
-The current v1.8.1 release gate audits four page and fragment states at desktop, mobile, and 320px reflow sizes, then repeats the complete run to detect unstable results. Its reviewed baseline is 68 consolidated records: 31 confirmed failures, 36 items for review, and 1 interaction blocker, plus all 55 A/AA criterion-specific checks. It also executes 42 site-specific journey instances across the unblocked page and viewport combinations: 12 pass and 30 deliberately expose broken form announcements, tabs, modal focus management, Escape handling, and toast announcements. Independent 200% text-resize and 320px reflow phases prevent one responsive check from being mistaken for the other. Two blocked `#special` states remain visibly partial for interaction coverage instead of being reported as passes, while all three non-interactive responsive phases still test their rendered modal states. The exact machine-result baseline is enforced by the [regression fixture](tests/fixtures/buggyland-regression.json) and the [scheduled public workflow](.github/workflows/buggyland-regression.yml).
+The v1.8.1 quality baseline audits four page and fragment states at desktop, mobile, and 320px reflow sizes, then repeats the complete run to detect unstable results. Its reviewed baseline is 68 consolidated records: 31 confirmed failures, 36 items for review, and 1 interaction blocker, plus all 55 A/AA criterion-specific checks. It also executes 42 site-specific journey instances across the unblocked page and viewport combinations: 12 pass and 30 deliberately expose broken form announcements, tabs, modal focus management, Escape handling, and toast announcements. Independent 200% text-resize and 320px reflow phases prevent one responsive check from being mistaken for the other. Two blocked `#special` states remain visibly partial for interaction coverage instead of being reported as passes, while all three non-interactive responsive phases still test their rendered modal states. The exact machine-result baseline is enforced by the [regression fixture](tests/fixtures/buggyland-regression.json) and the [scheduled public workflow](.github/workflows/buggyland-regression.yml).
 
 For a client-neutral example, [watch the sanitised plugin demonstration](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/.github/media/accessibility-audit-demo.mp4) or read its [transcript](https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/accessibility-audit-demo-transcript.md).
 
@@ -264,14 +264,14 @@ Team-marketplace publication is a separate release workflow: users need access t
 
 ## Claude Desktop Chat installation
 
-Build the self-contained custom-plugin file:
+[Download the current Claude Desktop plugin ZIP](https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest/download/accessibility-audit-claude-desktop.zip), or build the self-contained custom-plugin file locally:
 
 ```sh
 npm ci
 npm run package:claude-desktop
 ```
 
-The command validates the archive structure and writes `artifacts/accessibility-audit-claude-desktop-<version>.zip` plus its SHA-256 file. In Claude Desktop, open **Customize**, select **Plugins**, use the custom-plugin upload option, and choose that ZIP. The ZIP contains the skill and its local MCP runtime; do not unzip it before uploading.
+The command validates the archive structure and writes versioned and stable ZIP filenames plus their SHA-256 files. In Claude Desktop, open **Customize**, select **Plugins**, use the custom-plugin upload option, and choose the ZIP. The ZIP contains the skill and its local MCP runtime; do not unzip it before uploading.
 
 Open a new conversation in the **Chat** tab, type `/`, select **Run Accessibility Audit**, and provide one or more explicit URLs or a supported page-list file. The local MCP server requires Node.js 22 or later on the same computer. Organisation policy may prohibit custom plugins or local MCP servers. See [Installation](docs/installation.md#3c-install-in-claude-desktop-chat) for verification, updating, and removal.
 

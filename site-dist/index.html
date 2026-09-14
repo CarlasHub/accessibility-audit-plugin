@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Create one GitHub Actions workflow that audits up to 20 public pages and produces review-ready WCAG 2.2 accessibility evidence." />
+    <meta property="og:title" content="CarlasHub Accessibility Audit" />
+    <meta property="og:description" content="Add your pages, generate one workflow, and collect an evidence-rich accessibility report." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/accessibility-audit-demo-poster.png" />
+    <meta property="og:url" content="https://carlashub.github.io/accessibility-audit-plugin/" />
+    <meta name="theme-color" content="#111111" />
+    <link rel="canonical" href="https://carlashub.github.io/accessibility-audit-plugin/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <title>CarlasHub Accessibility Audit</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2315151a'/%3E%3Cpath d='M18 32l9 9 19-20' fill='none' stroke='%2393f6b2' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <script type="module" crossorigin src="./assets/index-DPB0X9UT.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BIoRjB-p.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="CarlasHub Accessibility Audit home">
+        <img
+          class="brand-mark"
+          src="https://carlashub.com/wp-content/uploads/2026/05/a11y-cat-chrome-store-submission-prompt-thumb.png"
+          alt=""
+          width="36"
+          height="36"
+        />
+        <span><strong>CarlasHub</strong><small>Accessibility audit</small></span>
+      </a>
+      <nav class="header-nav" aria-label="Main navigation">
+        <a class="header-link" href="#integrations">Install</a>
+        <a class="github-link" href="https://github.com/CarlasHub/accessibility-audit-plugin">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1">
+      <section class="hero" id="top">
+        <div class="hero-copy">
+          <img
+            class="hero-mark"
+            src="https://carlashub.com/wp-content/uploads/2026/05/a11y-cat-chrome-store-submission-prompt-thumb.png"
+            alt=""
+            width="64"
+            height="64"
+          />
+          <p class="eyebrow">Open-source accessibility testing</p>
+          <h1>Audit every page.<br /><em>Remove barriers before release.</em></h1>
+          <p class="lede">Add up to 20 public pages. Create a ready-to-run repository or add the audit to one you already own. Every run and report stays under your account.</p>
+          <div class="trust-row" aria-label="Audit capabilities">
+            <span>WCAG 2.2</span>
+            <span>Keyboard</span>
+            <span>Reflow</span>
+            <span>Evidence</span>
+          </div>
+        </div>
+
+        <div class="generator-shell" id="audit-builder">
+          <div class="generator-card" aria-labelledby="generator-title">
+            <div class="card-topline">
+              <p class="card-kicker">Create an audit</p>
+              <span class="no-login">GitHub Actions</span>
+            </div>
+            <h2 id="generator-title">Which pages do you want to audit?</h2>
+
+            <div class="quest" aria-labelledby="quest-label">
+              <div class="quest-heading">
+                <p id="quest-label">Setup progress</p>
+                <output id="quest-status" aria-live="polite" aria-atomic="true">Stage 1 of 4: add pages</output>
+              </div>
+              <div class="pixel-progress" id="setup-progress" role="progressbar" aria-labelledby="quest-label" aria-valuemin="1" aria-valuemax="4" aria-valuenow="1" aria-valuetext="Stage 1 of 4: add pages">
+                <span class="pixel-block is-active"></span><span class="pixel-block is-active"></span><span class="pixel-block"></span><span class="pixel-block"></span><span class="pixel-block"></span><span class="pixel-block"></span><span class="pixel-block"></span><span class="pixel-block"></span>
+                <span class="goal-flag" aria-hidden="true"></span>
+              </div>
+            </div>
+
+            <form id="workflow-form" novalidate>
+              <fieldset>
+                <legend>Pages to audit</legend>
+                <p id="url-hint" class="field-hint">Use complete public <code>https://</code> addresses. Add up to 20 pages for one combined audit.</p>
+                <div class="url-list" id="url-list">
+                  <div class="url-field">
+                    <label for="target-url-1">Page 1 URL</label>
+                    <div class="url-input-row">
+                      <input id="target-url-1" name="urls" type="url" value="https://example.com" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="url-hint" required />
+                      <button class="remove-url" type="button" aria-label="Remove page 1 URL" hidden>Remove</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="list-controls">
+                  <button class="add-url" id="add-url" type="button"><span aria-hidden="true">＋</span> Add another page</button>
+                  <span id="url-count">1 of 20 pages</span>
+                </div>
+                <p id="url-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
+              </fieldset>
+              <fieldset class="destination-fieldset">
+                <legend>Where should the audit run?</legend>
+                <p id="destination-hint" class="field-hint">Choose a new audit repository or add one workflow to a repository you can edit.</p>
+                <div class="destination-options">
+                  <label class="destination-option">
+                    <input type="radio" name="destination" value="new" checked />
+                    <span><strong>Create a new repository</strong><small>GitHub opens the free starter; this page keeps your configured workflow ready to paste.</small></span>
+                  </label>
+                  <label class="destination-option">
+                    <input type="radio" name="destination" value="existing" />
+                    <span><strong>Use an existing repository</strong><small>GitHub opens a prepared workflow with your selected pages already saved in it.</small></span>
+                  </label>
+                </div>
+                <div class="repository-field" id="repository-field" hidden>
+                  <label for="repository-name">Existing GitHub repository</label>
+                  <input id="repository-name" name="repository" type="text" placeholder="owner/project" autocomplete="off" spellcheck="false" aria-describedby="repository-hint" disabled />
+                  <p id="repository-hint" class="field-hint">Choose a repository you have allowed the GitHub App to use, or paste <code>owner/project</code> for the manual fallback.</p>
+                  <div class="repository-picker-actions">
+                    <button class="secondary-button" id="choose-repository" type="button" hidden>Choose from my GitHub repositories</button>
+                    <a id="manage-repository-access" href="https://github.com/settings/installations" target="_blank" rel="noreferrer" hidden>Manage access <span aria-hidden="true">↗</span></a>
+                  </div>
+                  <p id="repository-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
+                </div>
+              </fieldset>
+              <div class="form-actions">
+                <button class="primary-button build-button" id="launch-audit" type="submit">Create my audit repository <span aria-hidden="true">→</span></button>
+                <button class="secondary-button build-button" id="build-workflow" type="button">Preview or download the workflow</button>
+              </div>
+              <p class="launch-status" id="launch-status" role="status" aria-live="polite" aria-atomic="true"></p>
+              <p class="field-error launch-error" id="launch-error" role="alert" aria-atomic="true" tabindex="-1" hidden></p>
+              <p id="interaction-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+            </form>
+
+            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>The optional connector only authorises the repository change and starts the workflow. It never runs audits or stores reports. All Actions usage, audit history, and reports belong to you—not CarlasHub. Manual setup remains available.</span></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="workflow-result" id="workflow-result" aria-labelledby="workflow-result-title" hidden>
+        <div class="result-heading">
+          <div>
+            <p class="eyebrow success-label"><span aria-hidden="true"></span> Checkpoint reached</p>
+            <h2 id="workflow-result-title" tabindex="-1" aria-describedby="result-description">Your workflow file is ready</h2>
+            <p id="result-description">The workflow is configured for your pages.</p>
+          </div>
+          <button class="text-button" id="download-again" type="button">Download <code>.yml</code></button>
+        </div>
+
+        <ol class="action-steps">
+          <li class="is-current" aria-current="step"><span>1</span><div><strong>Copy the workflow</strong><p>Use the button below to copy the generated file.</p></div></li>
+          <li><span>2</span><div><strong>Add or replace one file</strong><p>Commit the configured file at <code>.github/workflows/accessibility-audit.yml</code>.</p></div></li>
+          <li><span>3</span><div><strong>Run the audit</strong><p>Open <b>Actions → Accessibility audit → Run workflow</b>. There are no URL fields to complete.</p></div></li>
+          <li><span>4</span><div><strong>Get the evidence</strong><p>Download the combined report from the run summary.</p></div></li>
+        </ol>
+
+        <div class="result-actions">
+          <button class="primary-button" id="copy-workflow" type="button">Copy workflow code</button>
+          <a class="secondary-button" href="https://github.com/CarlasHub/accessibility-audit-starter" target="_blank" rel="noreferrer" aria-label="Open the accessibility audit starter repository on GitHub (opens in a new tab)">Open starter repository <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="copy-feedback">
+          <p class="copy-status" id="copy-status" role="status" aria-live="polite" aria-atomic="true"></p>
+          <p class="copy-error" id="copy-error" role="alert" aria-atomic="true" hidden></p>
+        </div>
+        <details>
+          <summary>Preview the workflow file</summary>
+          <pre tabindex="0"><code id="workflow-code"></code></pre>
+        </details>
+      </section>
+
+      <section class="proof-strip" aria-label="Report formats">
+        <p>One run. One evidence pack.</p>
+        <ul><li>Accessible HTML</li><li>Excel workbook</li><li>JSON data</li><li>Screenshots</li><li>ZIP archive</li></ul>
+      </section>
+
+      <section class="section integrations" id="integrations" aria-labelledby="integrations-title">
+        <div class="section-heading">
+          <p class="eyebrow"><span aria-hidden="true"></span> Use it where you work</p>
+          <h2 id="integrations-title">One audit engine. Six ways to run it.</h2>
+          <p>Choose a ready-to-use option or install the open-source developer package in your preferred coding assistant. Every card states what is available today.</p>
+        </div>
+
+        <div class="integration-grid">
+          <article class="integration-card integration-card-featured">
+            <div class="integration-topline"><h3>GitHub Actions</h3><span class="availability availability-live">Ready</span></div>
+            <p>Create your own audit repository from the ready template, or add a prepared workflow to an existing project. Runs and reports stay in your GitHub account.</p>
+            <a class="integration-action" href="#audit-builder">Set up GitHub Actions <span aria-hidden="true">→</span></a>
+          </article>
+
+          <article class="integration-card">
+            <div class="integration-topline"><h3>Claude Desktop</h3><span class="availability availability-live">Download</span></div>
+            <p>Upload the packaged custom-plugin ZIP in <strong>Customize → Plugins</strong>. Keep the ZIP compressed.</p>
+            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest/download/accessibility-audit-claude-desktop.zip">Download the current ZIP <span aria-hidden="true">↓</span></a>
+          </article>
+
+          <article class="integration-card">
+            <div class="integration-topline"><h3>Claude Code</h3><span class="availability">Developer install</span></div>
+            <p>Clone and build the plugin once, then load that checkout in the project you want to audit.</p>
+            <pre class="install-command" tabindex="0"><code>npm ci &amp;&amp; npm run build
+claude --plugin-dir /path/to/accessibility-audit-plugin</code></pre>
+            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3b-install-in-claude-code">Claude Code instructions <span aria-hidden="true">→</span></a>
+          </article>
+
+          <article class="integration-card">
+            <div class="integration-topline"><h3>Cursor</h3><span class="availability">Developer install</span></div>
+            <p>The repository includes Cursor’s plugin manifest, command, rule, skill, and MCP configuration. Build it, add it to Cursor’s local plugin directory, then reload.</p>
+            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3a-install-in-cursor">Cursor instructions <span aria-hidden="true">→</span></a>
+          </article>
+
+          <article class="integration-card">
+            <div class="integration-topline"><h3>Codex CLI</h3><span class="availability">Package ready</span></div>
+            <p>The repository includes the portable Agent Plugin manifest, Codex fallback manifest, marketplace catalog, skill, and MCP server. Install from a configured marketplace, then open the CLI plugin browser.</p>
+            <pre class="install-command" tabindex="0"><code>/plugins</code></pre>
+            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3d-install-in-codex">Codex instructions <span aria-hidden="true">→</span></a>
+          </article>
+
+          <article class="integration-card">
+            <div class="integration-topline"><h3>GitHub Copilot</h3><span class="availability">Package ready</span></div>
+            <p>Build the included Copilot CLI or VS Code payload locally. Public marketplace listing is a separate submission step.</p>
+            <pre class="install-command" tabindex="0"><code>npm run build:marketplace
+copilot plugin install ./marketplace/carlashub-plugin-marketplace/accessibility-audit/copilot-cli</code></pre>
+            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3e-install-in-github-copilot-cli">Copilot instructions <span aria-hidden="true">→</span></a>
+          </article>
+        </div>
+
+        <p class="integration-note"><strong>Developer-install note:</strong> local agent integrations require Node.js 22 or later and a Playwright-supported browser. The Codex IDE extension does not currently support plugins. Only audit websites you are authorised to test.</p>
+      </section>
+
+      <section class="section" id="how-it-works">
+        <div class="section-heading">
+          <p class="eyebrow"><span aria-hidden="true"></span> A shorter setup</p>
+          <h2>From a page list to useful evidence.</h2>
+          <p>Choose a new or existing repository, confirm the workflow on GitHub, then rerun it whenever your site changes.</p>
+        </div>
+        <ol class="steps">
+          <li><span aria-hidden="true">01</span><h3>Add your pages</h3><p>Enter one or several public pages that you are authorised to test.</p></li>
+          <li><span aria-hidden="true">02</span><h3>Choose where it runs</h3><p>Create a repository from the template or add the prepared workflow to one you already use.</p></li>
+          <li><span aria-hidden="true">03</span><h3>Run and review</h3><p>Start the Action and download one combined evidence pack for every page.</p></li>
+        </ol>
+      </section>
+
+      <section class="section coverage" id="coverage">
+        <div class="section-heading">
+          <p class="eyebrow"><span aria-hidden="true"></span> Honest by design</p>
+          <h2>All 55 WCAG 2.2 Level A and AA criteria are accounted for.</h2>
+          <p>Every report pairs automated evidence with one criterion-specific human procedure and an evidence prompt. Untested or inconclusive criteria stay visible and never become automatic passes.</p>
+        </div>
+        <div class="coverage-grid">
+          <article><span class="feature-icon" aria-hidden="true">⌁</span><h3>Evidence-led browser checks</h3><p>Semantics, accessible names, contrast signals, structure, component states, links, independent 200% text resize and 320px reflow, plus configurable keyboard, form, focus, and live-region journeys.</p></article>
+          <article><span class="feature-icon" aria-hidden="true">▦</span><h3>Review-ready outputs</h3><p>Structured findings, screenshots, an accessible HTML report, and a native Excel workbook stay together.</p></article>
+          <article><span class="feature-icon" aria-hidden="true">◎</span><h3>Human decisions remain explicit</h3><p>No automated tool can certify WCAG conformance. Screen-reader experience, meaning, usability, and exceptions still require qualified review.</p></article>
+        </div>
+      </section>
+
+      <section class="cta-section">
+        <div><p class="eyebrow"><span aria-hidden="true"></span> Built in public</p><h2>Inspect it. Improve it. Use it.</h2><p>The Action and its test methodology are open source under the MIT licence.</p></div>
+        <a class="secondary-button" href="https://github.com/CarlasHub/accessibility-audit-plugin">Explore the GitHub project <span aria-hidden="true">→</span></a>
+      </section>
+    </main>
+
+    <dialog class="repository-dialog" id="repository-dialog" aria-labelledby="repository-dialog-title" aria-describedby="repository-dialog-description">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow"><span aria-hidden="true"></span> Your GitHub account</p>
+          <h2 id="repository-dialog-title">Choose a repository</h2>
+        </div>
+        <button class="dialog-close" id="close-repository-dialog" type="button" aria-label="Close repository chooser">×</button>
+      </div>
+      <p id="repository-dialog-description">Only repositories you selected when installing the CarlasHub GitHub App are shown.</p>
+      <label for="repository-search">Filter repositories</label>
+      <input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or name" />
+      <p id="repository-picker-status" class="dialog-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      <div class="repository-options" id="repository-options" aria-label="Available repositories"></div>
+      <div class="repository-access-help" id="repository-access-help" hidden>
+        <p>No writable repositories are available yet. GitHub lets you grant access to selected repositories only.</p>
+        <a class="primary-button" id="install-github-app" href="https://github.com/">Choose repository access on GitHub <span aria-hidden="true">→</span></a>
+      </div>
+    </dialog>
+
+    <footer>
+      <div class="footer-copy">
+        <p>Built by <a href="https://github.com/CarlasHub">CarlasHub</a> for more trustworthy accessibility work.</p>
+        <p><a href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/SECURITY.md">Security</a> · <a href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/TERMS.md">Responsible use</a></p>
+      </div>
+      <nav class="social-links" aria-label="Find Carla online">
+        <a class="social-link" href="https://github.com/CarlasHub" aria-label="Carla's Hub on GitHub">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 .7a11.5 11.5 0 0 0-3.64 22.4c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.28-1.7-1.28-1.7-1.05-.72.08-.71.08-.71 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.57-.3-5.27-1.29-5.27-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18a10.93 10.93 0 0 1 5.76 0c2.19-1.49 3.15-1.18 3.15-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.71 5.39-5.29 5.68.42.36.79 1.06.79 2.14v3.18c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" />
+          </svg>
+        </a>
+        <a class="social-link" href="https://uk.linkedin.com/in/carla-goncalves-9a01a5164" aria-label="Carla Goncalves on LinkedIn">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M20.45 20.45h-3.56v-5.57c0-1.33-.03-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.94v5.67H9.34V8.99h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.29ZM5.32 7.42a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12Zm1.78 13.03H3.54V8.99H7.1v11.46Z" />
+          </svg>
+        </a>
+        <a class="social-link" href="https://carlashub.com/" aria-label="Visit the Carla's Hub website">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <circle cx="12" cy="12" r="9.25" />
+            <path d="M2.75 12h18.5M12 2.75c2.35 2.53 3.62 5.62 3.62 9.25S14.35 18.72 12 21.25C9.65 18.72 8.38 15.63 8.38 12S9.65 5.28 12 2.75Z" />
+          </svg>
+        </a>
+      </nav>
+    </footer>
+
+    <script src="./config.js"></script>
+  </body>
+</html>

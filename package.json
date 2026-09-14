@@ -1,6 +1,6 @@
 {
   "name": "accessibility-audit-plugin",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "marketplacePackagerVersion": "10.9.4",
   "private": true,
   "description": "Evidence-backed accessibility pre-audit for GitHub Actions and AI coding assistants, with review-ready HTML, Excel, JSON, and screenshot evidence.",

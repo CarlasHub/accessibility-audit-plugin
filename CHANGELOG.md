@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.2 - 2026-09-14
+
+- Published the compiled landing-page snapshot on public `main` as well as the `gh-pages` branch while keeping the editable site source private.
+- Added stable, release-hosted Claude Desktop ZIP and checksum filenames so the landing page always downloads the current validated package.
+- Regenerated the public Claude and GitHub Copilot marketplace payloads from the same release source.
+
 ## 1.8.1 - 2026-09-14
 
 - Replaced inconsistent repository, Action, plugin, Marketplace, skill, command, and MCP metadata with one accurate product identity: an evidence-backed accessibility pre-audit.
