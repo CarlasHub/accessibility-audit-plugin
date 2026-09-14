@@ -61,14 +61,9 @@
     "audit.config.example.json"
   ],
   "scripts": {
-    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/verify-site-neutrality.mjs --require-dist && npm run site:build",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/verify-site-neutrality.mjs --require-dist",
     "build:action": "npm run build && node scripts/clean-action-dist.mjs && ncc build dist/action-entry.js -o action/dist --no-source-map-register -e axe-core -e playwright -e playwright-core && node scripts/finalize-action-dist.mjs",
     "build:marketplace": "npm run build && node scripts/build-marketplace-payload.mjs",
-    "site:dev": "vite site --host 127.0.0.1",
-    "site:build": "vite build --config site/vite.config.ts",
-    "site:preview": "vite preview --config site/vite.config.ts --host 127.0.0.1",
-    "connector:dev": "wrangler dev --config connector/wrangler.jsonc",
-    "connector:deploy": "wrangler deploy --config connector/wrangler.jsonc",
     "package:claude-desktop": "npm run build:marketplace && node scripts/package-claude-desktop.mjs",
     "version:sync": "node scripts/sync-version.mjs",
     "version:check": "node scripts/sync-version.mjs --check",
@@ -134,9 +129,7 @@
     "tsx": "4.23.13",
     "typescript": "5.9.3",
     "typescript-eslint": "8.69.0",
-    "vite": "6.4.3",
-    "vitest": "4.1.11",
-    "wrangler": "4.131.1"
+    "vitest": "4.1.11"
   },
   "license": "MIT"
 }
