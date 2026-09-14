@@ -14,8 +14,8 @@
     <meta name="twitter:card" content="summary_large_image" />
     <title>CarlasHub Accessibility Audit</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2315151a'/%3E%3Cpath d='M18 32l9 9 19-20' fill='none' stroke='%2393f6b2' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-    <script type="module" crossorigin src="./assets/index-f8fdv4V2.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-BMtZqcss.css">
+    <script type="module" crossorigin src="./assets/index-DDWBvYLu.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BIoRjB-p.css">
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to main content</a>
@@ -69,7 +69,7 @@
             <div class="quest" aria-labelledby="quest-label">
               <div class="quest-heading">
                 <p id="quest-label">Setup progress</p>
-                <output id="quest-status" aria-live="polite">Stage 1 of 4: add pages</output>
+                <output id="quest-status" aria-live="polite" aria-atomic="true">Stage 1 of 4: add pages</output>
               </div>
               <div class="pixel-progress" id="setup-progress" role="progressbar" aria-labelledby="quest-label" aria-valuemin="1" aria-valuemax="4" aria-valuenow="1" aria-valuetext="Stage 1 of 4: add pages">
                 <span class="pixel-block is-active"></span><span class="pixel-block is-active"></span><span class="pixel-block"></span><span class="pixel-block"></span><span class="pixel-block"></span><span class="pixel-block"></span><span class="pixel-block"></span><span class="pixel-block"></span>
@@ -92,7 +92,7 @@
                 </div>
                 <div class="list-controls">
                   <button class="add-url" id="add-url" type="button"><span aria-hidden="true">＋</span> Add another page</button>
-                  <span id="url-count" aria-live="polite">1 of 20 pages</span>
+                  <span id="url-count">1 of 20 pages</span>
                 </div>
                 <p id="url-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
               </fieldset>
@@ -126,6 +126,7 @@
               </div>
               <p class="launch-status" id="launch-status" role="status" aria-live="polite" aria-atomic="true"></p>
               <p class="field-error launch-error" id="launch-error" role="alert" aria-atomic="true" tabindex="-1" hidden></p>
+              <p id="interaction-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
             </form>
 
             <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>The optional connector only authorises the repository change and starts the workflow. It never runs audits or stores reports. All Actions usage, audit history, and reports belong to you—not CarlasHub. Manual setup remains available.</span></p>
