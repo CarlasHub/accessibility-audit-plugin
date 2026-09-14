@@ -54,6 +54,12 @@ if (CHECK_ONLY) {
     mismatches.push('src/version.ts: does not match package.json');
   }
 
+  const citation = await readFile('CITATION.cff', 'utf8');
+  const citationVersion = citation.match(/^version:\s*["']?([^"'\s]+)["']?\s*$/m)?.[1];
+  if (citationVersion !== version) {
+    mismatches.push(`CITATION.cff: ${String(citationVersion)}`);
+  }
+
   for (const path of generatedTargets) {
     const manifest = await readJson(path);
     if (manifest.version !== version) mismatches.push(`${path}: ${String(manifest.version)}`);
@@ -93,4 +99,9 @@ const expectedVersionModule = `export const PLUGIN_VERSION = '${version}';\n`;
 if (await readFile('src/version.ts', 'utf8') !== expectedVersionModule) {
   await writeFile('src/version.ts', expectedVersionModule);
 }
+
+const citation = await readFile('CITATION.cff', 'utf8');
+if (!/^version:\s*.+$/m.test(citation)) throw new Error('CITATION.cff has no version field.');
+const nextCitation = citation.replace(/^version:\s*.+$/m, `version: ${version}`);
+if (nextCitation !== citation) await writeFile('CITATION.cff', nextCitation);
 process.stdout.write(`Synchronised source manifests to ${version}.\n`);

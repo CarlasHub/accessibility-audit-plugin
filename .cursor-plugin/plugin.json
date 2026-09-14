@@ -1,7 +1,7 @@
 {
   "name": "accessibility-audit",
-  "version": "1.8.0",
-  "description": "Isolated evidence-backed WCAG 2.2 auditing with desktop, mobile, reflow, link and tab checks, element screenshots, and validated Excel reporting.",
+  "version": "1.8.1",
+  "description": "Run an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA with browser, keyboard, reflow, and interaction evidence.",
   "author": {
     "name": "CarlasHub",
     "url": "https://github.com/CarlasHub"
@@ -10,9 +10,12 @@
   "repository": "https://github.com/CarlasHub/accessibility-audit-plugin",
   "license": "MIT",
   "keywords": [
-    "accessibility",
-    "wcag",
-    "axe",
+    "accessibility-audit",
+    "accessibility-testing",
+    "a11y",
+    "wcag-22",
+    "web-accessibility",
+    "axe-core",
     "playwright",
     "testing"
   ],

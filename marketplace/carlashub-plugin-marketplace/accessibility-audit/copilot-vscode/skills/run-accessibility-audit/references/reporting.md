@@ -1,6 +1,6 @@
 # Reporting reference
 
-- Preserve the six bundled sheets in order: `Audit Summary`, `Findings`, `Page Inventory`, `Evidence`, `Manual Checks`, and `WCAG 2.2 Reference`.
+- Preserve the seven bundled sheets in order: `Audit Summary`, `Findings`, `Page Inventory`, `Evidence`, `Manual Checks`, `WCAG 2.2 Reference`, and `WCAG Criteria`.
 - Populate the structured fields supplied by the template; do not add or rename columns or worksheets during a run.
 - Keep findings per page unless a reusable component implementation and root cause both match. List each affected URL and keep different implementations, behaviours, criteria, colour treatments, impacts, or remedies separate.
 - Use `confirmed`, `review`, `blocker`, and `manual` as distinct evidence types. Every generated item starts with workflow status `Open`; status is not evidence confidence.

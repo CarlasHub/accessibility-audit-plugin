@@ -122,7 +122,7 @@ export function createAccessibilityAuditMcpServer(
   server.registerTool(
     'run_accessibility_audit',
     {
-      description: 'Professional one-shot entry point. Confirm pages and auditor, run headless desktop/mobile/reflow checks with progress, validate same-origin links, capture element evidence, and generate complete or partial HTML, Excel, and JSON reports. Client cancellation preserves completed output.',
+      description: 'Run one evidence-backed accessibility pre-audit after scope confirmation. Collect desktop, mobile, reflow, link, keyboard, interaction, and screenshot evidence; export complete or partial HTML, Excel, and JSON reports; and preserve completed output after cancellation.',
       inputSchema: {
         targets: z.array(z.string().min(1)).min(1).describe('Authorized HTTP(S) URLs and/or one XLSX, CSV, TXT, or JSON page-list path.'),
         ...commonInput,
@@ -214,8 +214,8 @@ export function createAccessibilityAuditMcpServer(
   server.registerPrompt(
     'run-accessibility-audit',
     {
-      title: 'Run full accessibility audit',
-      description: 'Confirm and run a generic WCAG 2.2 A/AA page audit with one professional tool call.',
+      title: 'Run accessibility pre-audit',
+      description: 'Confirm scope and run an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA with one tool call.',
       argsSchema: {
         targets: z.string().optional().describe('URLs or a project-relative page-list path.'),
         auditor: z.string().min(1).default(DEFAULT_AUDITOR),
@@ -257,7 +257,7 @@ export function createAccessibilityAuditMcpServer(
   server.registerTool(
     'audit_from_file',
     {
-      description: 'Read URLs from an XLSX page list or text/CSV/JSON file, then run the full headless desktop/mobile accessibility audit and generate accessible HTML, JSON evidence, and the standard Excel report.',
+      description: 'Read URLs from an XLSX page list or text/CSV/JSON file, then run an evidence-backed accessibility pre-audit and export accessible HTML, Excel, JSON, screenshots, and a portable archive.',
       inputSchema: { inputPath: z.string().min(1), ...commonInput }
     },
     async ({ inputPath, auditor, landingPageUrl, outputDir, allowedHosts, stagingOnly, channel, headless, autoInstallBrowser, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, templatePath, reportName }, extra) => {
@@ -275,7 +275,7 @@ export function createAccessibilityAuditMcpServer(
   server.registerTool(
     'validate_accessibility_report',
     {
-      description: 'Verify the exact five-sheet template shape and tab colours, 32-column report defaults, remediation, column-A page and image lists, relative screenshot links, landing-page QA URL, auditor, and absence of placeholders or obsolete screen-reader sheets.',
+      description: 'Verify the seven-sheet CarlasHub workbook structure, 25-column Findings schema, tab colours, formulas, validation rules, remediation fields, scope lists, relative screenshot links, landing-page QA URL, auditor, and absence of placeholders or obsolete screen-reader sheets.',
       inputSchema: { workbookPath: z.string().min(1) }
     },
     async ({ workbookPath }) => {

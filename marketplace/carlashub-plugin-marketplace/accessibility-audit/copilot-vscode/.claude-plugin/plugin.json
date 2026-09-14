@@ -1,7 +1,7 @@
 {
   "name": "accessibility-audit-vscode",
-  "version": "1.8.0",
-  "description": "Evidence-backed WCAG 2.2 A/AA page audits with headless desktop, mobile, reflow, keyboard, link, component evidence, and validated Excel reporting.",
+  "version": "1.8.1",
+  "description": "Evidence-backed accessibility pre-audit for WCAG 2.2 A/AA with browser, keyboard, reflow, interaction, and review-ready report evidence.",
   "author": {
     "name": "CarlasHub"
   },

@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "CarlasHub Accessibility Audit"
+type: software
+authors:
+  - name: CarlasHub
+version: 1.8.1
+date-released: 2026-09-14
+repository-code: "https://github.com/CarlasHub/accessibility-audit-plugin"
+url: "https://carlashub.github.io/accessibility-audit-plugin/"
+abstract: >-
+  An evidence-backed accessibility pre-audit for GitHub Actions and supported
+  AI coding assistants, producing review-ready HTML, Excel, JSON, screenshot,
+  and portable evidence for WCAG 2.2 A/AA assessment.
+keywords:
+  - accessibility
+  - WCAG 2.2
+  - web accessibility
+  - GitHub Actions
+  - Playwright
+  - axe-core
+license: MIT

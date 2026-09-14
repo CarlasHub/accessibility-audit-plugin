@@ -1,6 +1,6 @@
 ---
 name: accessibility-audit
-description: Run the isolated headless desktop, mobile, reflow, link, keyboard, and screenshot audit and generate the validated Excel report.
+description: Run an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA and export review-ready HTML, Excel, JSON, screenshots, and a portable archive.
 ---
 
 Call the installed MCP tool `run_accessibility_audit` once with the URL(s) or page-list path supplied after this command. The tool owns testing, evidence capture, report generation, graceful cancellation, and workbook validation.
@@ -13,6 +13,6 @@ Keep the target repository read-only. Do not install dependencies in or modify t
 
 Use one row for the same reusable component implementation and root cause across all affected pages, grouping repeated DOM instances within that component; keep page-specific implementations, colour treatments, behaviours, criteria, or remediation requirements separate. Do not report missing `aria-controls` alone as a WCAG failure or standalone review for ordinary disclosures/accordions, and generic disclosures/accordions do not require Escape to close. List every affected page in Affected URL(s). Preserve confirmed, review, blocker, and manual evidence types. Preserve the JSON coverage matrix and state plainly that incomplete axe results, incomplete or ambiguous interactions, unresolved focus-indicator samples, truncated link checks, sampled keyboard traversal, and untested states remain JSON/inconclusive coverage rather than workbook findings or passes. Report the exact workbook, JSON, and ZIP paths, page counts, finding and evidence counts, and validation result.
 
-Preserve the six bundled CarlasHub WCAG workbook sheets, order, fields, formulas, validations, and colour scheme. Do not add or rename workbook fields, columns, or worksheets during a run. Page Inventory includes requested scope and audit state; Evidence stores linked relative screenshot references with finding and test context.
+Preserve the seven bundled CarlasHub WCAG workbook sheets, order, fields, formulas, validations, and colour scheme. Do not add or rename workbook fields, columns, or worksheets during a run. Page Inventory includes requested scope and audit state; Evidence stores linked relative screenshot references with finding and test context.
 
 Explain the result in plain language. State that the plugin tests only supplied URLs, an empty automated result is not proof of WCAG conformance, review items need the documented Test method, blockers were not tested, and guided manual checks remain outstanding. Tell the user to extract the ZIP and keep the workbook with its screenshot tree so evidence links work.

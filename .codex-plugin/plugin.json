@@ -1,25 +1,25 @@
 {
   "name": "accessibility-audit",
-  "version": "1.8.0",
-  "description": "Run evidence-backed WCAG 2.2 A/AA audits at desktop, mobile, and reflow viewports and export a validated Excel report.",
+  "version": "1.8.1",
+  "description": "Run an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA with browser, keyboard, reflow, and interaction evidence.",
   "author": {
     "name": "CarlasHub"
   },
   "skills": "./skills/",
   "interface": {
-    "displayName": "Accessibility Audit",
-    "shortDescription": "Audit pages and generate an evidence-backed Excel report.",
-    "longDescription": "Runs headless Playwright and axe checks at desktop, mobile, and reflow viewports, validates links and tab components conservatively, links focused element-level evidence without bloating the workbook, reports progress, writes validated partial output after graceful cancellation, and generates the CarlasHub WCAG 2.2 audit workbook.",
+    "displayName": "CarlasHub Accessibility Audit",
+    "shortDescription": "Evidence-backed accessibility pre-audit with review-ready reports.",
+    "longDescription": "Runs a site-independent evidence-backed accessibility pre-audit for WCAG 2.2 A/AA. It combines axe-core with Playwright checks for desktop, mobile, 320px reflow, links, keyboard paths, and configured journeys; separates confirmed failures, review candidates, coverage blockers, and manual checks; and exports accessible HTML, validated Excel, structured JSON, screenshots, and a portable ZIP. It never claims automated conformance.",
     "developerName": "CarlasHub",
     "category": "Developer Tools",
     "capabilities": [
-      "MCP tools",
-      "WCAG 2.2 audit skill",
-      "Excel reporting",
-      "Element screenshot evidence"
+      "Browser and axe-core checks",
+      "Keyboard, reflow, and journey evidence",
+      "HTML, Excel, JSON, and screenshots",
+      "55-criterion human-review ledger"
     ],
     "defaultPrompt": [
-      "Audit a URL and generate the validated Excel report.",
+      "Audit a URL and generate review-ready reports and evidence.",
       "Audit every page in a supplied page-list workbook.",
       "Validate an existing accessibility audit workbook."
     ]

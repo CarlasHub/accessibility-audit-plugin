@@ -1,6 +1,6 @@
 {
   "name": "accessibility-audit",
-  "description": "Evidence-backed WCAG 2.2 A/AA page audits with validated Excel reporting.",
+  "description": "Evidence-backed accessibility pre-audit for WCAG 2.2 A/AA with review-ready reports and evidence.",
   "source": {
     "source": "git-subdir",
     "url": "https://github.com/CarlasHub/accessibility-audit-plugin.git",

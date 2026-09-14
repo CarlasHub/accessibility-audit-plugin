@@ -4,18 +4,19 @@
     "name": "CarlasHub"
   },
   "metadata": {
-    "description": "CarlasHub distribution catalog for the Accessibility Audit plugin."
+    "description": "CarlasHub catalog for the evidence-backed accessibility pre-audit plugin."
   },
   "plugins": [
     {
       "name": "accessibility-audit",
       "source": "./",
-      "description": "Evidence-backed WCAG 2.2 A/AA page audits with validated Excel and JSON evidence.",
-      "version": "1.8.0",
+      "description": "Evidence-backed accessibility pre-audit for WCAG 2.2 A/AA with review-ready reports and evidence.",
+      "version": "1.8.1",
       "category": "development",
       "tags": [
-        "accessibility",
-        "wcag",
+        "accessibility-audit",
+        "a11y",
+        "wcag-22",
         "testing"
       ]
     }

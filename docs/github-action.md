@@ -1,6 +1,6 @@
 # GitHub Action usage
 
-`CarlasHub/accessibility-audit-plugin` is a free JavaScript Action for collecting structured WCAG 2.2 accessibility evidence in CI. It runs the same site-independent audit engine as the editor plugins and produces a polished self-contained HTML report, a validated Excel workbook, JSON evidence, screenshots, and a portable ZIP.
+`CarlasHub/accessibility-audit-plugin` is a free JavaScript Action that runs an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA in CI. It uses the same site-independent engine as the editor plugins and exports an accessible self-contained HTML report, a validated Excel workbook, structured JSON, screenshots, and a portable ZIP.
 
 It is an automated testing aid, not a WCAG certification. WCAG 2.2 Level AA is the conformance target; optional AAA checks are advisory. Complete the report's human assessment before making a conformance claim.
 

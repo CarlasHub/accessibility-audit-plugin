@@ -1,6 +1,6 @@
-# Accessibility Audit for GitHub Copilot in VS Code
+# CarlasHub Accessibility Audit for GitHub Copilot in VS Code
 
-Accessibility Audit runs evidence-backed WCAG 2.2 A/AA checks against explicit authorized page URLs and writes a validated Excel report, JSON evidence, linked component screenshots, and a portable ZIP. The engine is site-independent: it contains no customer-specific hostnames, page assumptions, selectors, rules, or defaults. It does not crawl a site or certify conformance.
+CarlasHub Accessibility Audit is an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA. It tests explicit authorized page URLs and exports accessible HTML, a validated Excel workbook, structured JSON, linked screenshots, and a portable ZIP. The engine is site-independent: it contains no customer-specific hostnames, page assumptions, selectors, rules, or defaults. It does not crawl a site or certify conformance.
 
 ## Use
 
@@ -18,6 +18,6 @@ Node.js 22 or later and npm must be available to the client. The first activatio
 
 The default output is `Accessibility Audit Results` under the user's home directory. Extract the generated ZIP and keep `Accessibility_Audit_Report.xlsx` beside the `screenshots` tree so the workbook's relative evidence links work. Treat `confirmed`, `review`, `blocker`, and `manual` evidence categories separately; an empty automated result is not proof of accessibility. Contextual screenshots may support confirmed, blocker, and review evidence when capture succeeds.
 
-The CarlasHub workbook has six purpose-built sheets: `Audit Summary`, `Findings`, `Page Inventory`, `Evidence`, `Manual Checks`, and `WCAG 2.2 Reference`. Findings include criterion and level lookup, affected scope, user impact, reproducible results, remediation, ownership, effort, and linked evidence. Images remain external so the workbook stays portable and compact.
+The CarlasHub workbook has seven purpose-built sheets: `Audit Summary`, `Findings`, `Page Inventory`, `Evidence`, `Manual Checks`, `WCAG 2.2 Reference`, and `WCAG Criteria`. Findings include criterion and level lookup, affected scope, user impact, reproducible results, remediation, ownership, effort, and linked evidence. Images remain external so the workbook stays portable and compact.
 
 This directory is generated from the Accessibility Audit source repository. Do not edit it directly.

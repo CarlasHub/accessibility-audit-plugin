@@ -40,7 +40,7 @@ function pluginManifest(name) {
   return {
     name,
     version,
-    description: 'Evidence-backed WCAG 2.2 A/AA page audits with headless desktop, mobile, reflow, keyboard, link, component evidence, and validated Excel reporting.',
+    description: 'Evidence-backed accessibility pre-audit for WCAG 2.2 A/AA with browser, keyboard, reflow, interaction, and review-ready report evidence.',
     author: { name: 'CarlasHub' },
     homepage: 'https://github.com/CarlasHub/accessibility-audit-plugin',
     repository: 'https://github.com/CarlasHub/accessibility-audit-plugin',
@@ -96,7 +96,7 @@ function payloadReadme(harness) {
     : harness === 'copilot-cli'
       ? 'GitHub Copilot CLI'
       : 'GitHub Copilot in VS Code';
-  return `# Accessibility Audit for ${client}\n\nAccessibility Audit runs evidence-backed WCAG 2.2 A/AA checks against explicit authorized page URLs and writes a validated Excel report, JSON evidence, linked component screenshots, and a portable ZIP. The engine is site-independent: it contains no customer-specific hostnames, page assumptions, selectors, rules, or defaults. It does not crawl a site or certify conformance.\n\n## Use\n\nAsk ${client} to use the Accessibility Audit plugin with one URL, several URLs, or one XLSX/CSV/TXT/JSON page-list file. The plugin confirms the exact scope, landing-page QA URL, and auditor before starting. The editable auditor default is \`Automated\`.\n\nThe audit runs headlessly at desktop, mobile, and 320px reflow sizes. It reports progress and supports graceful cancellation with partial output. A full-site audit requires a complete canonical URL list. Screen-reader, physical-device, content-meaning, and other judgment-based procedures remain guided manual checks.\n\nIf consent or another modal surface cannot be dismissed, the plugin records an interaction-coverage blocker and does not claim that underlying page interactions ran. JSON preserves axe incomplete/pass metadata, keyboard and link truncation, and a page/viewport/test-area coverage matrix. Incomplete, sampled, blocked, manual, and unperformed checks are not passes.\n\n## Isolation and first activation\n\nNode.js 22 or later and npm must be available to the client. The first activation verifies the bundled runtime checksum and installs it into client-owned plugin data; it never modifies the project open in the editor. If no supported Chromium browser exists, the first confirmed audit installs Playwright Chromium once into the same private plugin storage unless automatic browser installation is disabled.\n\n## Output\n\nThe default output is \`Accessibility Audit Results\` under the user's home directory. Extract the generated ZIP and keep \`Accessibility_Audit_Report.xlsx\` beside the \`screenshots\` tree so the workbook's relative evidence links work. Treat \`confirmed\`, \`review\`, \`blocker\`, and \`manual\` evidence categories separately; an empty automated result is not proof of accessibility. Contextual screenshots may support confirmed, blocker, and review evidence when capture succeeds.\n\nThe CarlasHub workbook has six purpose-built sheets: \`Audit Summary\`, \`Findings\`, \`Page Inventory\`, \`Evidence\`, \`Manual Checks\`, and \`WCAG 2.2 Reference\`. Findings include criterion and level lookup, affected scope, user impact, reproducible results, remediation, ownership, effort, and linked evidence. Images remain external so the workbook stays portable and compact.\n\nThis directory is generated from the Accessibility Audit source repository. Do not edit it directly.\n`;
+  return `# CarlasHub Accessibility Audit for ${client}\n\nCarlasHub Accessibility Audit is an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA. It tests explicit authorized page URLs and exports accessible HTML, a validated Excel workbook, structured JSON, linked screenshots, and a portable ZIP. The engine is site-independent: it contains no customer-specific hostnames, page assumptions, selectors, rules, or defaults. It does not crawl a site or certify conformance.\n\n## Use\n\nAsk ${client} to use the Accessibility Audit plugin with one URL, several URLs, or one XLSX/CSV/TXT/JSON page-list file. The plugin confirms the exact scope, landing-page QA URL, and auditor before starting. The editable auditor default is \`Automated\`.\n\nThe audit runs headlessly at desktop, mobile, and 320px reflow sizes. It reports progress and supports graceful cancellation with partial output. A full-site audit requires a complete canonical URL list. Screen-reader, physical-device, content-meaning, and other judgment-based procedures remain guided manual checks.\n\nIf consent or another modal surface cannot be dismissed, the plugin records an interaction-coverage blocker and does not claim that underlying page interactions ran. JSON preserves axe incomplete/pass metadata, keyboard and link truncation, and a page/viewport/test-area coverage matrix. Incomplete, sampled, blocked, manual, and unperformed checks are not passes.\n\n## Isolation and first activation\n\nNode.js 22 or later and npm must be available to the client. The first activation verifies the bundled runtime checksum and installs it into client-owned plugin data; it never modifies the project open in the editor. If no supported Chromium browser exists, the first confirmed audit installs Playwright Chromium once into the same private plugin storage unless automatic browser installation is disabled.\n\n## Output\n\nThe default output is \`Accessibility Audit Results\` under the user's home directory. Extract the generated ZIP and keep \`Accessibility_Audit_Report.xlsx\` beside the \`screenshots\` tree so the workbook's relative evidence links work. Treat \`confirmed\`, \`review\`, \`blocker\`, and \`manual\` evidence categories separately; an empty automated result is not proof of accessibility. Contextual screenshots may support confirmed, blocker, and review evidence when capture succeeds.\n\nThe CarlasHub workbook has seven purpose-built sheets: \`Audit Summary\`, \`Findings\`, \`Page Inventory\`, \`Evidence\`, \`Manual Checks\`, \`WCAG 2.2 Reference\`, and \`WCAG Criteria\`. Findings include criterion and level lookup, affected scope, user impact, reproducible results, remediation, ownership, effort, and linked evidence. Images remain external so the workbook stays portable and compact.\n\nThis directory is generated from the Accessibility Audit source repository. Do not edit it directly.\n`;
 }
 
 function runtimeHookExpression(filename) {
@@ -265,7 +265,7 @@ try {
   await mkdir(catalogRoot, { recursive: true });
   await writeFile(join(catalogRoot, 'claude.json'), json({
     name: 'accessibility-audit',
-    description: 'Evidence-backed WCAG 2.2 A/AA page audits with validated Excel reporting.',
+    description: 'Evidence-backed accessibility pre-audit for WCAG 2.2 A/AA with review-ready reports and evidence.',
     source: {
       source: 'git-subdir',
       url: 'https://github.com/CarlasHub/accessibility-audit-plugin.git',
@@ -276,13 +276,13 @@ try {
   await writeFile(join(catalogRoot, 'copilot.json'), json([
     {
       name: 'accessibility-audit',
-      description: 'Evidence-backed WCAG 2.2 A/AA page audits for Copilot CLI.',
+      description: 'Evidence-backed accessibility pre-audit for WCAG 2.2 A/AA in Copilot CLI.',
       version,
       source: 'accessibility-audit/copilot-cli'
     },
     {
       name: 'accessibility-audit-vscode',
-      description: 'Evidence-backed WCAG 2.2 A/AA page audits for Copilot in VS Code.',
+      description: 'Evidence-backed accessibility pre-audit for WCAG 2.2 A/AA in Copilot for VS Code.',
       version,
       source: 'accessibility-audit/copilot-vscode'
     }

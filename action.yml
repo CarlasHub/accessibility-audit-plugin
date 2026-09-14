@@ -1,5 +1,5 @@
-name: CarlasHub WCAG Accessibility Audit
-description: Audit web pages against WCAG 2.2 and publish accessible HTML, Excel, JSON, screenshot, and pull-request evidence.
+name: CarlasHub Accessibility Audit
+description: Run an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA and export HTML, Excel, JSON, and screenshot evidence.
 author: CarlasHub
 
 branding:

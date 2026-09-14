@@ -1,6 +1,6 @@
 ---
 name: run-accessibility-audit
-description: Run a headless evidence-backed WCAG 2.2 A/AA audit of explicit URLs or an XLSX/CSV/TXT/JSON page list and generate a validated Excel report with element screenshot evidence. Do not use to claim complete conformance from automation alone.
+description: Run a site-independent evidence-backed accessibility pre-audit for explicit WCAG 2.2 A/AA page scope, preserve complete or partial evidence, and export review-ready HTML, Excel, JSON, screenshots, and a portable archive.
 ---
 
 # Run Accessibility Audit

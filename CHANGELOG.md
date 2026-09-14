@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.8.1 - 2026-09-14
+
+- Replaced inconsistent repository, Action, plugin, Marketplace, skill, command, and MCP metadata with one accurate product identity: an evidence-backed accessibility pre-audit.
+- Corrected stale workbook claims to the current seven-sheet, 25-column report structure and added automated metadata drift checks to CI.
+- Added citation metadata and improved GitHub discovery metadata, release links, and Marketplace positioning without overstating automated WCAG conformance.
+
+## 1.8.0 - 2026-09-14
+
+- Added evidence provenance and canonical-result integrity validation, failure isolation, structured keyboard and task journeys, and deterministic finding consolidation.
+- Derived HTML, workbook, CSV, JSON, and SARIF output from one validated canonical result with complete accountability for all 55 WCAG 2.2 Level A and AA criteria.
+- Strengthened report presentation, severity treatment, release tests, and the two-run live BuggyLand regression while retaining the human-review boundary for conformance.
+
 ## 1.7.0 - 2026-09-12
 
 - Added the repository's normative Audit Quality Master Contract, including the complete WCAG 2.2 A/AA accountability model, release gates, evidence requirements, and honest conformance boundary.

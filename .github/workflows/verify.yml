@@ -26,6 +26,8 @@ jobs:
       - run: npm ci
       - name: Verify release version parity
         run: npm run version:check
+      - name: Verify public metadata consistency
+        run: npm run validate:metadata
       - run: npm run audit:dependencies
       - run: npm run lint
       - run: npm run typecheck
