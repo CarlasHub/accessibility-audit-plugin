@@ -2,7 +2,7 @@
   "version": "1.8.0",
   "packageName": "accessibility-audit-plugin",
   "tarball": "accessibility-audit-plugin-1.8.0.tgz",
-  "sha256": "8cd064a571a4f8e7a337eef543bf3201bb530ba479273fac47959de89eebb2a4",
+  "sha256": "f19c0a731ab7c7b93bcba4f0e61a674352ffd679c4a3334b00ebd3554807effb",
   "entrypoint": "dist/mcp.js",
   "template": "assets/accessibility-report-template.xlsx",
   "overrides": {
