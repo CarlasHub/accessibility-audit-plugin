@@ -2,13 +2,13 @@
 
 [![Verify plugin](https://github.com/CarlasHub/accessibility-audit-plugin/actions/workflows/verify.yml/badge.svg)](https://github.com/CarlasHub/accessibility-audit-plugin/actions/workflows/verify.yml)
 [![Latest release](https://img.shields.io/github/v/release/CarlasHub/accessibility-audit-plugin?display_name=tag&sort=semver)](https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest)
-[![GitHub Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-Use%20the%20Action-1f6feb?logo=github)](https://github.com/marketplace/actions/carlashub-wcag-accessibility-audit)
+[![GitHub Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-Use%20the%20Action-1f6feb?logo=github)](https://github.com/marketplace/actions/carlashub-accessibility-audit)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933.svg)](package.json)
 
 Find accessibility barriers before they reach users. CarlasHub Accessibility Audit is an **evidence-backed accessibility pre-audit** for GitHub Actions and supported AI coding assistants. It separates confirmed failures from review candidates and coverage blockers, accounts for all 55 WCAG 2.2 Level A and AA criteria, and exports accessible HTML, Excel, JSON, screenshots, and a portable evidence archive.
 
-Use the free [GitHub Marketplace Action](https://github.com/marketplace/actions/carlashub-wcag-accessibility-audit), or install the plugin for Codex, Claude Code, Claude Desktop, Cursor, GitHub Copilot CLI, or GitHub Copilot in VS Code.
+Use the free [GitHub Marketplace Action](https://github.com/marketplace/actions/carlashub-accessibility-audit), or install the plugin for Codex, Claude Code, Claude Desktop, Cursor, GitHub Copilot CLI, or GitHub Copilot in VS Code.
 
 Maintained by CarlasHub and released under the MIT License.
 
@@ -213,7 +213,7 @@ For complete platform-specific setup, activation, verification, updating, uninst
 
 ## Cursor installation
 
-For local testing on macOS or Linux, Cursor discovers plugins under its local plugin directory. Symlink the built repository and reload Cursor:
+Download and extract the ready-made [agent plugin archive](https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest/download/accessibility-audit-agent-plugin.tgz) in a permanent tools directory. For local installation on macOS or Linux, Cursor discovers plugins under its local plugin directory; point it at the extracted directory and reload Cursor:
 
 ```sh
 PLUGIN_DIR="$(pwd -P)"
@@ -223,19 +223,17 @@ ln -sfn "$PLUGIN_DIR" ~/.cursor/plugins/local/accessibility-audit
 
 Then run `Developer: Reload Window`, open **Customize**, and confirm that `accessibility-audit` exposes its command, skill, rule, and MCP server.
 
-On Windows PowerShell, clone directly into Cursor's local plugin directory:
+On Windows PowerShell, extract the ready-made archive directly into Cursor's local plugin directory:
 
 ```powershell
 $Destination = Join-Path $env:USERPROFILE ".cursor\plugins\local\accessibility-audit"
 New-Item -ItemType Directory -Force (Split-Path $Destination) | Out-Null
-git clone https://github.com/CarlasHub/accessibility-audit-plugin.git $Destination
-Set-Location $Destination
-npm ci
-npx playwright install chromium
-npm run build
+curl.exe -L -o accessibility-audit-agent-plugin.tgz https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest/download/accessibility-audit-agent-plugin.tgz
+New-Item -ItemType Directory -Force $Destination | Out-Null
+tar.exe -xzf accessibility-audit-agent-plugin.tgz -C $Destination --strip-components=1
 ```
 
-After an installation is updated, run `npm ci`, `npm run build`, and reload Cursor.
+After an installation is updated, replace the extracted directory and reload Cursor. Contributors using a source checkout must run `npm ci` and `npm run build` after updating.
 
 Cursor can also load the root `mcp.json` when the repository is configured as a plugin. The manifest is [.cursor-plugin/plugin.json](.cursor-plugin/plugin.json).
 
@@ -243,7 +241,7 @@ Cursor Marketplace submission requires a public Git repository. A private reposi
 
 ## Claude Code installation
 
-Start Claude Code in the unrelated project while loading the separate built checkout:
+Download and extract the ready-made [agent plugin archive](https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest/download/accessibility-audit-agent-plugin.tgz), then start Claude Code in the unrelated project while loading that separate plugin directory:
 
 ```sh
 cd /path/to/project-being-audited
@@ -279,10 +277,14 @@ Open a new conversation in the **Chat** tab, type `/`, select **Run Accessibilit
 
 The repository generates separate, marketplace-ready payloads for GitHub Copilot CLI and GitHub Copilot in VS Code. These payloads include compiled code, bundled production dependencies, skills, MCP configuration, and an isolated runtime launcher:
 
+- [Download the Copilot CLI package](https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest/download/accessibility-audit-copilot-cli.zip) for direct local CLI installation.
+- [Download the Copilot VS Code marketplace package](https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest/download/accessibility-audit-copilot-vscode.zip) for administrator-managed marketplace distribution. It is not a `.vsix` extension.
+
+Contributors can rebuild every release bundle locally:
+
 ```sh
 npm ci
-npm run build:marketplace
-npm run package:claude-desktop
+npm run package:release-bundles
 npm run validate:marketplace
 npm run test:marketplace
 ```
@@ -298,7 +300,7 @@ For team distribution, use the staged payload and catalog fragments documented i
 
 ## Codex installation
 
-The Codex manifest is [.codex-plugin/plugin.json](.codex-plugin/plugin.json), and the MCP server is declared in [.mcp.json](.mcp.json). Register the separate built checkout as a local marketplace, install it, and start a new session:
+Download and extract the ready-made [agent plugin archive](https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest/download/accessibility-audit-agent-plugin.tgz). Its Codex manifest is [.codex-plugin/plugin.json](.codex-plugin/plugin.json), and its MCP server is declared in [.mcp.json](.mcp.json). Register the separate extracted directory as a local marketplace, install it, and start a new session:
 
 ```sh
 codex plugin marketplace add /path/to/accessibility-audit
@@ -306,7 +308,7 @@ codex plugin add accessibility-audit@accessibility-audit-marketplace
 codex plugin list
 ```
 
-In Codex CLI, enter `/plugins` to open the plugin browser. See [Installation](docs/installation.md#3c-install-in-codex) for activation, updating, and troubleshooting.
+In Codex CLI, enter `/plugins` to open the plugin browser. See [Installation](docs/installation.md#3d-install-in-codex) for activation, updating, and troubleshooting.
 
 The Codex IDE extension does not currently support plugins. Use Codex CLI or another supported Codex/ChatGPT plugin surface. See the [official OpenAI plugin documentation](https://developers.openai.com/codex/plugins).
 

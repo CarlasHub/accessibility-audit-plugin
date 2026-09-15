@@ -74,6 +74,7 @@
     "build:action": "npm run build && node scripts/clean-action-dist.mjs && ncc build dist/action-entry.js -o action/dist --no-source-map-register -e axe-core -e playwright -e playwright-core && node scripts/finalize-action-dist.mjs",
     "build:marketplace": "npm run build && node scripts/build-marketplace-payload.mjs",
     "package:claude-desktop": "npm run build:marketplace && node scripts/package-claude-desktop.mjs",
+    "package:release-bundles": "npm run build:marketplace && node scripts/package-claude-desktop.mjs && node scripts/package-release-bundles.mjs",
     "version:sync": "node scripts/sync-version.mjs",
     "version:check": "node scripts/sync-version.mjs --check",
     "validate:metadata": "node scripts/validate-product-metadata.mjs",

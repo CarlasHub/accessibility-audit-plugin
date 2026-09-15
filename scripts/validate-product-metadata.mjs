@@ -4,7 +4,7 @@ const PRODUCT_NAME = 'CarlasHub Accessibility Audit';
 const PRODUCT_POSITION = 'evidence-backed accessibility pre-audit';
 const HOMEPAGE = 'https://carlashub.github.io/accessibility-audit-plugin/';
 const REPOSITORY = 'https://github.com/CarlasHub/accessibility-audit-plugin';
-const MARKETPLACE = 'https://github.com/marketplace/actions/carlashub-wcag-accessibility-audit';
+const MARKETPLACE = 'https://github.com/marketplace/actions/carlashub-accessibility-audit';
 
 const errors = [];
 
