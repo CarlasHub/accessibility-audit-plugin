@@ -16,6 +16,7 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2315151a'/%3E%3Cpath d='M18 32l9 9 19-20' fill='none' stroke='%2393f6b2' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
     <script type="module" crossorigin src="./assets/index-DPB0X9UT.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-BIoRjB-p.css">
+    <link rel="stylesheet" href="./assets/integrations.css?v=1.8.2">
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to main content</a>
@@ -179,9 +180,12 @@
 
         <div class="integration-grid">
           <article class="integration-card integration-card-featured">
-            <div class="integration-topline"><h3>GitHub Actions</h3><span class="availability availability-live">Ready</span></div>
+            <div class="integration-topline"><h3>GitHub Actions</h3><span class="availability availability-live">Marketplace</span></div>
             <p>Create your own audit repository from the ready template, or add a prepared workflow to an existing project. Runs and reports stay in your GitHub account.</p>
-            <a class="integration-action" href="#audit-builder">Set up GitHub Actions <span aria-hidden="true">→</span></a>
+            <div class="integration-actions">
+              <a class="integration-action" href="#audit-builder">Set up GitHub Actions <span aria-hidden="true">→</span></a>
+              <a class="integration-action" href="https://github.com/marketplace/actions/carlashub-accessibility-audit">View on GitHub Marketplace <span aria-hidden="true">→</span></a>
+            </div>
           </article>
 
           <article class="integration-card">
@@ -191,36 +195,44 @@
           </article>
 
           <article class="integration-card">
-            <div class="integration-topline"><h3>Claude Code</h3><span class="availability">Developer install</span></div>
-            <p>Clone and build the plugin once, then load that checkout in the project you want to audit.</p>
-            <pre class="install-command" tabindex="0"><code>npm ci &amp;&amp; npm run build
-claude --plugin-dir /path/to/accessibility-audit-plugin</code></pre>
-            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3b-install-in-claude-code">Claude Code instructions <span aria-hidden="true">→</span></a>
+            <div class="integration-topline"><h3>Claude Code</h3><span class="availability availability-live">Download</span></div>
+            <p>Download and extract the ready local-agent package, then load that directory from the project you want to audit.</p>
+            <div class="integration-actions">
+              <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest/download/accessibility-audit-agent-plugin.tgz">Download the agent package <span aria-hidden="true">↓</span></a>
+              <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3b-install-in-claude-code">Installation steps <span aria-hidden="true">→</span></a>
+            </div>
           </article>
 
           <article class="integration-card">
-            <div class="integration-topline"><h3>Cursor</h3><span class="availability">Developer install</span></div>
-            <p>The repository includes Cursor’s plugin manifest, command, rule, skill, and MCP configuration. Build it, add it to Cursor’s local plugin directory, then reload.</p>
-            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3a-install-in-cursor">Cursor instructions <span aria-hidden="true">→</span></a>
+            <div class="integration-topline"><h3>Cursor</h3><span class="availability availability-live">Download</span></div>
+            <p>Download and extract the ready local-agent package, add it to Cursor’s local plugin directory, then reload Cursor.</p>
+            <div class="integration-actions">
+              <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest/download/accessibility-audit-agent-plugin.tgz">Download the agent package <span aria-hidden="true">↓</span></a>
+              <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3a-install-in-cursor">Installation steps <span aria-hidden="true">→</span></a>
+            </div>
           </article>
 
           <article class="integration-card">
-            <div class="integration-topline"><h3>Codex CLI</h3><span class="availability">Package ready</span></div>
-            <p>The repository includes the portable Agent Plugin manifest, Codex fallback manifest, marketplace catalog, skill, and MCP server. Install from a configured marketplace, then open the CLI plugin browser.</p>
-            <pre class="install-command" tabindex="0"><code>/plugins</code></pre>
-            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3d-install-in-codex">Codex instructions <span aria-hidden="true">→</span></a>
+            <div class="integration-topline"><h3>Codex CLI</h3><span class="availability availability-live">Download</span></div>
+            <p>Download and extract the portable Agent Plugin package, register that directory as a local marketplace, then open the CLI plugin browser.</p>
+            <div class="integration-actions">
+              <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest/download/accessibility-audit-agent-plugin.tgz">Download the agent package <span aria-hidden="true">↓</span></a>
+              <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3d-install-in-codex">Installation steps <span aria-hidden="true">→</span></a>
+            </div>
           </article>
 
           <article class="integration-card">
-            <div class="integration-topline"><h3>GitHub Copilot</h3><span class="availability">Package ready</span></div>
-            <p>Build the included Copilot CLI or VS Code payload locally. Public marketplace listing is a separate submission step.</p>
-            <pre class="install-command" tabindex="0"><code>npm run build:marketplace
-copilot plugin install ./marketplace/carlashub-plugin-marketplace/accessibility-audit/copilot-cli</code></pre>
-            <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3e-install-in-github-copilot-cli">Copilot instructions <span aria-hidden="true">→</span></a>
+            <div class="integration-topline"><h3>GitHub Copilot</h3><span class="availability availability-live">Downloads</span></div>
+            <p>Choose the packaged Copilot CLI or VS Code payload. Public marketplace listing remains a separate submission step.</p>
+            <div class="integration-actions">
+              <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest/download/accessibility-audit-copilot-cli.zip">Download CLI ZIP <span aria-hidden="true">↓</span></a>
+              <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/releases/latest/download/accessibility-audit-copilot-vscode.zip">Download VS Code ZIP <span aria-hidden="true">↓</span></a>
+              <a class="integration-action" href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/installation.md#3e-install-in-github-copilot-cli">Installation steps <span aria-hidden="true">→</span></a>
+            </div>
           </article>
         </div>
 
-        <p class="integration-note"><strong>Developer-install note:</strong> local agent integrations require Node.js 22 or later and a Playwright-supported browser. The Codex IDE extension does not currently support plugins. Only audit websites you are authorised to test.</p>
+        <p class="integration-note"><strong>Installation note:</strong> Claude Desktop accepts its ZIP directly. The local-agent and Copilot archives must be extracted and installed using the linked client instructions. They require Node.js 22 or later and a Playwright-supported browser. The Codex IDE extension does not currently support plugins. Only audit websites you are authorised to test.</p>
       </section>
 
       <section class="section" id="how-it-works">
