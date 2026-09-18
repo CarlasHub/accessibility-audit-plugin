@@ -997,6 +997,41 @@ describe('evidence-gated link and tab findings', () => {
     expect(findings.some((finding) => finding.ruleId === 'interactive-control-no-name')).toBe(false);
   });
 
+  it('explains when responsive CSS hides the only link-name source', () => {
+    const html = '<a class="callout" href="/location"><span class="callout__fake-button">Explore this location</span></a>';
+    const findings = findingsFromPage(page(viewport({
+      axe: [{
+        id: 'link-name',
+        impact: 'serious',
+        tags: ['wcag2a', 'wcag244', 'wcag412'],
+        description: 'Ensure links have discernible text',
+        help: 'Links must have discernible text',
+        helpUrl: 'https://dequeuniversity.com/rules/axe/4.13/link-name',
+        nodes: [{ html, target: ['.callout'] }]
+      }],
+      dom: {
+        ...viewport().dom,
+        emptyLinks: [{
+          selector: 'a.callout',
+          html,
+          href: '/location',
+          sourceText: 'Explore this location',
+          excludedNameSources: [{
+            selector: 'span.callout__fake-button',
+            text: 'Explore this location',
+            reason: 'display:none'
+          }]
+        }]
+      }
+    })));
+
+    const finding = findings.find((item) => item.ruleId === 'axe-link-name');
+    expect(finding?.issue).toContain('Explore this location');
+    expect(finding?.issue).toContain('display:none');
+    expect(finding?.evidence[0]?.detail).toContain('display:none');
+    expect(finding?.remediation).toContain('responsive breakpoint');
+  });
+
   it('groups repeated axe nodes from the same rendered component and root cause', () => {
     const failureSummary = 'Element does not have text that is visible to screen readers';
     const findings = findingsFromPage(page(viewport({

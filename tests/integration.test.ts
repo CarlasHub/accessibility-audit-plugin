@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
+import axe from 'axe-core';
 import { chromium } from 'playwright';
 import { describe, expect, it } from 'vitest';
 import { resolveOptions } from '../src/config.js';
@@ -19,6 +20,68 @@ import { executeAudit } from '../src/service.js';
 import { DEFAULT_AUDITOR } from '../src/instructions.js';
 
 describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit integration', () => {
+  it('matches the official accessible-name treatment of visible and CSS-hidden nested link text', async () => {
+    const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+    const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    try {
+      await page.setContent(`<!doctype html><html lang="en"><head><title>Link name regression</title></head><body>
+        <a id="visible-nested" href="#visible"><span>Explore this location</span></a>
+        <a id="hidden-nested" href="#hidden" style="display:block;width:120px;height:80px;background:#ccc">
+          <span style="display:none">Explore this location</span>
+        </a>
+        <a id="visibility-hidden" href="#visibility" style="display:block;width:120px;height:80px;background:#ccc">
+          <span style="visibility:hidden">Visibility label</span>
+        </a>
+        <a id="visibility-collapse" href="#collapse" style="display:block;width:120px;height:80px;background:#ccc">
+          <span style="visibility:collapse">Collapse label</span>
+        </a>
+        <a id="aria-hidden" href="#aria" style="display:block;width:120px;height:80px;background:#ccc">
+          <span aria-hidden="TRUE">ARIA-hidden label</span>
+        </a>
+        <a id="opacity-zero" href="#opacity"><span style="opacity:0">Opacity label</span></a>
+      </body></html>`);
+
+      const dom = await runDomChecks(page);
+      expect(dom.emptyLinks.some((link) => link.selector === '#visible-nested')).toBe(false);
+      expect(dom.emptyLinks.find((link) => link.selector === '#hidden-nested')).toEqual(expect.objectContaining({
+        sourceText: 'Explore this location',
+        excludedNameSources: [expect.objectContaining({
+          selector: expect.stringContaining('span'),
+          text: 'Explore this location',
+          reason: 'display:none'
+        })]
+      }));
+      expect(await page.locator('#visible-nested').ariaSnapshot()).toContain('link "Explore this location"');
+      expect(await page.locator('#hidden-nested').ariaSnapshot()).not.toContain('link "Explore this location"');
+      expect(dom.emptyLinks.find((link) => link.selector === '#visibility-hidden')?.excludedNameSources?.[0]?.reason).toBe('visibility:hidden');
+      expect(dom.emptyLinks.find((link) => link.selector === '#visibility-collapse')?.excludedNameSources?.[0]?.reason).toBe('visibility:collapse');
+      expect(dom.emptyLinks.find((link) => link.selector === '#aria-hidden')?.excludedNameSources?.[0]?.reason).toBe('aria-hidden="true"');
+      expect(dom.emptyLinks.some((link) => link.selector === '#opacity-zero')).toBe(false);
+
+      await page.addScriptTag({ content: axe.source });
+      const axeResult = await page.evaluate(async () => {
+        const engine = (window as typeof window & {
+          axe: { run: (context: Document, options: { runOnly: string[] }) => Promise<{
+            violations: Array<{ id: string; nodes: Array<{ target: string[] }> }>;
+          }> };
+        }).axe;
+        return engine.run(document, { runOnly: ['link-name'] });
+      });
+      const failedTargets = axeResult.violations
+        .filter((violation) => violation.id === 'link-name')
+        .flatMap((violation) => violation.nodes.flatMap((node) => node.target));
+      expect(failedTargets).not.toContain('#visible-nested');
+      expect(failedTargets).not.toContain('#opacity-zero');
+      expect(failedTargets).toContain('#hidden-nested');
+      expect(failedTargets).toContain('#visibility-hidden');
+      expect(failedTargets).toContain('#visibility-collapse');
+      expect(failedTargets).toContain('#aria-hidden');
+    } finally {
+      await browser.close();
+    }
+  });
+
   it('keeps completed evidence and marks only injected pipeline failures partial', async () => {
     const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
     const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) });

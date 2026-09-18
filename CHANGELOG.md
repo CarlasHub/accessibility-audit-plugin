@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.4 - 2026-09-18
+
+- Aligned the scanner's nested-link text handling with axe-core and Chromium accessibility-tree behavior for computed `display`, `visibility`, and `aria-hidden` state.
+- Added explicit report evidence when source text exists but responsive CSS removes that text from the accessibility tree, avoiding the misleading appearance that ordinary nested `<span>` text was rejected.
+- Added real-browser, Chromium accessibility-tree, and axe-core 4.13 regressions proving that visible nested link text passes while the same text hidden with `display:none` fails.
+- Re-ran the affected L'Oréal page at desktop, mobile, and 320-pixel reflow sizes; the link passes at desktop and remains a confirmed mobile/reflow failure because its only label is hidden at those breakpoints.
+
 ## 1.8.3 - 2026-09-18
 
 - Persisted landing-page setup drafts for existing and new repositories, including multi-page URL lists and generated workflow fields.

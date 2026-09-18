@@ -179,7 +179,15 @@ export interface DomCheckResult {
   unnamedLandmarks: Array<{ selector: string; role: string }>;
   missingAltImages: Array<{ selector: string; html: string }>;
   linkedImagesForReview: Array<{ selector: string; name: string; alt: string; href: string; reason: string }>;
-  emptyLinks: Array<{ selector: string; html: string; href: string }>;
+  emptyLinks: Array<{
+    selector: string;
+    html: string;
+    href: string;
+    /** Raw source text, which can differ from the rendered/accessibility-tree name. */
+    sourceText?: string;
+    /** Text sources excluded from accessible-name computation and the reason each is excluded. */
+    excludedNameSources?: Array<{ selector: string; text: string; reason: string }>;
+  }>;
   emptyNamedControls: Array<{ selector: string; tag: string; html: string }>;
   unlabeledFields: Array<{ selector: string; html: string }>;
   duplicateIds: Array<{ id: string; count: number }>;

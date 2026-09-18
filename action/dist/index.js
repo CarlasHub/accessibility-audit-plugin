@@ -151193,10 +151193,22 @@ async function runDomChecks(page, axeTargetSizeSelectors = []) {
             }
             return parts.join(' > ');
         };
+        const hiddenFromAccessibleName = (element) => {
+            if (element.getAttribute('aria-hidden')?.toLowerCase() === 'true')
+                return 'aria-hidden="true"';
+            const style = getComputedStyle(element);
+            if (style.display === 'none')
+                return 'display:none';
+            if (style.visibility === 'hidden')
+                return 'visibility:hidden';
+            if (style.visibility === 'collapse')
+                return 'visibility:collapse';
+            return '';
+        };
         const descendantTextAlternative = (node) => {
             if (node instanceof Text)
                 return node.textContent?.trim() ?? '';
-            if (!(node instanceof Element) || node.getAttribute('aria-hidden') === 'true')
+            if (!(node instanceof Element) || hiddenFromAccessibleName(node))
                 return '';
             if (node instanceof HTMLImageElement)
                 return node.alt.trim();
@@ -151207,11 +151219,39 @@ async function runDomChecks(page, axeTargetSizeSelectors = []) {
         const descendantTextWithoutImages = (node) => {
             if (node instanceof Text)
                 return node.textContent?.trim() ?? '';
-            if (!(node instanceof Element) || node.getAttribute('aria-hidden') === 'true')
+            if (!(node instanceof Element) || hiddenFromAccessibleName(node))
                 return '';
             if (node instanceof HTMLImageElement || (node instanceof HTMLInputElement && node.type === 'image'))
                 return '';
             return [...node.childNodes].map(descendantTextWithoutImages).filter(Boolean).join(' ').trim();
+        };
+        const excludedNameSources = (element) => {
+            const sources = [];
+            const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+            let node = walker.nextNode();
+            while (node) {
+                const text = node.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+                if (text) {
+                    let current = node.parentElement;
+                    let reason = '';
+                    while (current && element.contains(current)) {
+                        reason = hiddenFromAccessibleName(current);
+                        if (reason)
+                            break;
+                        if (current === element)
+                            break;
+                        current = current.parentElement;
+                    }
+                    if (reason && current) {
+                        const source = { selector: cssPath(current), text, reason };
+                        if (!sources.some((item) => item.selector === source.selector && item.text === source.text && item.reason === source.reason)) {
+                            sources.push(source);
+                        }
+                    }
+                }
+                node = walker.nextNode();
+            }
+            return sources;
         };
         const name = (element) => {
             const labelledBy = element.getAttribute('aria-labelledby');
@@ -151289,7 +151329,9 @@ async function runDomChecks(page, axeTargetSizeSelectors = []) {
             .map((link) => ({
             selector: cssPath(link),
             html: link.outerHTML.slice(0, 500),
-            href: link.getAttribute('href') ?? ''
+            href: link.getAttribute('href') ?? '',
+            sourceText: link.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+            excludedNameSources: excludedNameSources(link)
         }));
         const emptyNamedControls = [...document.querySelectorAll(focusables)]
             .filter(visible)
@@ -153884,7 +153926,7 @@ function axeRemediation(violation) {
         'aria-command-name': 'Give the control a concise accessible name that describes its action. Prefer visible text; otherwise use aria-labelledby to reference visible text or aria-label when no visible label is available.',
         'button-name': 'Give the button concise visible text that describes its action. If the button is icon-only, provide one accessible name with aria-label or aria-labelledby.',
         'input-button-name': 'Set a meaningful value on the input button or replace it with a native button containing descriptive visible text.',
-        'link-name': 'Give the link concise visible text that describes its destination. For an image-only link, provide a meaningful image alternative or label the link once without duplicating its name.',
+        'link-name': 'Give the link concise text that remains exposed to the accessibility tree. Do not hide its only label with display:none, visibility:hidden, or aria-hidden. If a responsive breakpoint intentionally makes the link icon-only, add an equivalent aria-label or valid aria-labelledby reference.',
         'image-alt': 'Add concise alt text that communicates the image purpose. Use alt="" only when the image is decorative and contributes no information or function.',
         label: 'Add a persistent visible label and associate it with the form control using native label markup and matching for/id values. Use aria-labelledby only when an existing visible label must be referenced.',
         'color-contrast': 'Change the foreground colour, background colour, font size, or font weight so normal text reaches at least 4.5:1 contrast and large text reaches at least 3:1 in every affected state.',
@@ -153912,6 +153954,16 @@ function createSharedComponentKey(component, signature) {
 }
 function openingTagSignature(html) {
     return (html.trim().match(/^<[^>]+>/)?.[0] ?? html.trim()).replace(/\s+/g, ' ');
+}
+function linkNameDiagnostic(audit, node) {
+    const targetSelectors = new Set(node.target.map(normalizeComponent));
+    const match = audit.dom.emptyLinks.find((item) => (targetSelectors.has(normalizeComponent(item.selector))
+        || [...targetSelectors].some((target) => normalizeComponent(item.selector).endsWith(target))
+        || openingTagSignature(item.html) === openingTagSignature(node.html)));
+    if (!match?.excludedNameSources?.length)
+        return '';
+    const excluded = conciseList(match.excludedNameSources.map((source) => (`${source.selector} contains “${source.text}” but is excluded because ${source.reason}`)));
+    return `The source contains text, but it does not provide an accessible name at this viewport: ${excluded}.`;
 }
 function contrastDetails(failureSummary = '') {
     const actual = failureSummary.match(/contrast of\s+([\d.]+)/i)?.[1];
@@ -154227,6 +154279,8 @@ function axeFindings(audit) {
         return [...groups.values()].map((group) => {
             const selectors = [...new Set(group.nodes.flatMap((node) => node.target.length ? node.target : ['page']))];
             const representative = group.nodes[0];
+            const nameDiagnostic = violation.id === 'link-name' ? linkNameDiagnostic(audit, representative) : '';
+            const issue = axeAccessibilityIssue(violation, representative.failureSummary);
             return makeFinding({
                 identity: `${violation.id}|${group.component}|${group.failure}`,
                 ruleId: `axe-${violation.id}`,
@@ -154234,9 +154288,9 @@ function axeFindings(audit) {
                 severity: severityFromAxe(violation.impact),
                 wcag: wcag.length ? wcag : ['Best Practice'],
                 summary: axeSummary(violation),
-                issue: axeAccessibilityIssue(violation, representative.failureSummary),
+                issue: nameDiagnostic ? `${issue} ${nameDiagnostic}` : issue,
                 impact: axeUserImpact(violation.id),
-                testing: axeTesting(violation, audit, conciseList(selectors, 8), representative.failureSummary),
+                testing: axeTesting(violation, audit, conciseList(selectors, 8), nameDiagnostic ? `${representative.failureSummary ?? ''} ${nameDiagnostic}`.trim() : representative.failureSummary),
                 remediation: `${axeRemediation(violation)} Retest the component in every affected state.`,
                 component: group.component,
                 sharedComponentKey: createSharedComponentKey(group.component, `${violation.id}|${group.failure}`),
@@ -154248,7 +154302,7 @@ function axeFindings(audit) {
                     pageUrl: audit.url,
                     viewport: audit.viewport.name,
                     selector: node.target.join(', '),
-                    detail: node.html,
+                    detail: [node.html, violation.id === 'link-name' ? linkNameDiagnostic(audit, node) : ''].filter(Boolean).join('\n'),
                     screenshot: screenshotFor(audit, node.target[0])
                 })),
                 assignment: assignmentForRule(violation.id),
