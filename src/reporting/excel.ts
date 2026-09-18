@@ -252,7 +252,7 @@ function reportRowValues(finding: Finding, id: string, criteria: LookupEntry[], 
     finding.effort,
     screenshotLink(finding, outputPath),
     finding.ruleId,
-    [finding.classification, finding.ruleId, ...finding.wcag.map((criterion) => `WCAG ${criterion}`)].join(', '),
+    [finding.classification, finding.ruleId, ...(finding.standards ?? finding.wcag.map((criterion) => `WCAG ${criterion}`))].join(', '),
     finding.translationRequired
   ];
 }

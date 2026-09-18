@@ -148,7 +148,7 @@ The report separates four evidence categories:
 
 Every populated finding starts with `Status = Open` so teams can triage it without implying a final compliance verdict. Use `Evidence type` to distinguish confirmed, review, blocker, and manual records, then follow `Test method` before assigning work.
 
-WCAG 2.2 Level AA is always the public conformance target. Optional AAA automation is advisory only. The HTML report, workbook, and JSON include a criterion-by-criterion ledger using `passed`, `failed`, `manual-review-required`, `not-applicable`, and `inconclusive`; a criterion is never inferred to pass merely because no automated issue was found. The overall conformance decision remains **not determined** until qualified human assessment is complete.
+WCAG 2.2 Level AA is always the public conformance target. Optional AAA automation is advisory only. The HTML report, workbook, and JSON include a criterion-by-criterion ledger using `passed`, `failed`, `manual-review-required`, `not-applicable`, and `inconclusive`; a criterion is never inferred to pass merely because no automated issue was found. Findings also identify their W3C WCAG mapping, Deque axe-core rule source where applicable, and only the WCAG 2.0 A/AA criteria incorporated by [Revised Section 508 E205.4](https://www.access-board.gov/ict/#E205.4). The overall conformance decision remains **not determined** until qualified human assessment is complete.
 
 Severity (`Critical`, `Serious`, `Moderate`, or `Minor`) describes expected user impact. It is different from WCAG level, evidence confidence, remediation effort, and delivery priority.
 

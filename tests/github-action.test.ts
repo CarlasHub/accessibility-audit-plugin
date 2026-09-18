@@ -20,6 +20,13 @@ describe('GitHub Action inputs', () => {
       'https://example.test/a',
       'https://example.test/b'
     ]);
+    expect(parseListInput(
+      'https://loreal.runmytests.eu/en  https://loreal.runmytests.eu/en/search-jobs https://loreal.runmytests.eu/en/saved-jobs'
+    )).toEqual([
+      'https://loreal.runmytests.eu/en',
+      'https://loreal.runmytests.eu/en/search-jobs',
+      'https://loreal.runmytests.eu/en/saved-jobs'
+    ]);
   });
 
   it('validates boolean and failure policy values', () => {

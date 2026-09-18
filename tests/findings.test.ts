@@ -463,7 +463,7 @@ describe('evidence-gated link and tab findings', () => {
     expect(findings.some((finding) => finding.ruleId.startsWith('responsive-'))).toBe(false);
   });
 
-  it('keeps valid responsive signals as moderate review candidates', () => {
+  it('promotes repeat-confirmed clipping while keeping overlap as a review candidate', () => {
     const findings = findingsFromPage(page(viewport({
       responsive: {
         horizontalOverflow: 0,
@@ -476,7 +476,10 @@ describe('evidence-gated link and tab findings', () => {
           clientWidth: 120,
           clientHeight: 40,
           scrollWidth: 240,
-          scrollHeight: 40
+          scrollHeight: 40,
+          contentSelector: '#genuinely-clipped-content > span',
+          contentKind: 'text',
+          repeatConfirmed: true
         }],
         overlapPairs: [{
           firstSelector: '#primary-action',
@@ -491,7 +494,7 @@ describe('evidence-gated link and tab findings', () => {
     expect(findings).toEqual(expect.arrayContaining([
       expect.objectContaining({
         ruleId: 'responsive-content-clipped',
-        classification: 'review',
+        classification: 'confirmed',
         severity: 'Moderate'
       }),
       expect.objectContaining({
@@ -499,6 +502,107 @@ describe('evidence-gated link and tab findings', () => {
         classification: 'review',
         severity: 'Moderate'
       })
+    ]));
+  });
+
+  it('keeps stress-phase overflow as evidence unless functionality is repeat-confirmed lost', () => {
+    const findings = findingsFromPage(page(viewport({
+      responsive: {
+        horizontalOverflow: 0,
+        overflowElements: [],
+        textSpacingOverflow: 420,
+        textResizeOverflow: 480,
+        clippedElements: [
+          {
+            selector: '#resize-carousel',
+            axis: 'horizontal',
+            phase: 'text-resize-200',
+            clientWidth: 320,
+            clientHeight: 80,
+            scrollWidth: 800,
+            scrollHeight: 80,
+            contentSelector: '#resize-carousel .slide',
+            contentKind: 'text',
+            repeatConfirmed: true
+          },
+          {
+            selector: '#spacing-carousel',
+            axis: 'horizontal',
+            phase: 'text-spacing',
+            clientWidth: 320,
+            clientHeight: 80,
+            scrollWidth: 800,
+            scrollHeight: 80,
+            contentSelector: '#spacing-carousel .slide',
+            contentKind: 'text',
+            repeatConfirmed: true
+          }
+        ],
+        overlapPairs: [],
+        lostInteractiveElements: [],
+        textResizeLostInteractiveElements: []
+      }
+    })));
+
+    expect(findings.some((finding) => [
+      'text-spacing-overflow',
+      'text-resize-200-overflow',
+      'responsive-content-clipped'
+    ].includes(finding.ruleId))).toBe(false);
+  });
+
+  it('promotes only repeat-confirmed focus and reflow losses and high-confidence data tables', () => {
+    const audit = viewport();
+    audit.keyboard = {
+      completedCycle: false,
+      truncated: false,
+      scope: 'document',
+      journeys: [],
+      sequence: [{
+        index: 3,
+        selector: '#cloned-slide-link',
+        componentSelector: '#carousel',
+        role: 'a',
+        name: 'Hidden clone',
+        visibleIndicator: true,
+        obscured: false,
+        outsideViewport: true,
+        outsideViewportConfirmed: true
+      }]
+    };
+    audit.responsive = {
+      horizontalOverflow: 0,
+      overflowElements: [],
+      textSpacingOverflow: 0,
+      clippedElements: [],
+      overlapPairs: [],
+      lostInteractiveElements: [{ selector: '#spacing-action', name: 'Spacing action', repeatConfirmed: true }],
+      textResizeLostInteractiveElements: [{ selector: '#home-link', name: 'Home', repeatConfirmed: true }]
+    };
+    audit.dom.tablesForReview = [{
+      selector: '#entities',
+      reason: 'A visible 157-row by 3-column data table has no header cells.',
+      classification: 'confirmed',
+      rowCount: 157,
+      columnCount: 3
+    }];
+
+    const findings = findingsFromPage(page(audit));
+    expect(findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: 'keyboard-focus-outside-viewport', classification: 'confirmed' }),
+      expect.objectContaining({
+        ruleId: 'text-spacing-functionality-lost',
+        classification: 'confirmed',
+        component: '#spacing-action',
+        sharedComponentKey: expect.any(String)
+      }),
+      expect.objectContaining({
+        ruleId: 'text-resize-functionality-lost',
+        classification: 'confirmed',
+        component: '#home-link',
+        sharedComponentKey: expect.any(String)
+      }),
+      expect.objectContaining({ ruleId: 'table-missing-headers', classification: 'confirmed' })
     ]));
   });
 
@@ -518,6 +622,7 @@ describe('evidence-gated link and tab findings', () => {
             overlapHeight: 20,
             overlapArea: 800,
             smallerElementOverlapPercent: 80,
+            obscuredElementOverlapPercent: 80,
             obscuredSelector: '#submit',
             occludingSelector: '#sticky-one',
             hitTestSampleCount: 3
@@ -530,6 +635,7 @@ describe('evidence-gated link and tab findings', () => {
             overlapHeight: 20,
             overlapArea: 600,
             smallerElementOverlapPercent: 60,
+            obscuredElementOverlapPercent: 60,
             obscuredSelector: '#submit',
             occludingSelector: '#sticky-two',
             hitTestSampleCount: 3
