@@ -4,7 +4,7 @@ title: "CarlasHub Accessibility Audit"
 type: software
 authors:
   - name: CarlasHub
-version: 1.8.3
+version: 1.8.4
 date-released: 2026-09-18
 repository-code: "https://github.com/CarlasHub/accessibility-audit-plugin"
 url: "https://carlashub.github.io/accessibility-audit-plugin/"

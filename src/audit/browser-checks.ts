@@ -69,18 +69,52 @@ export async function runDomChecks(page: Page, axeTargetSizeSelectors: string[] 
       }
       return parts.join(' > ');
     };
+    const hiddenFromAccessibleName = (element: Element): string => {
+      if (element.getAttribute('aria-hidden')?.toLowerCase() === 'true') return 'aria-hidden="true"';
+      const style = getComputedStyle(element);
+      if (style.display === 'none') return 'display:none';
+      if (style.visibility === 'hidden') return 'visibility:hidden';
+      if (style.visibility === 'collapse') return 'visibility:collapse';
+      return '';
+    };
     const descendantTextAlternative = (node: Node): string => {
       if (node instanceof Text) return node.textContent?.trim() ?? '';
-      if (!(node instanceof Element) || node.getAttribute('aria-hidden') === 'true') return '';
+      if (!(node instanceof Element) || hiddenFromAccessibleName(node)) return '';
       if (node instanceof HTMLImageElement) return node.alt.trim();
       if (node instanceof HTMLInputElement && node.type === 'image') return node.alt.trim();
       return [...node.childNodes].map(descendantTextAlternative).filter(Boolean).join(' ').trim();
     };
     const descendantTextWithoutImages = (node: Node): string => {
       if (node instanceof Text) return node.textContent?.trim() ?? '';
-      if (!(node instanceof Element) || node.getAttribute('aria-hidden') === 'true') return '';
+      if (!(node instanceof Element) || hiddenFromAccessibleName(node)) return '';
       if (node instanceof HTMLImageElement || (node instanceof HTMLInputElement && node.type === 'image')) return '';
       return [...node.childNodes].map(descendantTextWithoutImages).filter(Boolean).join(' ').trim();
+    };
+    const excludedNameSources = (element: Element): Array<{ selector: string; text: string; reason: string }> => {
+      const sources: Array<{ selector: string; text: string; reason: string }> = [];
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        const text = node.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+        if (text) {
+          let current = node.parentElement;
+          let reason = '';
+          while (current && element.contains(current)) {
+            reason = hiddenFromAccessibleName(current);
+            if (reason) break;
+            if (current === element) break;
+            current = current.parentElement;
+          }
+          if (reason && current) {
+            const source = { selector: cssPath(current), text, reason };
+            if (!sources.some((item) => item.selector === source.selector && item.text === source.text && item.reason === source.reason)) {
+              sources.push(source);
+            }
+          }
+        }
+        node = walker.nextNode();
+      }
+      return sources;
     };
     const name = (element: Element): string => {
       const labelledBy = element.getAttribute('aria-labelledby');
@@ -151,7 +185,9 @@ export async function runDomChecks(page: Page, axeTargetSizeSelectors: string[] 
       .map((link) => ({
         selector: cssPath(link),
         html: link.outerHTML.slice(0, 500),
-        href: link.getAttribute('href') ?? ''
+        href: link.getAttribute('href') ?? '',
+        sourceText: link.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+        excludedNameSources: excludedNameSources(link)
       }));
     const emptyNamedControls = [...document.querySelectorAll(focusables)]
       .filter(visible)
