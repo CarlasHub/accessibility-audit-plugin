@@ -8,3 +8,16 @@
 .integration-actions .integration-action {
   margin-top: 0;
 }
+
+.draft-note {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  justify-content: flex-end;
+  margin: 0.5rem 0 0;
+}
+
+.draft-note #saved-setup-status:not(:empty) {
+  margin-right: auto;
+}

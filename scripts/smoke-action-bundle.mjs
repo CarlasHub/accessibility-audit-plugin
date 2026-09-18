@@ -223,6 +223,16 @@ try {
     'INPUT_FAIL-ON': 'serious'
   };
 
+  const multiUrlRun = await createRunWorkspace(temporaryRoot, 'multi-url');
+  const multiUrlExecution = await runAction(actionEnvironment(multiUrlRun, `${origin}/review`, {
+    INPUT_URLS: JSON.stringify([`${origin}/review`, `${origin}/review?second-page=1`]),
+    'INPUT_FAIL-ON': 'none'
+  }));
+  assert(multiUrlExecution.status === 0, `The multi-URL audit failed.\n${multiUrlExecution.output}`);
+  const multiUrlArtifacts = await assertArtifacts(multiUrlRun, 'not-evaluated');
+  assert(multiUrlArtifacts.report.requestedUrls.length === 2, 'The report did not preserve both requested URLs.');
+  assert(multiUrlArtifacts.report.pages.length === 2, 'The Action did not audit both requested URLs.');
+
   const firstCommentRun = await createRunWorkspace(temporaryRoot, 'comment-create');
   const firstCommentExecution = await runAction(actionEnvironment(firstCommentRun, `${origin}/review`, prEnvironment));
   assert(firstCommentExecution.status === 0, `Review-only evidence incorrectly failed the confirmed-severity gate.\n${firstCommentExecution.output}`);

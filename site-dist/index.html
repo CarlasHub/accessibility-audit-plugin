@@ -15,6 +15,7 @@
     <title>CarlasHub Accessibility Audit</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2315151a'/%3E%3Cpath d='M18 32l9 9 19-20' fill='none' stroke='%2393f6b2' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
     <script type="module" crossorigin src="./assets/index-DPB0X9UT.js"></script>
+    <script type="module" src="./assets/setup-draft.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-BIoRjB-p.css">
     <link rel="stylesheet" href="./assets/integrations.css?v=1.8.2">
   </head>
@@ -103,7 +104,7 @@
                 <div class="destination-options">
                   <label class="destination-option">
                     <input type="radio" name="destination" value="new" checked />
-                    <span><strong>Create a new repository</strong><small>GitHub opens the free starter; this page keeps your configured workflow ready to paste.</small></span>
+                    <span><strong>Create a new repository</strong><small>GitHub opens the free starter in a new tab. Return here afterward; your pages stay saved for the workflow step.</small></span>
                   </label>
                   <label class="destination-option">
                     <input type="radio" name="destination" value="existing" />
@@ -130,7 +131,8 @@
               <p id="interaction-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
             </form>
 
-            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>The optional connector only authorises the repository change and starts the workflow. It never runs audits or stores reports. All Actions usage, audit history, and reports belong to you—not CarlasHub. Manual setup remains available.</span></p>
+            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>This browser saves your page list, destination, and repository so they survive the GitHub setup step. The optional connector never runs audits or stores reports. All Actions usage, audit history, and reports belong to you—not CarlasHub.</span></p>
+            <p class="draft-note"><span id="saved-setup-status" role="status" aria-live="polite"></span><button class="text-button" id="clear-saved-setup" type="button">Clear saved setup</button></p>
           </div>
         </div>
       </section>

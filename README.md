@@ -61,12 +61,6 @@ name: Accessibility audit
 
 on:
   workflow_dispatch:
-    inputs:
-      url:
-        description: Public page to audit
-        required: true
-        type: string
-        default: https://example.com/
 
 permissions:
   contents: read
@@ -75,10 +69,12 @@ jobs:
   audit:
     uses: CarlasHub/accessibility-audit-plugin/.github/workflows/reusable-accessibility-audit.yml@v1
     with:
-      url: ${{ inputs.url }}
+      urls: |-
+        https://example.com/
+        https://example.com/contact
 ```
 
-Open **Actions → Accessibility audit → Run workflow**, enter any authorised public page, and start the run. The run summary links directly to the HTML, Excel, JSON, screenshots, and ZIP report. No checkout, browser setup, artifact step, token, or hostname field is required. The Action tests only the URL you enter and does not crawl the rest of the site. See [GitHub Action usage](docs/github-action.md) for advanced inputs, pull-request comments, quality gates, and security recommendations.
+List every page under `urls`, one per line, then open **Actions → Accessibility audit → Run workflow** and start the run. The run summary links directly to the HTML, Excel, JSON, screenshots, and ZIP report. No checkout, browser setup, artifact step, token, or hostname field is required. The Action tests only the URLs in the workflow and does not crawl the rest of the site. See [GitHub Action usage](docs/github-action.md) for advanced inputs, pull-request comments, quality gates, and security recommendations.
 
 ## Start here
 
