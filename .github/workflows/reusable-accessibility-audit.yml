@@ -3,10 +3,16 @@ name: Reusable accessibility audit
 on:
   workflow_call:
     inputs:
-      url:
-        description: Public, non-sensitive HTTP(S) page to audit
-        required: true
+      urls:
+        description: Public, non-sensitive HTTP(S) pages, one per line or as a JSON array
+        required: false
         type: string
+        default: ''
+      url:
+        description: Deprecated single-page input; use urls for new workflows
+        required: false
+        type: string
+        default: ''
       auditor:
         description: Name recorded in the report
         required: false
@@ -33,7 +39,7 @@ permissions:
 
 jobs:
   audit:
-    name: Audit ${{ inputs.url }}
+    name: Audit selected pages
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -44,7 +50,7 @@ jobs:
         name: Run WCAG 2.2 audit
         uses: CarlasHub/accessibility-audit-plugin@v1
         with:
-          urls: ${{ inputs.url }}
+          urls: ${{ inputs.urls || inputs.url }}
           auditor: ${{ inputs.auditor }}
           fail-on: ${{ inputs.fail-on }}
           journeys: ${{ inputs.journeys }}

@@ -1,6 +1,6 @@
 {
   "name": "accessibility-audit",
-  "version": "1.8.2",
+  "version": "1.8.3",
   "description": "Run an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA with browser, keyboard, reflow, and interaction evidence.",
   "author": {
     "name": "CarlasHub"

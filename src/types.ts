@@ -105,6 +105,8 @@ export interface Finding {
   classification: FindingClassification;
   severity: Severity;
   wcag: string[];
+  /** Explicit report mappings derived after consolidation; never used to infer conformance. */
+  standards?: string[];
   summary: string;
   issue: string;
   impact: string;
@@ -200,7 +202,13 @@ export interface DomCheckResult {
       centerDistance: number;
     }>;
   }>;
-  tablesForReview: Array<{ selector: string; reason: string }>;
+  tablesForReview: Array<{
+    selector: string;
+    reason: string;
+    classification?: FindingClassification;
+    rowCount?: number;
+    columnCount?: number;
+  }>;
   autoplayMedia: Array<{ selector: string; tag: string }>;
 }
 
@@ -213,6 +221,8 @@ export interface KeyboardCheckResult {
     visibleIndicator: boolean;
     obscured: boolean;
     outsideViewport: boolean;
+    /** A second settled sample found the same focused element fully outside the viewport. */
+    outsideViewportConfirmed?: boolean;
     componentSelector?: string;
     modalSelector?: string;
     }>;
@@ -306,6 +316,11 @@ export interface ResponsiveCheckResult {
     clientHeight: number;
     scrollWidth: number;
     scrollHeight: number;
+    /** The descendant or text-bearing node observed outside the clipping boundary. */
+    contentSelector?: string;
+    contentKind?: 'text' | 'interactive' | 'image' | 'media' | 'labelled';
+    /** The same clipping geometry was present in two settled samples. */
+    repeatConfirmed?: boolean;
   }>;
   overlapPairs: Array<{
     firstSelector: string;
@@ -317,6 +332,8 @@ export interface ResponsiveCheckResult {
     overlapArea?: number;
     /** Percentage of the smaller control covered by the intersection. */
     smallerElementOverlapPercent?: number;
+    /** Percentage of the control underneath covered by the intersection. */
+    obscuredElementOverlapPercent?: number;
     /** Control shown underneath the other control by hit-testing sampled overlap points. */
     obscuredSelector?: string;
     /** Control shown above the obscured control by hit-testing sampled overlap points. */
@@ -324,8 +341,8 @@ export interface ResponsiveCheckResult {
     /** Number of overlap points whose topmost interactive element identified the occluding control. */
     hitTestSampleCount?: number;
   }>;
-  lostInteractiveElements: Array<{ selector: string; name: string }>;
-  textResizeLostInteractiveElements?: Array<{ selector: string; name: string }>;
+  lostInteractiveElements: Array<{ selector: string; name: string; repeatConfirmed?: boolean }>;
+  textResizeLostInteractiveElements?: Array<{ selector: string; name: string; repeatConfirmed?: boolean }>;
 }
 
 export interface DisclosureCheckResult {
@@ -353,6 +370,7 @@ export interface DisclosureCheckResult {
   beforeState?: DisclosureStateSnapshot;
   afterEnterState?: DisclosureStateSnapshot;
   afterSpaceState?: DisclosureStateSnapshot;
+  controlledFocusableCount?: number;
   firstTabSelector: string | null;
   tabEnteredControlledRegion: boolean | null;
   restorationError?: string;

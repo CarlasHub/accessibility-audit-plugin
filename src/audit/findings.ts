@@ -572,52 +572,6 @@ function domFindings(audit: ViewportAudit): Finding[] {
     }));
   }
 
-  if (audit.dom.mainCount === 0) {
-    findings.push(makeFinding({
-      identity: 'main-landmark|page',
-      ruleId: 'missing-main-landmark',
-      classification: 'confirmed',
-      severity: 'Serious',
-      wcag: ['1.3.1', '2.4.1'],
-      summary: 'The page has no main landmark',
-      issue: 'No main element or role="main" was present.',
-      impact: 'Screen-reader users cannot move directly to the primary page content using landmark navigation.',
-      testing: 'The rendered DOM was queried for main and role="main" landmarks.',
-      remediation: 'Wrap the unique primary content in one semantic main element. Do not place repeated site chrome inside it.',
-      component: 'page structure',
-      urls: [audit.url],
-      viewports: [audit.viewport.name],
-      selectors: [],
-      evidence: [evidence('dom', undefined, 'main landmark count: 0')],
-      assignment: 'Development',
-      effort: 'Small',
-      translationRequired: 'No'
-    }));
-  }
-
-  if (audit.dom.h1Count !== 1) {
-    findings.push(makeFinding({
-      identity: 'heading-one|page',
-      ruleId: 'heading-one-review',
-      classification: 'review',
-      severity: 'Moderate',
-      wcag: ['1.3.1', '2.4.6'],
-      summary: 'Review the page-level heading structure',
-      issue: `The page contains ${audit.dom.h1Count} h1 elements. Automated counting cannot determine whether the hierarchy describes the content accurately.`,
-      impact: 'An unclear heading hierarchy can make content difficult to understand and navigate.',
-      testing: 'The rendered h1 elements were counted; heading meaning and hierarchy require content review.',
-      remediation: 'Provide a descriptive page-level heading and arrange subsequent headings in a logical hierarchy that reflects the page content.',
-      component: 'page headings',
-      urls: [audit.url],
-      viewports: [audit.viewport.name],
-      selectors: ['h1'],
-      evidence: [evidence('dom', 'h1', `h1 count: ${audit.dom.h1Count}`)],
-      assignment: 'Content',
-      effort: 'Small',
-      translationRequired: 'Review'
-    }));
-  }
-
   for (const item of audit.dom.missingAltImages) {
     findings.push(makeFinding({
       identity: `missing-alt|${normalizeComponent(item.selector)}`,
@@ -863,69 +817,24 @@ function domFindings(audit: ViewportAudit): Finding[] {
     }));
   }
 
-  if (audit.responsive.textSpacingOverflow > Math.max(2, audit.responsive.horizontalOverflow + 2)) {
-    findings.push(makeFinding({
-      identity: 'text-spacing|page',
-      ruleId: 'text-spacing-overflow',
-      classification: 'review',
-      severity: 'Moderate',
-      wcag: ['1.4.12'],
-      summary: 'Text-spacing overrides may cause content loss or overflow',
-      issue: `After applying WCAG text-spacing values, overflow increased to ${audit.responsive.textSpacingOverflow}px. Visual inspection is required to confirm clipping or overlap.`,
-      impact: 'People who increase spacing to read more comfortably may lose content or functionality.',
-      testing: 'WCAG text-spacing overrides were injected and page overflow was remeasured.',
-      remediation: 'Remove fixed heights and widths around text, allow wrapping, and test line, paragraph, letter, and word spacing together without clipping, overlap, or lost controls.',
-      component: 'page layout',
-      urls: [audit.url],
-      viewports: [audit.viewport.name],
-      selectors: [],
-      evidence: [evidence('responsive', undefined, `Text-spacing overflow: ${audit.responsive.textSpacingOverflow}px`)],
-      assignment: 'Development',
-      effort: 'Medium',
-      translationRequired: 'No'
-    }));
-  }
-
-  if ((audit.responsive.textResizeOverflow ?? 0) > Math.max(2, audit.responsive.horizontalOverflow + 2)) {
-    findings.push(makeFinding({
-      identity: 'text-resize-200|page',
-      ruleId: 'text-resize-200-overflow',
-      classification: 'review',
-      severity: 'Serious',
-      wcag: ['1.4.4', '1.4.10'],
-      summary: 'A 200% text resize may cause content loss or overflow',
-      issue: `After resizing root text to 200%, overflow increased to ${audit.responsive.textResizeOverflow}px. Visual inspection is required to distinguish content loss from a permitted two-dimensional layout.`,
-      impact: 'People who enlarge text may need to scroll in two directions or may lose content or functionality.',
-      testing: 'The root font size was overridden to 200% and document overflow was remeasured at the configured viewport.',
-      remediation: 'Use relative sizing and flexible containers so text can enlarge to 200% without clipping, overlap, or loss of functionality.',
-      component: 'page layout',
-      urls: [audit.url],
-      viewports: [audit.viewport.name],
-      selectors: [],
-      evidence: [evidence('responsive', undefined, `200% text-resize overflow: ${audit.responsive.textResizeOverflow}px`)],
-      assignment: 'Development',
-      effort: 'Medium',
-      translationRequired: 'No'
-    }));
-  }
-
-  for (const clipped of audit.responsive.clippedElements) {
-    const criteria = clipped.phase === 'text-spacing'
-      ? ['1.4.10', '1.4.12']
-      : clipped.phase === 'text-resize-200' ? ['1.4.4', '1.4.10'] : ['1.4.10'];
-    const phaseLabel = clipped.phase === 'text-spacing'
-      ? ' after text spacing'
-      : clipped.phase === 'text-resize-200' ? ' after 200% text resize' : ' at the narrow viewport';
+  // Aggregate overflow during a stress phase is diagnostic evidence, not a WCAG
+  // failure: horizontal scrolling can be valid and a descendant can intentionally
+  // extend beyond a carousel or other two-dimensional region. Report default
+  // reflow clipping here; stress phases require a repeat-confirmed loss below.
+  for (const clipped of audit.responsive.clippedElements.filter((item) => item.phase === 'default')) {
+    const clippingConfirmed = clipped.repeatConfirmed === true && Boolean(clipped.contentSelector);
     findings.push(makeFinding({
       identity: `responsive-clipped|${clipped.phase}|${normalizeComponent(clipped.selector)}`,
       ruleId: 'responsive-content-clipped',
-      classification: 'review',
+      classification: clippingConfirmed ? 'confirmed' : 'review',
       severity: 'Moderate',
-      wcag: criteria,
-      summary: `Content may be clipped${phaseLabel}`,
-      issue: `${clipped.selector} has ${clipped.axis} scroll dimensions larger than its visible box while its overflow styling can clip content.`,
+      wcag: ['1.4.10'],
+      summary: `Content ${clippingConfirmed ? 'is' : 'may be'} clipped at the narrow viewport`,
+      issue: clippingConfirmed
+        ? `${clipped.contentSelector} (${clipped.contentKind ?? 'meaningful content'}) crossed the ${clipped.axis} clipping boundary of ${clipped.selector} in two settled samples.`
+        : `${clipped.selector} has ${clipped.axis} scroll dimensions larger than its visible box while its overflow styling can clip content.`,
       impact: 'Users who zoom, reflow content, or increase text spacing may be unable to perceive content or reach functionality.',
-      testing: `At the ${clipped.phase} phase, the element measured ${clipped.clientWidth}×${clipped.clientHeight} CSS pixels with scroll dimensions ${clipped.scrollWidth}×${clipped.scrollHeight}.`,
+      testing: `At the ${clipped.phase} phase, the element measured ${clipped.clientWidth}×${clipped.clientHeight} CSS pixels with scroll dimensions ${clipped.scrollWidth}×${clipped.scrollHeight}.${clippingConfirmed ? ' A repeat sample reproduced the same clipped content and boundary.' : ''}`,
       remediation: 'Allow content to wrap and containers to grow. If clipping is intentional, verify that no meaningful content or operable control is hidden at 320 CSS pixels and with WCAG text spacing.',
       component: normalizeComponent(clipped.selector),
       urls: [audit.url],
@@ -934,7 +843,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       evidence: [evidence('responsive', clipped.selector, JSON.stringify(clipped))],
       assignment: 'Development',
       effort: 'Medium',
-      translationRequired: 'Review'
+      translationRequired: clippingConfirmed ? 'No' : 'Review'
     }));
   }
 
@@ -952,8 +861,8 @@ function domFindings(audit: ViewportAudit): Finding[] {
 
   for (const overlaps of overlapGroups.values()) {
     const overlap = overlaps.reduce((largest, candidate) =>
-      (candidate.smallerElementOverlapPercent ?? candidate.overlapArea ?? 0)
-        > (largest.smallerElementOverlapPercent ?? largest.overlapArea ?? 0)
+      (candidate.obscuredElementOverlapPercent ?? candidate.smallerElementOverlapPercent ?? candidate.overlapArea ?? 0)
+        > (largest.obscuredElementOverlapPercent ?? largest.smallerElementOverlapPercent ?? largest.overlapArea ?? 0)
         ? candidate
         : largest
     );
@@ -974,7 +883,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       wcag: criteria,
       summary: `Interactive control may be obscured${phaseLabel}`,
       issue: obscuredSelector
-        ? `${obscuredSelector} was underneath ${occludingSelectors.length === 1 ? occludingSelectors[0] : `${occludingSelectors.length} other controls`} at every sampled point in an overlap covering up to ${Math.round(overlap.smallerElementOverlapPercent ?? 0)}% of the smaller element. Human review must confirm whether this prevents perception, activation, or visible focus.`
+        ? `${obscuredSelector} was underneath ${occludingSelectors.length === 1 ? occludingSelectors[0] : `${occludingSelectors.length} other controls`} at every sampled point in an overlap covering up to ${Math.round(overlap.obscuredElementOverlapPercent ?? overlap.smallerElementOverlapPercent ?? 0)}% of the obscured control. Human review must confirm whether this prevents perception, activation, or visible focus.`
         : `${overlaps.length === 1 ? 'Two visible interactive elements overlap' : `${overlaps.length} related interactive-element overlaps were detected`} by up to ${overlap.overlapWidth}×${overlap.overlapHeight} CSS pixels. Review whether a control, label, or focus indicator is obscured.`,
       impact: 'Overlapping controls can hide information, make a target difficult to activate, or obscure keyboard focus.',
       testing: obscuredSelector
@@ -993,51 +902,59 @@ function domFindings(audit: ViewportAudit): Finding[] {
   }
 
   if (audit.responsive.lostInteractiveElements.length > 0) {
+    const lossConfirmed = audit.responsive.lostInteractiveElements.every((item) => item.repeatConfirmed === true);
     const selectors = audit.responsive.lostInteractiveElements.map((item) => item.selector);
+    const normalizedSelectors = [...new Set(selectors.map(normalizeComponent))].sort();
+    const component = normalizedSelectors.length === 1 ? normalizedSelectors[0]! : 'responsive layout';
     findings.push(makeFinding({
-      identity: `text-spacing-lost-functionality|${selectors.map(normalizeComponent).sort().join('|')}`,
+      identity: `text-spacing-lost-functionality|${normalizedSelectors.join('|')}`,
       ruleId: 'text-spacing-functionality-lost',
-      classification: 'review',
+      classification: lossConfirmed ? 'confirmed' : 'review',
       severity: 'Serious',
       wcag: ['1.4.12'],
-      summary: 'Interactive content may disappear after text spacing is increased',
+      summary: `Interactive content ${lossConfirmed ? 'disappears' : 'may disappear'} after text spacing is increased`,
       issue: `${audit.responsive.lostInteractiveElements.length} control(s) that were visible before the WCAG text-spacing override were no longer visibly rendered afterwards.`,
       impact: 'People who increase text spacing may lose access to controls or functionality.',
-      testing: 'Visible interactive elements were inventoried before and after applying the WCAG text-spacing values, then compared by stable selector.',
+      testing: `Visible interactive elements were inventoried before and after applying the WCAG text-spacing values, then compared by stable selector.${lossConfirmed ? ' The loss was reproduced in two settled stress samples from a stable two-sample baseline.' : ''}`,
       remediation: 'Remove fixed-height clipping and layout constraints so controls remain visible, readable, and operable with increased line, paragraph, word, and letter spacing.',
-      component: 'responsive layout',
+      component,
+      sharedComponentKey: createSharedComponentKey(component, `text-spacing-functionality-lost|${normalizedSelectors.join('|')}`),
       urls: [audit.url],
       viewports: [audit.viewport.name],
       selectors,
       evidence: audit.responsive.lostInteractiveElements.map((item) => evidence('responsive', item.selector, `Previously visible control disappeared: ${item.name || 'unnamed control'}.`)),
       assignment: 'Development',
       effort: 'Medium',
-      translationRequired: 'Review'
+      translationRequired: lossConfirmed ? 'No' : 'Review'
     }));
   }
 
   if ((audit.responsive.textResizeLostInteractiveElements?.length ?? 0) > 0) {
     const lost = audit.responsive.textResizeLostInteractiveElements ?? [];
+    const lossConfirmed = lost.every((item) => item.repeatConfirmed === true);
     const selectors = lost.map((item) => item.selector);
+    const normalizedSelectors = [...new Set(selectors.map(normalizeComponent))].sort();
+    const component = normalizedSelectors.length === 1 ? normalizedSelectors[0]! : 'responsive layout';
     findings.push(makeFinding({
-      identity: `text-resize-lost-functionality|${selectors.map(normalizeComponent).sort().join('|')}`,
+      identity: `text-resize-lost-functionality|${normalizedSelectors.join('|')}`,
       ruleId: 'text-resize-functionality-lost',
-      classification: 'review',
+      classification: lossConfirmed ? 'confirmed' : 'review',
       severity: 'Serious',
       wcag: ['1.4.4', '1.4.10'],
-      summary: 'Interactive content may disappear after text is resized to 200%',
+      summary: `Interactive content ${lossConfirmed ? 'disappears' : 'may disappear'} after text is resized to 200%`,
       issue: `${lost.length} control(s) visible before the 200% text resize were no longer visibly rendered afterwards.`,
       impact: 'People who enlarge text may lose access to controls or functionality.',
-      testing: 'Visible interactive elements were inventoried before and after the 200% root text-size override, then compared by stable selector.',
+      testing: `Visible interactive elements were inventoried before and after the 200% root text-size override, then compared by stable selector.${lossConfirmed ? ' The loss was reproduced in two settled stress samples from a stable two-sample baseline.' : ''}`,
       remediation: 'Use relative sizing and flexible layouts so every control remains visible and operable when text is enlarged to 200%.',
-      component: 'responsive layout',
+      component,
+      sharedComponentKey: createSharedComponentKey(component, `text-resize-functionality-lost|${normalizedSelectors.join('|')}`),
       urls: [audit.url],
       viewports: [audit.viewport.name],
       selectors,
       evidence: lost.map((item) => evidence('responsive', item.selector, `Previously visible control disappeared: ${item.name || 'unnamed control'}.`)),
       assignment: 'Development',
       effort: 'Medium',
-      translationRequired: 'Review'
+      translationRequired: lossConfirmed ? 'No' : 'Review'
     }));
   }
 
@@ -1077,16 +994,17 @@ function domFindings(audit: ViewportAudit): Finding[] {
 
   const outsideViewport = audit.keyboard.sequence.filter((item) => item.outsideViewport);
   for (const [component, items] of groupKeyboardItems(outsideViewport)) {
+    const focusLossConfirmed = items.every((item) => item.outsideViewportConfirmed === true);
     findings.push(makeFinding({
       identity: `focus-outside-viewport|${component}`,
       ruleId: 'keyboard-focus-outside-viewport',
-      classification: 'review',
+      classification: focusLossConfirmed ? 'confirmed' : 'review',
       severity: 'Serious',
       wcag: ['2.4.11'],
-      summary: 'Keyboard focus may move outside the visible viewport',
+      summary: `Keyboard focus ${focusLossConfirmed ? 'moves' : 'may move'} outside the visible viewport`,
       issue: `Sequential focus reached ${items.length} element(s) whose rendered bounds were outside the visible viewport after focus settled.`,
       impact: 'Keyboard users may lose track of focus and be unable to identify the currently active control.',
-      testing: `The deterministic keyboard traversal checked focused-element bounds after each Tab step; affected positions: ${items.map((item) => item.index).join(', ')}.`,
+      testing: `The deterministic keyboard traversal checked focused-element bounds after each Tab step; affected positions: ${items.map((item) => item.index).join(', ')}.${focusLossConfirmed ? ' Each affected focus target remained outside the viewport in a second settled sample.' : ''}`,
       remediation: 'Scroll focused controls into view, remove hidden elements from the focus order, and ensure overlays do not separate visual and programmatic focus.',
       component,
       urls: [audit.url],
@@ -1283,7 +1201,11 @@ function domFindings(audit: ViewportAudit): Finding[] {
       }));
     }
 
-    const focusOrderReviews = completed.filter((item) => item.tabEnteredControlledRegion === false);
+    const focusOrderReviews = completed.filter((item) => (
+      item.controlledFocusableCount !== undefined
+      && item.controlledFocusableCount > 0
+      && item.tabEnteredControlledRegion === false
+    ));
     if (focusOrderReviews.length) {
       findings.push(makeFinding({
         identity: `disclosure-focus-order|${component}`,
@@ -1393,17 +1315,20 @@ function domFindings(audit: ViewportAudit): Finding[] {
   }
 
   for (const table of audit.dom.tablesForReview) {
+    const tableConfirmed = table.classification === 'confirmed';
     findings.push(makeFinding({
       identity: `table-semantics|${normalizeComponent(table.selector)}`,
-      ruleId: 'table-semantics-review',
-      classification: 'review',
+      ruleId: tableConfirmed ? 'table-missing-headers' : 'table-semantics-review',
+      classification: tableConfirmed ? 'confirmed' : 'review',
       severity: 'Moderate',
       wcag: ['1.3.1'],
-      summary: 'Review table headers and name',
+      summary: tableConfirmed ? 'Data table has no header cells' : 'Review table semantics',
       issue: table.reason,
       impact: 'Screen-reader users may not understand the table purpose or the relationship between headers and data cells.',
-      testing: 'Rendered table markup was checked for header cells and a programmatic name.',
-      remediation: 'Use tables only for data, provide descriptive header cells with correct scope or headers relationships, and add a caption or other programmatic name when needed.',
+      testing: tableConfirmed
+        ? `Rendered table geometry and markup were checked. The table has ${table.rowCount ?? 'multiple'} rows and ${table.columnCount ?? 'multiple'} columns but no th elements.`
+        : 'Rendered table markup was checked for data-table header relationships.',
+      remediation: 'Use tables only for data and provide descriptive header cells with correct scope or headers relationships.',
       component: normalizeComponent(table.selector),
       sharedComponentKey: createSharedComponentKey(normalizeComponent(table.selector), table.reason),
       urls: [audit.url],
@@ -1412,7 +1337,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       evidence: [evidence('dom', table.selector, table.reason)],
       assignment: 'Development',
       effort: 'Medium',
-      translationRequired: 'Review'
+      translationRequired: tableConfirmed ? 'No' : 'Review'
     }));
   }
 

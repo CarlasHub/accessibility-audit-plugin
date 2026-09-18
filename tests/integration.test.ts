@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 import { describe, expect, it } from 'vitest';
 import { resolveOptions } from '../src/config.js';
 import { auditViewport, runAudit, type AuditViewportDependencies } from '../src/audit/runner.js';
-import { runResponsiveChecks } from '../src/audit/browser-checks.js';
+import { runDomChecks, runKeyboardChecks, runLinkChecks, runResponsiveChecks } from '../src/audit/browser-checks.js';
 import { runConfiguredJourneyChecks } from '../src/audit/journey-checks.js';
 import { buildCoverageMatrix } from '../src/audit/coverage.js';
 import { findingsFromPage } from '../src/audit/findings.js';
@@ -181,6 +181,12 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
           .wide { width: 300px; height: 20px; }
           .resize-width { width: 20rem; }
           .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+          .image-replacement { display: block; width: 34px; height: 34px; overflow: hidden; text-indent: -9999px; }
+          .cover-hero img { width: 300px; height: 40px; object-fit: cover; }
+          .card-link { display: block; width: 280px; height: 100px; }
+          .card-action { position: absolute; left: 250px; top: 0; width: 30px; height: 40px; }
+          .sticky-action { position: fixed; left: 0; top: 0; width: 120px; height: 40px; z-index: 2; }
+          .scroll-spacer { height: 1000px; }
         </style>
         <main>
           <div id="stories-carousel" class="viewport carousel">
@@ -189,19 +195,94 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
               <div class="carousel-slide">Two</div>
             </div>
           </div>
+          <div id="slick-shell" class="viewport">
+            <div class="js-slick-carousel slick-slider">
+              <div class="slick-list">
+                <div class="track slick-track">
+                  <div class="carousel-slide slick-slide"><button>Previous story</button></div>
+                  <div class="carousel-slide slick-slide"><button>Next story</button></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="decorative-hero" class="viewport"><div class="wide"><img src="hero.png" alt="" width="300" height="20"></div></div>
+          <div id="meaningful-image-clip" class="viewport"><img src="chart.png" alt="Quarterly sales chart" width="300" height="20"></div>
+          <div id="cover-image-clip" class="viewport cover-hero"><img src="hero.png" alt="Colleagues working together"></div>
           <div id="genuine-clipping" class="viewport"><div class="wide">Clipped content</div></div>
           <p class="resize-width">This line fits at the default text size and overflows when root text is resized to 200%.</p>
           <span id="assistive-copy" class="sr-only">Useful screen reader instructions that are intentionally hidden visually.</span>
+          <a id="image-replacement" class="image-replacement" href="/social">Social profile</a>
+          <a id="swap-old" href="/same-destination">Stable action</a>
+          <button id="lost-control">Removed action</button>
+          <div style="position: relative"><a class="card-link" href="/job">Job details</a><button class="card-action">Save</button></div>
+          <button class="sticky-action">Sticky navigation</button>
+          <div class="scroll-spacer"></div>
+          <button id="lower-action">Lower page action</button>
         </main>
+        <script>
+          const observer = new MutationObserver(() => {
+            const oldLink = document.querySelector('#swap-old');
+            if (oldLink) {
+              const newLink = document.createElement('a');
+              newLink.id = 'swap-new';
+              newLink.href = '/same-destination';
+              newLink.textContent = 'Stable action';
+              oldLink.replaceWith(newLink);
+            }
+            document.querySelector('#lost-control')?.remove();
+          });
+          observer.observe(document.head, { childList: true });
+        </script>
       `);
 
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       const result = await runResponsiveChecks(page);
       expect(result.clippedElements.some((element) => element.selector === '#stories-carousel')).toBe(false);
+      expect(result.clippedElements.some((element) => element.selector === '#slick-shell')).toBe(false);
+      expect(result.clippedElements.some((element) => element.selector === '#decorative-hero')).toBe(false);
+      expect(result.clippedElements.some((element) => element.selector === '#meaningful-image-clip')).toBe(true);
+      expect(result.clippedElements.some((element) => element.selector === '#cover-image-clip')).toBe(false);
       expect(result.clippedElements.some((element) => element.selector === '#genuine-clipping')).toBe(true);
       expect(result.clippedElements.filter((element) => element.selector === '#genuine-clipping')).toHaveLength(1);
+      expect(result.clippedElements
+        .filter((element) => ['#meaningful-image-clip', '#genuine-clipping'].includes(element.selector))
+        .every((element) => element.repeatConfirmed === true && Boolean(element.contentSelector))).toBe(true);
       expect(result.clippedElements.some((element) => element.selector === '#assistive-copy')).toBe(false);
+      expect(result.clippedElements.some((element) => element.selector === '#image-replacement')).toBe(false);
       expect(result.textResizeOverflow).toBeGreaterThan(result.horizontalOverflow);
-      expect(result.textResizeLostInteractiveElements).toEqual([]);
+      expect(result.textResizeLostInteractiveElements).toEqual([{ selector: '#lost-control', name: 'Removed action', repeatConfirmed: true }]);
+      expect(result.lostInteractiveElements).toEqual([{ selector: '#lost-control', name: 'Removed action', repeatConfirmed: true }]);
+      expect(result.overlapPairs.some((pair) => pair.firstSelector.includes('card-link') || pair.secondSelector.includes('card-link'))).toBe(false);
+      expect(result.overlapPairs.some((pair) => pair.firstSelector === '#lower-action' || pair.secondSelector === '#lower-action')).toBe(false);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('confirms multi-row data tables without headers and ignores ambiguous fragment links', async () => {
+    const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+    const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html lang="en"><head><title>Semantics</title></head><body>
+        <table id="layout"><tr><td>From £17</td><td>To £19</td></tr></table>
+        <table id="entities"><tr><td>Brand</td><td>Country</td></tr><tr><td>L'Oréal</td><td>France</td></tr></table>
+        <table id="headed"><tr><th scope="col">Brand</th><th scope="col">Country</th></tr><tr><td>L'Oréal</td><td>France</td></tr></table>
+        <a id="cookie-settings" href="#">Cookie settings</a>
+        <a id="script-control" href="javascript:void(0)">Open filters</a>
+      </body></html>`);
+
+      const dom = await runDomChecks(page);
+      const links = await runLinkChecks(page, 10);
+
+      expect(dom.tablesForReview).toEqual([expect.objectContaining({
+        selector: '#entities',
+        classification: 'confirmed',
+        rowCount: 2,
+        columnCount: 2
+      })]);
+      expect(links.results.some((result) => result.selector === '#cookie-settings')).toBe(false);
+      expect(links.results).toEqual([expect.objectContaining({ selector: '#script-control', classification: 'review' })]);
     } finally {
       await browser.close();
     }
@@ -390,9 +471,74 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       'keyboard-focus-outside-viewport',
       'keyboard-journey-bypass-blocks'
     ]));
-    expect(failResult.criteria?.find((criterion) => criterion.criterion === '1.4.10')?.status).toBe('inconclusive');
+    expect(failResult.criteria?.find((criterion) => criterion.criterion === '1.4.10')?.status).toBe('failed');
     expect(failResult.humanAssessmentRequired).toBe(true);
     expect(failResult.conformanceDecision).toBe('not-determined');
+  }, 120_000);
+
+  it('waits for smooth focus scrolling and compares reverse focus by stable element identity', async () => {
+    const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+    const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
+    try {
+      const page = await browser.newPage({ viewport: { width: 390, height: 500 } });
+      await page.setContent(`<!doctype html>
+        <html lang="en">
+          <head>
+            <style>
+              html { scroll-behavior: smooth; }
+              button { display: block; margin: 8px; }
+              .spacer { height: 1100px; }
+            </style>
+          </head>
+          <body>
+            <header class="section-1"><button>First action</button></header>
+            <div class="spacer"></div>
+            <section><button id="middle-action">Middle action</button></section>
+            <div class="spacer"></div>
+            <main><button id="far-action">Far action</button></main>
+            <script>
+              document.querySelector('#far-action').addEventListener('focus', () => {
+                document.querySelector('header').classList.add('is-scroll-hidden');
+              });
+            </script>
+          </body>
+        </html>`);
+
+      const result = await runKeyboardChecks(page, 3);
+
+      expect(result.sequence).toHaveLength(3);
+      expect(result.sequence.every((item) => item.outsideViewport === false)).toBe(true);
+      expect(result.journeys).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'forward-reverse-focus-order', status: 'passed' })
+      ]));
+    } finally {
+      await browser.close();
+    }
+  }, 120_000);
+
+  it('repeat-confirms keyboard focus that remains outside the viewport', async () => {
+    const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+    const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
+    try {
+      const page = await browser.newPage({ viewport: { width: 390, height: 500 } });
+      await page.setContent(`<!doctype html>
+        <html lang="en">
+          <body>
+            <button>Visible action</button>
+            <a id="inactive-clone" href="/hidden" style="position:fixed;left:-2000px;top:0">Inactive cloned action</a>
+          </body>
+        </html>`);
+
+      const result = await runKeyboardChecks(page, 2);
+
+      expect(result.sequence[1]).toEqual(expect.objectContaining({
+        selector: '#inactive-clone',
+        outsideViewport: true,
+        outsideViewportConfirmed: true
+      }));
+    } finally {
+      await browser.close();
+    }
   }, 120_000);
 
   it('runs axe under a strict CSP and blocks redirects outside the authorized hosts', async () => {
@@ -462,8 +608,10 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
           <main id="main"><h1>Page content</h1><button id="page-action">Page action</button></main>
           <script>
             document.querySelector('#system-ialert-reject-button').addEventListener('click', () => {
-              document.querySelector('#system-ialert').remove();
-              document.body.classList.remove('system-ialert-active');
+              setTimeout(() => {
+                document.querySelector('#system-ialert').remove();
+                document.body.classList.remove('system-ialert-active');
+              }, 700);
             });
           </script>
         </body>
@@ -505,6 +653,47 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
     }
   }, 120_000);
 
+  it('blocks page interaction checks when a visible consent surface cannot be dismissed', async () => {
+    const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+    const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
+    try {
+      const fixture = `<!doctype html><html lang="en"><head><title>Consent blocker</title></head><body>
+        <main><h1>Page</h1><button>Page action</button></main>
+        <div id="onetrust-banner-sdk" style="position:fixed;left:0;right:0;bottom:0;height:120px;background:white">
+          <p>Cookie and privacy consent choices</p><button>Reject all</button>
+        </div>
+      </body></html>`;
+      const url = `data:text/html,${encodeURIComponent(fixture)}`;
+      const viewport = { name: 'desktop', width: 1200, height: 800 };
+      let keyboardCalls = 0;
+      const audit = await auditViewport(browser, url, resolveOptions({
+        auditor: 'Consent blocker fixture',
+        outputDir: await mkdtemp(join(tmpdir(), 'a11y-consent-blocker-')),
+        allowedHosts: [],
+        stagingOnly: false,
+        concurrency: 1,
+        captureScreenshots: false,
+        viewports: [viewport],
+        ...(channel ? { channel } : {})
+      }), viewport, undefined, {
+        runKeyboardChecks: async () => {
+          keyboardCalls += 1;
+          throw new Error('keyboard checks must not run behind consent');
+        }
+      });
+
+      expect(audit.consent).toEqual(expect.objectContaining({ found: true, dismissed: false }));
+      expect(audit.interactionBlocker).toEqual(expect.objectContaining({
+        selector: '#onetrust-banner-sdk',
+        role: 'consent surface'
+      }));
+      expect(keyboardCalls).toBe(0);
+      expect(audit.partial).toBe(true);
+    } finally {
+      await browser.close();
+    }
+  }, 120_000);
+
   it('re-queries delayed re-rendered disclosures and excludes hidden clones from state evidence', async () => {
     const fixture = `<!doctype html>
       <html lang="en">
@@ -526,6 +715,8 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
             <div id="slow-panel" aria-hidden="true" hidden><a href="#slow-content">Slow content</a></div>
             <button id="broken-toggle" aria-expanded="false" aria-controls="broken-panel">Broken menu</button>
             <div id="broken-panel" hidden>Broken content</div>
+            <button id="static-toggle" aria-expanded="false" aria-controls="static-panel">Static answer</button>
+            <div id="static-panel" hidden>There are no controls in this answer.</div>
             <button id="relationship-only" aria-expanded="false">Relationship-free disclosure</button>
             <button id="locked-open" aria-expanded="true" aria-controls="locked-panel">Always open</button>
             <div id="locked-panel">Always visible content</div>
@@ -555,6 +746,11 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
                 replaceAfterDelay('broken-toggle', () => {
                   document.getElementById('broken-panel').hidden = false;
                 });
+              }
+              if (target.id === 'static-toggle') {
+                const nextExpanded = target.getAttribute('aria-expanded') !== 'true';
+                target.setAttribute('aria-expanded', String(nextExpanded));
+                document.getElementById('static-panel').hidden = !nextExpanded;
               }
               if (target.id === 'relationship-only') {
                 const nextExpanded = target.getAttribute('aria-expanded') !== 'true';
@@ -622,17 +818,24 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
         controlledExposed: false
       }));
       expect(viewport.disclosures.some((item) => item.selector === '#hidden-clone')).toBe(false);
+      expect(viewport.disclosures.find((item) => item.selector === '#static-toggle')).toEqual(expect.objectContaining({
+        controlledFocusableCount: 0,
+        tabEnteredControlledRegion: null
+      }));
       expect(viewport.disclosures.find((item) => item.selector === '#late-toggle')).toEqual(expect.objectContaining({
         enterTestCompleted: true,
         enterSettled: true,
         afterExpanded: 'true',
-        controlledVisibleAfterOpen: true
+        controlledVisibleAfterOpen: true,
+        controlledFocusableCount: 0,
+        tabEnteredControlledRegion: null
       }));
       expect(viewport.disclosures.find((item) => item.selector === '#locked-open')?.error).toContain('collapsed baseline');
       expect(result.findings.some((finding) => finding.ruleId === 'disclosure-state-not-updated' && finding.selectors.includes('#slow-toggle'))).toBe(false);
       expect(result.findings.some((finding) => finding.ruleId === 'disclosure-state-not-updated' && finding.selectors.includes('#relationship-only'))).toBe(false);
       expect(result.findings.some((finding) => finding.ruleId === 'disclosure-state-not-updated' && finding.selectors.includes('#locked-open'))).toBe(false);
       expect(result.findings.some((finding) => finding.ruleId === 'disclosure-state-not-updated' && finding.selectors.includes('#broken-toggle'))).toBe(true);
+      expect(result.findings.some((finding) => finding.ruleId === 'disclosure-focus-order')).toBe(false);
     } finally {
       await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()));
     }

@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { resolveOptions, type AuditConfigInput } from './config.js';
 import type { AuditJourneyDefinition, AuditProgressEvent, Finding, Severity } from './types.js';
 import { executeAudit, type AuditRunResult } from './service.js';
+import { splitUrlListValue } from './urls.js';
 
 export const FAILURE_POLICIES = ['none', 'blockers', 'confirmed', 'critical', 'serious', 'moderate', 'minor'] as const;
 export type FailurePolicy = (typeof FAILURE_POLICIES)[number];
@@ -46,10 +47,10 @@ export function parseListInput(value: string, allowCommas = false): string[] {
     if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== 'string')) {
       throw new Error('List inputs using JSON must contain only strings.');
     }
-    return parsed.map((item) => item.trim()).filter(Boolean);
+    return parsed.flatMap((item) => splitUrlListValue(item));
   }
   const separator = allowCommas ? /[\r\n,]+/ : /[\r\n]+/;
-  return trimmed.split(separator).map((item) => item.trim()).filter(Boolean);
+  return trimmed.split(separator).flatMap((item) => splitUrlListValue(item));
 }
 
 export function resolveAllowedHosts(inputs: string[], configuredHosts: string[]): string[] {

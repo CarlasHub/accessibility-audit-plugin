@@ -151392,13 +151392,19 @@ async function runDomChecks(page, axeTargetSizeSelectors = []) {
         const tablesForReview = [...document.querySelectorAll('table')]
             .filter(visible)
             .flatMap((table) => {
-            const reasons = [];
-            if (!table.querySelector('th'))
-                reasons.push('No header cells were found.');
-            if (!table.querySelector('caption') && !table.getAttribute('aria-label') && !table.getAttribute('aria-labelledby')) {
-                reasons.push('No programmatic table name was found.');
-            }
-            return reasons.length ? [{ selector: cssPath(table), reason: reasons.join(' ') }] : [];
+            if (/^(presentation|none)$/i.test(table.getAttribute('role') ?? ''))
+                return [];
+            const rows = [...table.rows].filter((row) => row.closest('table') === table);
+            const columnCount = Math.max(0, ...rows.map((row) => row.cells.length));
+            if (table.querySelector('th') || rows.length < 2 || columnCount < 2)
+                return [];
+            return [{
+                    selector: cssPath(table),
+                    reason: `A visible ${rows.length}-row by ${columnCount}-column data table has no header cells.`,
+                    classification: 'confirmed',
+                    rowCount: rows.length,
+                    columnCount
+                }];
         });
         const autoplayMedia = [...document.querySelectorAll('audio[autoplay], video[autoplay]')]
             .filter(visible)
@@ -151480,17 +151486,10 @@ async function runLinkChecks(page, maxLinks) {
         const rawHref = candidate.rawHref.trim();
         if (!candidate.name || candidate.download || /^(mailto|tel|sms|data|blob):/i.test(rawHref))
             continue;
-        if (!rawHref || rawHref === '#') {
-            results.push({
-                selector: candidate.selector,
-                name: candidate.name,
-                href: rawHref,
-                status: null,
-                classification: 'review',
-                reason: 'The link uses an empty or placeholder destination. Confirm whether it should be a button or point to a real resource.'
-            });
+        // An empty fragment is commonly used as a script-backed control. The URL
+        // alone cannot prove a WCAG failure, so leave it to the interaction checks.
+        if (!rawHref || rawHref === '#')
             continue;
-        }
         if (/^javascript:/i.test(rawHref)) {
             results.push({
                 selector: candidate.selector,
@@ -151603,6 +151602,18 @@ async function runLinkChecks(page, maxLinks) {
     };
 }
 async function runKeyboardChecks(page, maxTabStops) {
+    const focusIdentityAttribute = 'data-a11y-audit-focus-id';
+    // Smooth scrolling can still be mid-animation when a focus position is
+    // sampled, which creates an audit-timing false positive. Normalising only
+    // scroll animation preserves the browser's actual focus order and final
+    // scroll destination while making the measurement deterministic.
+    const scrollBehaviorStyle = await page.addStyleTag({
+        content: 'html, body, * { scroll-behavior: auto !important; }'
+    });
+    await page.locator(`[${focusIdentityAttribute}]`).evaluateAll((elements, attribute) => {
+        for (const element of elements)
+            element.removeAttribute(attribute);
+    }, focusIdentityAttribute);
     await page.evaluate(() => {
         const body = document.body;
         body.dataset.auditTemporaryTabindex = String(body.getAttribute('tabindex') ?? '');
@@ -151612,12 +151623,54 @@ async function runKeyboardChecks(page, maxTabStops) {
     const sequence = [];
     let repeatedAt;
     const seen = new Set();
+    const focusIdentities = [];
+    const waitForFocusedElementToSettle = async () => {
+        await page.evaluate(async () => {
+            const element = document.activeElement;
+            if (!element || element === document.body)
+                return;
+            const intersectsViewport = (rect) => (rect.right > 0 && rect.bottom > 0 && rect.left < innerWidth && rect.top < innerHeight);
+            let previous = element.getBoundingClientRect();
+            if (intersectsViewport(previous))
+                return;
+            const started = performance.now();
+            let stableFrames = 0;
+            await new Promise((resolve) => {
+                const observe = () => {
+                    const current = element.getBoundingClientRect();
+                    if (intersectsViewport(current)) {
+                        resolve();
+                        return;
+                    }
+                    const moved = Math.abs(current.left - previous.left) > 0.5
+                        || Math.abs(current.top - previous.top) > 0.5
+                        || Math.abs(current.right - previous.right) > 0.5
+                        || Math.abs(current.bottom - previous.bottom) > 0.5;
+                    stableFrames = moved ? 0 : stableFrames + 1;
+                    previous = current;
+                    const elapsed = performance.now() - started;
+                    if (elapsed >= 750 || (elapsed >= 350 && stableFrames >= 5)) {
+                        resolve();
+                        return;
+                    }
+                    requestAnimationFrame(observe);
+                };
+                requestAnimationFrame(observe);
+            });
+        });
+    };
     for (let index = 0; index < maxTabStops; index += 1) {
         await page.keyboard.press('Tab');
+        await waitForFocusedElementToSettle();
         const item = await page.evaluate((position) => {
             const element = document.activeElement;
             if (!element || element === document.body)
                 return null;
+            let focusIdentity = element.getAttribute('data-a11y-audit-focus-id');
+            if (!focusIdentity) {
+                focusIdentity = `focus-${position}`;
+                element.setAttribute('data-a11y-audit-focus-id', focusIdentity);
+            }
             const cssPath = (target) => {
                 if (target.id)
                     return `#${CSS.escape(target.id)}`;
@@ -151690,12 +151743,10 @@ async function runKeyboardChecks(page, maxTabStops) {
             ];
             const focusedVisual = visualSignature(style);
             const focusVisible = element.matches(':focus-visible');
-            const scrollPosition = { x: scrollX, y: scrollY };
             element.blur();
             document.body.focus({ preventScroll: true });
             const unfocusedVisual = visualSignature(getComputedStyle(element));
-            element.focus({ preventScroll: true });
-            scrollTo(scrollPosition.x, scrollPosition.y);
+            element.focus();
             const visibleIndicator = focusVisible && focusedVisual.some((value, index) => value !== unfocusedVisual[index]);
             const modal = element.closest('[role="dialog"], [role="alertdialog"], [aria-modal="true"], #system-ialert');
             const pageChrome = element.closest('header, [role="banner"], footer, [role="contentinfo"]');
@@ -151704,6 +151755,7 @@ async function runKeyboardChecks(page, maxTabStops) {
                 ?? element;
             return {
                 index: position,
+                focusIdentity,
                 selector: cssPath(element),
                 name,
                 role: element.getAttribute('role') ?? element.tagName.toLowerCase(),
@@ -151716,20 +151768,32 @@ async function runKeyboardChecks(page, maxTabStops) {
         }, index + 1);
         if (!item)
             break;
-        const identity = `${item.selector}|${item.name}|${item.role}`;
-        if (seen.has(identity)) {
+        const outsideViewportConfirmed = item.outsideViewport
+            ? await page.waitForTimeout(120).then(() => page.evaluate(({ attribute, identity }) => {
+                const element = document.activeElement;
+                if (!element || element.getAttribute(attribute) !== identity)
+                    return false;
+                const rect = element.getBoundingClientRect();
+                return rect.right <= 0 || rect.bottom <= 0 || rect.left >= innerWidth || rect.top >= innerHeight;
+            }, { attribute: focusIdentityAttribute, identity: item.focusIdentity }))
+            : false;
+        const { focusIdentity, ...sequenceItem } = item;
+        if (seen.has(focusIdentity)) {
             repeatedAt = index + 1;
             break;
         }
-        seen.add(identity);
-        sequence.push(item);
+        seen.add(focusIdentity);
+        focusIdentities.push(focusIdentity);
+        sequence.push({ ...sequenceItem, outsideViewportConfirmed });
     }
     const journeys = [];
     if (sequence.length >= 2) {
-        const expected = sequence.slice(0, Math.min(sequence.length, 21)).map((item) => item.selector).reverse().slice(1);
+        const sampleSize = Math.min(sequence.length, 21);
+        const expected = focusIdentities.slice(0, sampleSize).reverse().slice(1);
         const actual = [];
-        const lastSelector = sequence[Math.min(sequence.length, 21) - 1].selector;
-        const focused = await page.locator(lastSelector).first().focus().then(() => true).catch(() => false);
+        const lastSelector = sequence[sampleSize - 1].selector;
+        const lastFocusIdentity = focusIdentities[sampleSize - 1];
+        const focused = await page.locator(`[${focusIdentityAttribute}="${lastFocusIdentity}"]`).first().focus().then(() => true).catch(() => false);
         if (focused) {
             for (let index = 0; index < expected.length; index += 1) {
                 await page.keyboard.press('Shift+Tab');
@@ -151737,40 +151801,26 @@ async function runKeyboardChecks(page, maxTabStops) {
                     const target = document.activeElement;
                     if (!target || target === document.body)
                         return 'document-body';
-                    if (target.id)
-                        return `#${CSS.escape(target.id)}`;
-                    const parts = [];
-                    let current = target;
-                    while (current && current !== document.documentElement && current !== document.body && parts.length < 6) {
-                        let part = current.tagName.toLowerCase();
-                        const stableClasses = [...current.classList].filter((value) => !/\d{3,}/.test(value)).slice(0, 2);
-                        if (stableClasses.length)
-                            part += `.${stableClasses.map((value) => CSS.escape(value)).join('.')}`;
-                        if (current.parentElement) {
-                            const siblings = [...current.parentElement.children].filter((sibling) => sibling.tagName === current?.tagName);
-                            if (siblings.length > 1)
-                                part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
-                        }
-                        parts.unshift(part);
-                        current = current.parentElement;
-                    }
-                    return parts.join(' > ');
+                    return target.getAttribute('data-a11y-audit-focus-id') ?? 'untracked-focus-target';
                 }));
             }
         }
         const matches = focused && expected.every((selector, index) => actual[index] === selector);
+        const untracked = actual.includes('untracked-focus-target');
         journeys.push({
             id: 'forward-reverse-focus-order',
             title: 'Forward and reverse focus order',
-            status: focused ? (matches ? 'passed' : 'failed') : 'inconclusive',
+            status: focused ? (untracked ? 'inconclusive' : matches ? 'passed' : 'failed') : 'inconclusive',
             steps: [
                 `Recorded ${sequence.length} forward Tab stop${sequence.length === 1 ? '' : 's'}.`,
                 `Replayed ${actual.length} Shift+Tab stop${actual.length === 1 ? '' : 's'} from ${lastSelector}.`
             ],
             detail: focused
-                ? matches
-                    ? 'The sampled reverse sequence matched the forward sequence in reverse order.'
-                    : 'The sampled Shift+Tab sequence did not reverse the recorded Tab sequence; review focus management and dynamic page state.'
+                ? untracked
+                    ? 'A reverse Tab stop was re-rendered after the forward sample, so deterministic comparison was not possible.'
+                    : matches
+                        ? 'The sampled reverse sequence matched the forward sequence in reverse order.'
+                        : 'The sampled Shift+Tab sequence did not reverse the recorded Tab sequence; review focus management and dynamic page state.'
                 : 'The last sampled focus target could not be restored for deterministic reverse traversal.'
         });
     }
@@ -151845,6 +151895,11 @@ async function runKeyboardChecks(page, maxTabStops) {
                 : 'Activating the bypass link did not move focus or the viewport to its declared target.'
         });
     }
+    await page.locator(`[${focusIdentityAttribute}]`).evaluateAll((elements, attribute) => {
+        for (const element of elements)
+            element.removeAttribute(attribute);
+    }, focusIdentityAttribute);
+    await scrollBehaviorStyle.evaluate((element) => element.remove()).catch(() => undefined);
     await page.evaluate(() => {
         const body = document.body;
         const original = body.dataset.auditTemporaryTabindex;
@@ -151872,6 +151927,11 @@ async function runKeyboardChecks(page, maxTabStops) {
     };
 }
 async function runResponsiveChecks(page) {
+    // Keyboard and disclosure checks can leave a long page scrolled beneath a sticky header.
+    // Reflow evidence must start from a deterministic position instead of reporting whatever
+    // happened to be under that header at the end of an earlier test.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(50);
     const snapshot = (phase) => page.evaluate(({ currentPhase, focusables }) => {
         const cssPath = (element) => {
             if (element.id)
@@ -151898,17 +151958,31 @@ async function runResponsiveChecks(page) {
             const style = getComputedStyle(element);
             return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.contentVisibility !== 'hidden';
         };
-        const isIntentionalCarouselViewport = (element) => {
-            const identity = [
-                element.id,
-                typeof element.className === 'string' ? element.className : '',
-                element.getAttribute('aria-roledescription') ?? '',
-                element.getAttribute('data-carousel') === null ? '' : 'carousel'
-            ].join(' ');
-            if (!/(?:^|[\s_-])(carousel|slider)(?:$|[\s_-])/i.test(identity))
-                return false;
-            return element.querySelectorAll('[data-carousel], [class*="carousel-slide" i], [class~="slide" i], [role="group"]').length >= 2;
+        const carouselRootSelector = [
+            '[data-carousel]',
+            '[aria-roledescription="carousel" i]',
+            '.slick-slider',
+            '.js-slick-carousel',
+            '[class*="carousel" i]',
+            '[class*="slider" i]'
+        ].join(',');
+        const carouselSlideSelector = [
+            '.slick-slide',
+            '[data-carousel-slide]',
+            '[class*="carousel-slide" i]',
+            '[class~="slide" i]',
+            '[role="group"]'
+        ].join(',');
+        const verifiedCarouselRoot = (element) => {
+            let root = element;
+            while (root) {
+                if (root.matches(carouselRootSelector) && root.querySelectorAll(carouselSlideSelector).length >= 2)
+                    return root;
+                root = root.parentElement;
+            }
+            return null;
         };
+        const isIntentionalCarouselViewport = (element) => verifiedCarouselRoot(element) === element;
         const isIntentionallyVisuallyHidden = (element) => {
             const node = element;
             const style = getComputedStyle(node);
@@ -151922,6 +151996,83 @@ async function runResponsiveChecks(page) {
                 && (style.whiteSpace === 'nowrap' || clippedOut);
             const authoredHiddenClass = /(?:^|[\s_-])(?:sr-only|screen-reader-only|visually-hidden)(?:$|[\s_-])/i.test(typeof node.className === 'string' ? node.className : '');
             return clippedOut || (tinyClippedBox && authoredHiddenClass);
+        };
+        const usesOffscreenTextReplacement = (element) => {
+            const node = element;
+            const style = getComputedStyle(node);
+            const textIndent = Number.parseFloat(style.textIndent);
+            return Number.isFinite(textIndent)
+                && Math.abs(textIndent) >= 1_000
+                && /^(hidden|clip)$/.test(style.overflowX);
+        };
+        const isMeaningfulClippedNode = (element) => {
+            if (element.closest('[hidden], [inert], [aria-hidden="true"], .slick-cloned:not(.slick-active)'))
+                return false;
+            if (verifiedCarouselRoot(element))
+                return false;
+            if (isIntentionallyVisuallyHidden(element) || usesOffscreenTextReplacement(element))
+                return false;
+            if (element.matches(focusables))
+                return true;
+            if (element instanceof HTMLImageElement) {
+                // A cover image is deliberately cropped by its viewport; its accessible alternative
+                // remains available, so the crop alone is not lost or clipped content.
+                if (getComputedStyle(element).objectFit === 'cover' && !element.closest(focusables))
+                    return false;
+                return element.alt.trim().length > 0;
+            }
+            if (element instanceof HTMLVideoElement
+                || element instanceof HTMLCanvasElement
+                || element instanceof HTMLObjectElement
+                || element instanceof HTMLIFrameElement)
+                return true;
+            if ((element.getAttribute('aria-label') ?? element.getAttribute('title') ?? '').trim())
+                return true;
+            return [...element.childNodes].some((node) => node instanceof Text && Boolean(node.textContent?.trim()));
+        };
+        const findMeaningfulClippedContent = (element, horizontal, vertical) => {
+            const node = element;
+            const containerRect = node.getBoundingClientRect();
+            const left = containerRect.left + node.clientLeft;
+            const top = containerRect.top + node.clientTop;
+            const right = left + node.clientWidth;
+            const bottom = top + node.clientHeight;
+            const candidates = [element, ...element.querySelectorAll('*')].slice(0, 1_000);
+            const crossesBoundary = (rect) => {
+                if (rect.width <= 0 || rect.height <= 0)
+                    return false;
+                return (horizontal && (rect.left < left - 2 || rect.right > right + 2))
+                    || (vertical && (rect.top < top - 2 || rect.bottom > bottom + 2));
+            };
+            for (const candidate of candidates) {
+                if (!isMeaningfulClippedNode(candidate))
+                    continue;
+                const selector = cssPath(candidate);
+                if (candidate.matches(focusables) && crossesBoundary(candidate.getBoundingClientRect())) {
+                    return { selector, kind: 'interactive' };
+                }
+                if (candidate instanceof HTMLImageElement && crossesBoundary(candidate.getBoundingClientRect())) {
+                    return { selector, kind: 'image' };
+                }
+                if ((candidate instanceof HTMLVideoElement
+                    || candidate instanceof HTMLCanvasElement
+                    || candidate instanceof HTMLObjectElement
+                    || candidate instanceof HTMLIFrameElement)
+                    && crossesBoundary(candidate.getBoundingClientRect()))
+                    return { selector, kind: 'media' };
+                if ((candidate.getAttribute('aria-label') ?? candidate.getAttribute('title') ?? '').trim()
+                    && crossesBoundary(candidate.getBoundingClientRect()))
+                    return { selector, kind: 'labelled' };
+                for (const child of candidate.childNodes) {
+                    if (!(child instanceof Text) || !child.textContent?.trim())
+                        continue;
+                    const range = document.createRange();
+                    range.selectNodeContents(child);
+                    if ([...range.getClientRects()].some(crossesBoundary))
+                        return { selector, kind: 'text' };
+                }
+            }
+            return null;
         };
         const documentWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
         const overflowElements = [...document.body.querySelectorAll('*')]
@@ -151938,12 +152089,16 @@ async function runResponsiveChecks(page) {
             .filter(visible)
             .filter((element) => !isIntentionalCarouselViewport(element))
             .filter((element) => !isIntentionallyVisuallyHidden(element))
+            .filter((element) => !usesOffscreenTextReplacement(element))
             .flatMap((element) => {
             const node = element;
             const style = getComputedStyle(node);
             const horizontal = /^(hidden|clip)$/.test(style.overflowX) && node.scrollWidth > node.clientWidth + 2;
             const vertical = /^(hidden|clip)$/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 2;
             if (!horizontal && !vertical)
+                return [];
+            const clippedContent = findMeaningfulClippedContent(node, horizontal, vertical);
+            if (!clippedContent)
                 return [];
             return [{
                     selector: cssPath(node),
@@ -151952,7 +152107,9 @@ async function runResponsiveChecks(page) {
                     clientWidth: node.clientWidth,
                     clientHeight: node.clientHeight,
                     scrollWidth: node.scrollWidth,
-                    scrollHeight: node.scrollHeight
+                    scrollHeight: node.scrollHeight,
+                    contentSelector: clippedContent.selector,
+                    contentKind: clippedContent.kind
                 }];
         })
             .slice(0, 50);
@@ -152001,6 +152158,16 @@ async function runResponsiveChecks(page) {
                 const secondClearlyOccludes = secondOnTop >= 3 && firstOnTop === 0;
                 if (!firstClearlyOccludes && !secondClearlyOccludes)
                     continue;
+                const obscuredElementArea = firstClearlyOccludes
+                    ? secondRect.width * secondRect.height
+                    : firstRect.width * firstRect.height;
+                const obscuredElementOverlapPercent = obscuredElementArea > 0
+                    ? (overlapArea / obscuredElementArea) * 100
+                    : 0;
+                // A small control deliberately overlaid on a large linked card does not materially
+                // obscure the card. Measure the control underneath, not whichever control is smaller.
+                if (obscuredElementOverlapPercent < 25)
+                    continue;
                 const firstSelector = cssPath(first);
                 const secondSelector = cssPath(second);
                 overlapPairs.push({
@@ -152011,16 +152178,31 @@ async function runResponsiveChecks(page) {
                     overlapHeight: Math.round(overlapHeight * 10) / 10,
                     overlapArea: Math.round(overlapArea * 10) / 10,
                     smallerElementOverlapPercent: Math.round(smallerElementOverlapPercent * 10) / 10,
+                    obscuredElementOverlapPercent: Math.round(obscuredElementOverlapPercent * 10) / 10,
                     obscuredSelector: firstClearlyOccludes ? secondSelector : firstSelector,
                     occludingSelector: firstClearlyOccludes ? firstSelector : secondSelector,
                     hitTestSampleCount: Math.max(firstOnTop, secondOnTop)
                 });
             }
         }
-        const visibleInteractiveElements = interactive.map((element) => ({
-            selector: cssPath(element),
-            name: (element.getAttribute('aria-label') ?? element.textContent ?? element.getAttribute('title') ?? '').replace(/\s+/g, ' ').trim()
-        }));
+        const visibleInteractiveElements = interactive.map((element) => {
+            const name = (element.getAttribute('aria-label')
+                ?? element.getAttribute('title')
+                ?? element.querySelector('img[alt]')?.getAttribute('alt')
+                ?? element.textContent
+                ?? '').replace(/\s+/g, ' ').trim();
+            const role = element.getAttribute('role') ?? element.tagName.toLowerCase();
+            const destination = element instanceof HTMLAnchorElement
+                ? element.href
+                : element instanceof HTMLInputElement
+                    ? element.type
+                    : '';
+            return {
+                selector: cssPath(element),
+                name,
+                semanticKey: [role, name.toLocaleLowerCase(), destination].join('|')
+            };
+        });
         return {
             horizontalOverflow: Math.max(0, documentWidth - innerWidth),
             overflowElements,
@@ -152029,12 +152211,28 @@ async function runResponsiveChecks(page) {
             visibleInteractiveElements
         };
     }, { currentPhase: phase, focusables: focusableSelector });
-    const base = await snapshot('default');
+    const repeatedSnapshot = async (phase) => {
+        const first = await snapshot(phase);
+        await page.waitForTimeout(150);
+        const second = await snapshot(phase);
+        const clippingKey = (item) => (`${item.selector}|${item.axis}|${item.contentSelector ?? ''}`);
+        const secondClippingKeys = new Set(second.clippedElements.map(clippingKey));
+        const stableClippedElements = first.clippedElements
+            .filter((item) => secondClippingKeys.has(clippingKey(item)))
+            .map((item) => ({ ...item, repeatConfirmed: true }));
+        const overlapKey = (item) => (`${item.phase}|${[item.firstSelector, item.secondSelector].sort().join('|')}`);
+        const secondOverlapKeys = new Set(second.overlapPairs.map(overlapKey));
+        const stableOverlapPairs = first.overlapPairs.filter((item) => secondOverlapKeys.has(overlapKey(item)));
+        return { first, second, stableClippedElements, stableOverlapPairs };
+    };
+    const baseSamples = await repeatedSnapshot('default');
+    const base = baseSamples.second;
     const textResizeStyle = await page.addStyleTag({
         content: 'html { font-size: 200% !important; }'
     });
     await page.waitForTimeout(100);
-    const resized = await snapshot('text-resize-200');
+    const resizedSamples = await repeatedSnapshot('text-resize-200');
+    const resized = resizedSamples.second;
     await textResizeStyle.evaluate((element) => element.remove());
     const spacingStyle = await page.addStyleTag({
         content: `
@@ -152049,30 +152247,64 @@ async function runResponsiveChecks(page) {
     `
     });
     await page.waitForTimeout(100);
-    const spaced = await snapshot('text-spacing');
+    const spacedSamples = await repeatedSnapshot('text-spacing');
+    const spaced = spacedSamples.second;
     await spacingStyle.evaluate((element) => element.remove());
-    const spacedSelectors = new Set(spaced.visibleInteractiveElements.map((element) => element.selector));
-    const resizedSelectors = new Set(resized.visibleInteractiveElements.map((element) => element.selector));
-    const lostInteractiveElements = base.visibleInteractiveElements.filter((element) => !spacedSelectors.has(element.selector));
-    const textResizeLostInteractiveElements = base.visibleInteractiveElements.filter((element) => !resizedSelectors.has(element.selector));
-    const baseClippingKeys = new Set(base.clippedElements.map((item) => `${item.selector}|${item.axis}`));
-    const baseOverlapKeys = new Set(base.overlapPairs.map((item) => [item.firstSelector, item.secondSelector].sort().join('|')));
+    const sameInteractiveElement = (left, right) => left.selector === right.selector || (Boolean(left.semanticKey) && left.semanticKey === right.semanticKey);
+    const stableBaseline = baseSamples.first.visibleInteractiveElements.filter((element) => (baseSamples.second.visibleInteractiveElements.some((candidate) => sameInteractiveElement(element, candidate))));
+    const missingAfterStress = (stressedElements) => {
+        const remaining = [...stressedElements];
+        return stableBaseline.flatMap((element) => {
+            const matchIndex = remaining.findIndex((candidate) => sameInteractiveElement(element, candidate));
+            if (matchIndex >= 0) {
+                remaining.splice(matchIndex, 1);
+                return [];
+            }
+            return [{ selector: element.selector, name: element.name }];
+        });
+    };
+    const repeatConfirmedMissing = (firstStress, secondStress) => {
+        const secondMissing = new Set(missingAfterStress(secondStress).map((item) => item.selector));
+        return missingAfterStress(firstStress)
+            .filter((item) => secondMissing.has(item.selector))
+            .map((item) => ({ ...item, repeatConfirmed: true }));
+    };
+    const lostInteractiveElements = repeatConfirmedMissing(spacedSamples.first.visibleInteractiveElements, spacedSamples.second.visibleInteractiveElements);
+    const textResizeLostInteractiveElements = repeatConfirmedMissing(resizedSamples.first.visibleInteractiveElements, resizedSamples.second.visibleInteractiveElements);
+    const clippingKey = (item) => (item.selector);
+    const overlapKey = (item) => ([item.firstSelector, item.secondSelector].sort().join('|'));
+    const seenClipping = new Set();
+    const clippedElements = [
+        ...baseSamples.stableClippedElements,
+        ...resizedSamples.stableClippedElements,
+        ...spacedSamples.stableClippedElements
+    ].filter((item) => {
+        const key = clippingKey(item);
+        if (seenClipping.has(key))
+            return false;
+        seenClipping.add(key);
+        return true;
+    });
+    const seenOverlaps = new Set();
+    const overlapPairs = [
+        ...baseSamples.stableOverlapPairs,
+        ...resizedSamples.stableOverlapPairs,
+        ...spacedSamples.stableOverlapPairs
+    ].filter((item) => {
+        const key = overlapKey(item);
+        if (seenOverlaps.has(key))
+            return false;
+        seenOverlaps.add(key);
+        return true;
+    });
     return {
         completed: true,
         horizontalOverflow: base.horizontalOverflow,
         overflowElements: base.overflowElements,
         textResizeOverflow: resized.horizontalOverflow,
         textSpacingOverflow: spaced.horizontalOverflow,
-        clippedElements: [
-            ...base.clippedElements,
-            ...resized.clippedElements.filter((item) => !baseClippingKeys.has(`${item.selector}|${item.axis}`)),
-            ...spaced.clippedElements.filter((item) => !baseClippingKeys.has(`${item.selector}|${item.axis}`))
-        ],
-        overlapPairs: [
-            ...base.overlapPairs,
-            ...resized.overlapPairs.filter((item) => !baseOverlapKeys.has([item.firstSelector, item.secondSelector].sort().join('|'))),
-            ...spaced.overlapPairs.filter((item) => !baseOverlapKeys.has([item.firstSelector, item.secondSelector].sort().join('|')))
-        ],
+        clippedElements,
+        overlapPairs,
         lostInteractiveElements,
         textResizeLostInteractiveElements
     };
@@ -152529,6 +152761,7 @@ function incompleteDisclosureResult(identity, error, partial = {}) {
         spaceAfterExpanded: null,
         controlledVisibleAfterSpace: null,
         spaceTestCompleted: false,
+        controlledFocusableCount: 0,
         firstTabSelector: null,
         tabEnteredControlledRegion: null,
         ...partial,
@@ -152609,14 +152842,39 @@ async function runDisclosureChecks(page) {
             const afterEnterState = entered.state;
             let tabEnteredControlledRegion = null;
             let firstTabSelector = null;
+            let controlledFocusableCount = 0;
             if (afterEnterState.focused
                 && afterEnterState.expanded === 'true'
                 && afterEnterState.controlledVisible === true
                 && afterEnterState.controls) {
                 const controlledIds = afterEnterState.controls.split(/\s+/).filter(Boolean);
-                const panelSelectors = controlledIds.map((id) => `#${id.replaceAll(/([ !"#$%&'()*+,./:;<=>?@[\\\]^`{|}~])/g, '\\$1')}`);
-                const focusable = page.locator(panelSelectors.map((selector) => `${selector} ${focusableSelector}`).join(', '));
-                if ((await focusable.count()) > 0) {
+                controlledFocusableCount = await page.evaluate(({ ids, selector }) => {
+                    const renderedForKeyboard = (element) => {
+                        if (!(element instanceof HTMLElement) || element.tabIndex < 0)
+                            return false;
+                        // aria-hidden does not remove descendants from the browser's sequential
+                        // focus order; axe reports that separate exposure defect when applicable.
+                        if (element.closest('[hidden], [inert]'))
+                            return false;
+                        let current = element;
+                        while (current) {
+                            const style = getComputedStyle(current);
+                            if (style.display === 'none'
+                                || style.visibility === 'hidden'
+                                || style.visibility === 'collapse'
+                                || style.contentVisibility === 'hidden')
+                                return false;
+                            current = current.parentElement;
+                        }
+                        return true;
+                    };
+                    const candidates = ids.flatMap((id) => {
+                        const panel = document.getElementById(id);
+                        return panel ? [...panel.querySelectorAll(selector)] : [];
+                    });
+                    return new Set(candidates.filter(renderedForKeyboard)).size;
+                }, { ids: controlledIds, selector: focusableSelector });
+                if (controlledFocusableCount > 0) {
                     await page.keyboard.press('Tab');
                     const active = page.locator(':focus');
                     firstTabSelector = (await active.count()) ? (await locatorDescription(active)).selector : null;
@@ -152687,6 +152945,7 @@ async function runDisclosureChecks(page) {
                 beforeState,
                 afterEnterState,
                 ...(afterSpaceState ? { afterSpaceState } : {}),
+                controlledFocusableCount,
                 firstTabSelector,
                 tabEnteredControlledRegion,
                 ...(restorationError ? { restorationError } : {})
@@ -153219,6 +153478,18 @@ async function visibleConsentSurfaces(frame) {
     }
     return result;
 }
+async function visibleConsentSurfacesAcrossPage(page) {
+    return (await Promise.all(page.frames().map(visibleConsentSurfaces))).flat();
+}
+async function waitForConsentSurfacesToClear(page, timeoutMs = 3_000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if ((await visibleConsentSurfacesAcrossPage(page)).length === 0)
+            return true;
+        await page.waitForTimeout(100);
+    }
+    return (await visibleConsentSurfacesAcrossPage(page)).length === 0;
+}
 /** Returns a visible modal surface that would invalidate page-level interaction coverage. */
 async function detectInteractionBlocker(page) {
     for (const frame of page.frames()) {
@@ -153314,9 +153585,7 @@ async function dismissConsentBanner(page) {
                         }).catch(() => consentSurfaceSelector);
                         result.frameUrl = frame.url();
                         await button.click({ timeout: 3_000 });
-                        await page.waitForTimeout(400);
-                        const remaining = (await Promise.all(page.frames().map(visibleConsentSurfaces))).flat();
-                        result.dismissed = remaining.length === 0;
+                        result.dismissed = await waitForConsentSurfacesToClear(page);
                         return result;
                     }
                 }
@@ -154075,50 +154344,6 @@ function domFindings(audit) {
             translationRequired: 'No'
         }));
     }
-    if (audit.dom.mainCount === 0) {
-        findings.push(makeFinding({
-            identity: 'main-landmark|page',
-            ruleId: 'missing-main-landmark',
-            classification: 'confirmed',
-            severity: 'Serious',
-            wcag: ['1.3.1', '2.4.1'],
-            summary: 'The page has no main landmark',
-            issue: 'No main element or role="main" was present.',
-            impact: 'Screen-reader users cannot move directly to the primary page content using landmark navigation.',
-            testing: 'The rendered DOM was queried for main and role="main" landmarks.',
-            remediation: 'Wrap the unique primary content in one semantic main element. Do not place repeated site chrome inside it.',
-            component: 'page structure',
-            urls: [audit.url],
-            viewports: [audit.viewport.name],
-            selectors: [],
-            evidence: [evidence('dom', undefined, 'main landmark count: 0')],
-            assignment: 'Development',
-            effort: 'Small',
-            translationRequired: 'No'
-        }));
-    }
-    if (audit.dom.h1Count !== 1) {
-        findings.push(makeFinding({
-            identity: 'heading-one|page',
-            ruleId: 'heading-one-review',
-            classification: 'review',
-            severity: 'Moderate',
-            wcag: ['1.3.1', '2.4.6'],
-            summary: 'Review the page-level heading structure',
-            issue: `The page contains ${audit.dom.h1Count} h1 elements. Automated counting cannot determine whether the hierarchy describes the content accurately.`,
-            impact: 'An unclear heading hierarchy can make content difficult to understand and navigate.',
-            testing: 'The rendered h1 elements were counted; heading meaning and hierarchy require content review.',
-            remediation: 'Provide a descriptive page-level heading and arrange subsequent headings in a logical hierarchy that reflects the page content.',
-            component: 'page headings',
-            urls: [audit.url],
-            viewports: [audit.viewport.name],
-            selectors: ['h1'],
-            evidence: [evidence('dom', 'h1', `h1 count: ${audit.dom.h1Count}`)],
-            assignment: 'Content',
-            effort: 'Small',
-            translationRequired: 'Review'
-        }));
-    }
     for (const item of audit.dom.missingAltImages) {
         findings.push(makeFinding({
             identity: `missing-alt|${normalizeComponent(item.selector)}`,
@@ -154350,67 +154575,24 @@ function domFindings(audit) {
             translationRequired: 'No'
         }));
     }
-    if (audit.responsive.textSpacingOverflow > Math.max(2, audit.responsive.horizontalOverflow + 2)) {
-        findings.push(makeFinding({
-            identity: 'text-spacing|page',
-            ruleId: 'text-spacing-overflow',
-            classification: 'review',
-            severity: 'Moderate',
-            wcag: ['1.4.12'],
-            summary: 'Text-spacing overrides may cause content loss or overflow',
-            issue: `After applying WCAG text-spacing values, overflow increased to ${audit.responsive.textSpacingOverflow}px. Visual inspection is required to confirm clipping or overlap.`,
-            impact: 'People who increase spacing to read more comfortably may lose content or functionality.',
-            testing: 'WCAG text-spacing overrides were injected and page overflow was remeasured.',
-            remediation: 'Remove fixed heights and widths around text, allow wrapping, and test line, paragraph, letter, and word spacing together without clipping, overlap, or lost controls.',
-            component: 'page layout',
-            urls: [audit.url],
-            viewports: [audit.viewport.name],
-            selectors: [],
-            evidence: [evidence('responsive', undefined, `Text-spacing overflow: ${audit.responsive.textSpacingOverflow}px`)],
-            assignment: 'Development',
-            effort: 'Medium',
-            translationRequired: 'No'
-        }));
-    }
-    if ((audit.responsive.textResizeOverflow ?? 0) > Math.max(2, audit.responsive.horizontalOverflow + 2)) {
-        findings.push(makeFinding({
-            identity: 'text-resize-200|page',
-            ruleId: 'text-resize-200-overflow',
-            classification: 'review',
-            severity: 'Serious',
-            wcag: ['1.4.4', '1.4.10'],
-            summary: 'A 200% text resize may cause content loss or overflow',
-            issue: `After resizing root text to 200%, overflow increased to ${audit.responsive.textResizeOverflow}px. Visual inspection is required to distinguish content loss from a permitted two-dimensional layout.`,
-            impact: 'People who enlarge text may need to scroll in two directions or may lose content or functionality.',
-            testing: 'The root font size was overridden to 200% and document overflow was remeasured at the configured viewport.',
-            remediation: 'Use relative sizing and flexible containers so text can enlarge to 200% without clipping, overlap, or loss of functionality.',
-            component: 'page layout',
-            urls: [audit.url],
-            viewports: [audit.viewport.name],
-            selectors: [],
-            evidence: [evidence('responsive', undefined, `200% text-resize overflow: ${audit.responsive.textResizeOverflow}px`)],
-            assignment: 'Development',
-            effort: 'Medium',
-            translationRequired: 'No'
-        }));
-    }
-    for (const clipped of audit.responsive.clippedElements) {
-        const criteria = clipped.phase === 'text-spacing'
-            ? ['1.4.10', '1.4.12']
-            : clipped.phase === 'text-resize-200' ? ['1.4.4', '1.4.10'] : ['1.4.10'];
-        const phaseLabel = clipped.phase === 'text-spacing'
-            ? ' after text spacing'
-            : clipped.phase === 'text-resize-200' ? ' after 200% text resize' : ' at the narrow viewport';
+    // Aggregate overflow during a stress phase is diagnostic evidence, not a WCAG
+    // failure: horizontal scrolling can be valid and a descendant can intentionally
+    // extend beyond a carousel or other two-dimensional region. Report default
+    // reflow clipping here; stress phases require a repeat-confirmed loss below.
+    for (const clipped of audit.responsive.clippedElements.filter((item) => item.phase === 'default')) {
+        const clippingConfirmed = clipped.repeatConfirmed === true && Boolean(clipped.contentSelector);
         findings.push(makeFinding({
             identity: `responsive-clipped|${clipped.phase}|${normalizeComponent(clipped.selector)}`,
             ruleId: 'responsive-content-clipped',
-            classification: 'review',
+            classification: clippingConfirmed ? 'confirmed' : 'review',
             severity: 'Moderate',
-            wcag: criteria,
-            summary: `Content may be clipped${phaseLabel}`,
-            issue: `${clipped.selector} has ${clipped.axis} scroll dimensions larger than its visible box while its overflow styling can clip content.`,
+            wcag: ['1.4.10'],
+            summary: `Content ${clippingConfirmed ? 'is' : 'may be'} clipped at the narrow viewport`,
+            issue: clippingConfirmed
+                ? `${clipped.contentSelector} (${clipped.contentKind ?? 'meaningful content'}) crossed the ${clipped.axis} clipping boundary of ${clipped.selector} in two settled samples.`
+                : `${clipped.selector} has ${clipped.axis} scroll dimensions larger than its visible box while its overflow styling can clip content.`,
             impact: 'Users who zoom, reflow content, or increase text spacing may be unable to perceive content or reach functionality.',
-            testing: `At the ${clipped.phase} phase, the element measured ${clipped.clientWidth}×${clipped.clientHeight} CSS pixels with scroll dimensions ${clipped.scrollWidth}×${clipped.scrollHeight}.`,
+            testing: `At the ${clipped.phase} phase, the element measured ${clipped.clientWidth}×${clipped.clientHeight} CSS pixels with scroll dimensions ${clipped.scrollWidth}×${clipped.scrollHeight}.${clippingConfirmed ? ' A repeat sample reproduced the same clipped content and boundary.' : ''}`,
             remediation: 'Allow content to wrap and containers to grow. If clipping is intentional, verify that no meaningful content or operable control is hidden at 320 CSS pixels and with WCAG text spacing.',
             component: normalizeComponent(clipped.selector),
             urls: [audit.url],
@@ -154419,7 +154601,7 @@ function domFindings(audit) {
             evidence: [evidence('responsive', clipped.selector, JSON.stringify(clipped))],
             assignment: 'Development',
             effort: 'Medium',
-            translationRequired: 'Review'
+            translationRequired: clippingConfirmed ? 'No' : 'Review'
         }));
     }
     const overlapGroups = new Map();
@@ -154434,8 +154616,8 @@ function domFindings(audit) {
         overlapGroups.set(groupKey, group);
     }
     for (const overlaps of overlapGroups.values()) {
-        const overlap = overlaps.reduce((largest, candidate) => (candidate.smallerElementOverlapPercent ?? candidate.overlapArea ?? 0)
-            > (largest.smallerElementOverlapPercent ?? largest.overlapArea ?? 0)
+        const overlap = overlaps.reduce((largest, candidate) => (candidate.obscuredElementOverlapPercent ?? candidate.smallerElementOverlapPercent ?? candidate.overlapArea ?? 0)
+            > (largest.obscuredElementOverlapPercent ?? largest.smallerElementOverlapPercent ?? largest.overlapArea ?? 0)
             ? candidate
             : largest);
         const selectors = [...new Set(overlaps.flatMap((item) => [item.firstSelector, item.secondSelector]))];
@@ -154455,7 +154637,7 @@ function domFindings(audit) {
             wcag: criteria,
             summary: `Interactive control may be obscured${phaseLabel}`,
             issue: obscuredSelector
-                ? `${obscuredSelector} was underneath ${occludingSelectors.length === 1 ? occludingSelectors[0] : `${occludingSelectors.length} other controls`} at every sampled point in an overlap covering up to ${Math.round(overlap.smallerElementOverlapPercent ?? 0)}% of the smaller element. Human review must confirm whether this prevents perception, activation, or visible focus.`
+                ? `${obscuredSelector} was underneath ${occludingSelectors.length === 1 ? occludingSelectors[0] : `${occludingSelectors.length} other controls`} at every sampled point in an overlap covering up to ${Math.round(overlap.obscuredElementOverlapPercent ?? overlap.smallerElementOverlapPercent ?? 0)}% of the obscured control. Human review must confirm whether this prevents perception, activation, or visible focus.`
                 : `${overlaps.length === 1 ? 'Two visible interactive elements overlap' : `${overlaps.length} related interactive-element overlaps were detected`} by up to ${overlap.overlapWidth}×${overlap.overlapHeight} CSS pixels. Review whether a control, label, or focus indicator is obscured.`,
             impact: 'Overlapping controls can hide information, make a target difficult to activate, or obscure keyboard focus.',
             testing: obscuredSelector
@@ -154473,50 +154655,58 @@ function domFindings(audit) {
         }));
     }
     if (audit.responsive.lostInteractiveElements.length > 0) {
+        const lossConfirmed = audit.responsive.lostInteractiveElements.every((item) => item.repeatConfirmed === true);
         const selectors = audit.responsive.lostInteractiveElements.map((item) => item.selector);
+        const normalizedSelectors = [...new Set(selectors.map(normalizeComponent))].sort();
+        const component = normalizedSelectors.length === 1 ? normalizedSelectors[0] : 'responsive layout';
         findings.push(makeFinding({
-            identity: `text-spacing-lost-functionality|${selectors.map(normalizeComponent).sort().join('|')}`,
+            identity: `text-spacing-lost-functionality|${normalizedSelectors.join('|')}`,
             ruleId: 'text-spacing-functionality-lost',
-            classification: 'review',
+            classification: lossConfirmed ? 'confirmed' : 'review',
             severity: 'Serious',
             wcag: ['1.4.12'],
-            summary: 'Interactive content may disappear after text spacing is increased',
+            summary: `Interactive content ${lossConfirmed ? 'disappears' : 'may disappear'} after text spacing is increased`,
             issue: `${audit.responsive.lostInteractiveElements.length} control(s) that were visible before the WCAG text-spacing override were no longer visibly rendered afterwards.`,
             impact: 'People who increase text spacing may lose access to controls or functionality.',
-            testing: 'Visible interactive elements were inventoried before and after applying the WCAG text-spacing values, then compared by stable selector.',
+            testing: `Visible interactive elements were inventoried before and after applying the WCAG text-spacing values, then compared by stable selector.${lossConfirmed ? ' The loss was reproduced in two settled stress samples from a stable two-sample baseline.' : ''}`,
             remediation: 'Remove fixed-height clipping and layout constraints so controls remain visible, readable, and operable with increased line, paragraph, word, and letter spacing.',
-            component: 'responsive layout',
+            component,
+            sharedComponentKey: createSharedComponentKey(component, `text-spacing-functionality-lost|${normalizedSelectors.join('|')}`),
             urls: [audit.url],
             viewports: [audit.viewport.name],
             selectors,
             evidence: audit.responsive.lostInteractiveElements.map((item) => evidence('responsive', item.selector, `Previously visible control disappeared: ${item.name || 'unnamed control'}.`)),
             assignment: 'Development',
             effort: 'Medium',
-            translationRequired: 'Review'
+            translationRequired: lossConfirmed ? 'No' : 'Review'
         }));
     }
     if ((audit.responsive.textResizeLostInteractiveElements?.length ?? 0) > 0) {
         const lost = audit.responsive.textResizeLostInteractiveElements ?? [];
+        const lossConfirmed = lost.every((item) => item.repeatConfirmed === true);
         const selectors = lost.map((item) => item.selector);
+        const normalizedSelectors = [...new Set(selectors.map(normalizeComponent))].sort();
+        const component = normalizedSelectors.length === 1 ? normalizedSelectors[0] : 'responsive layout';
         findings.push(makeFinding({
-            identity: `text-resize-lost-functionality|${selectors.map(normalizeComponent).sort().join('|')}`,
+            identity: `text-resize-lost-functionality|${normalizedSelectors.join('|')}`,
             ruleId: 'text-resize-functionality-lost',
-            classification: 'review',
+            classification: lossConfirmed ? 'confirmed' : 'review',
             severity: 'Serious',
             wcag: ['1.4.4', '1.4.10'],
-            summary: 'Interactive content may disappear after text is resized to 200%',
+            summary: `Interactive content ${lossConfirmed ? 'disappears' : 'may disappear'} after text is resized to 200%`,
             issue: `${lost.length} control(s) visible before the 200% text resize were no longer visibly rendered afterwards.`,
             impact: 'People who enlarge text may lose access to controls or functionality.',
-            testing: 'Visible interactive elements were inventoried before and after the 200% root text-size override, then compared by stable selector.',
+            testing: `Visible interactive elements were inventoried before and after the 200% root text-size override, then compared by stable selector.${lossConfirmed ? ' The loss was reproduced in two settled stress samples from a stable two-sample baseline.' : ''}`,
             remediation: 'Use relative sizing and flexible layouts so every control remains visible and operable when text is enlarged to 200%.',
-            component: 'responsive layout',
+            component,
+            sharedComponentKey: createSharedComponentKey(component, `text-resize-functionality-lost|${normalizedSelectors.join('|')}`),
             urls: [audit.url],
             viewports: [audit.viewport.name],
             selectors,
             evidence: lost.map((item) => evidence('responsive', item.selector, `Previously visible control disappeared: ${item.name || 'unnamed control'}.`)),
             assignment: 'Development',
             effort: 'Medium',
-            translationRequired: 'Review'
+            translationRequired: lossConfirmed ? 'No' : 'Review'
         }));
     }
     const groupKeyboardItems = (items) => {
@@ -154554,16 +154744,17 @@ function domFindings(audit) {
     }
     const outsideViewport = audit.keyboard.sequence.filter((item) => item.outsideViewport);
     for (const [component, items] of groupKeyboardItems(outsideViewport)) {
+        const focusLossConfirmed = items.every((item) => item.outsideViewportConfirmed === true);
         findings.push(makeFinding({
             identity: `focus-outside-viewport|${component}`,
             ruleId: 'keyboard-focus-outside-viewport',
-            classification: 'review',
+            classification: focusLossConfirmed ? 'confirmed' : 'review',
             severity: 'Serious',
             wcag: ['2.4.11'],
-            summary: 'Keyboard focus may move outside the visible viewport',
+            summary: `Keyboard focus ${focusLossConfirmed ? 'moves' : 'may move'} outside the visible viewport`,
             issue: `Sequential focus reached ${items.length} element(s) whose rendered bounds were outside the visible viewport after focus settled.`,
             impact: 'Keyboard users may lose track of focus and be unable to identify the currently active control.',
-            testing: `The deterministic keyboard traversal checked focused-element bounds after each Tab step; affected positions: ${items.map((item) => item.index).join(', ')}.`,
+            testing: `The deterministic keyboard traversal checked focused-element bounds after each Tab step; affected positions: ${items.map((item) => item.index).join(', ')}.${focusLossConfirmed ? ' Each affected focus target remained outside the viewport in a second settled sample.' : ''}`,
             remediation: 'Scroll focused controls into view, remove hidden elements from the focus order, and ensure overlays do not separate visual and programmatic focus.',
             component,
             urls: [audit.url],
@@ -154740,7 +154931,9 @@ function domFindings(audit) {
                 translationRequired: 'No'
             }));
         }
-        const focusOrderReviews = completed.filter((item) => item.tabEnteredControlledRegion === false);
+        const focusOrderReviews = completed.filter((item) => (item.controlledFocusableCount !== undefined
+            && item.controlledFocusableCount > 0
+            && item.tabEnteredControlledRegion === false));
         if (focusOrderReviews.length) {
             findings.push(makeFinding({
                 identity: `disclosure-focus-order|${component}`,
@@ -154850,17 +155043,20 @@ function domFindings(audit) {
         }
     }
     for (const table of audit.dom.tablesForReview) {
+        const tableConfirmed = table.classification === 'confirmed';
         findings.push(makeFinding({
             identity: `table-semantics|${normalizeComponent(table.selector)}`,
-            ruleId: 'table-semantics-review',
-            classification: 'review',
+            ruleId: tableConfirmed ? 'table-missing-headers' : 'table-semantics-review',
+            classification: tableConfirmed ? 'confirmed' : 'review',
             severity: 'Moderate',
             wcag: ['1.3.1'],
-            summary: 'Review table headers and name',
+            summary: tableConfirmed ? 'Data table has no header cells' : 'Review table semantics',
             issue: table.reason,
             impact: 'Screen-reader users may not understand the table purpose or the relationship between headers and data cells.',
-            testing: 'Rendered table markup was checked for header cells and a programmatic name.',
-            remediation: 'Use tables only for data, provide descriptive header cells with correct scope or headers relationships, and add a caption or other programmatic name when needed.',
+            testing: tableConfirmed
+                ? `Rendered table geometry and markup were checked. The table has ${table.rowCount ?? 'multiple'} rows and ${table.columnCount ?? 'multiple'} columns but no th elements.`
+                : 'Rendered table markup was checked for data-table header relationships.',
+            remediation: 'Use tables only for data and provide descriptive header cells with correct scope or headers relationships.',
             component: normalizeComponent(table.selector),
             sharedComponentKey: createSharedComponentKey(normalizeComponent(table.selector), table.reason),
             urls: [audit.url],
@@ -154869,7 +155065,7 @@ function domFindings(audit) {
             evidence: [evidence('dom', table.selector, table.reason)],
             assignment: 'Development',
             effort: 'Medium',
-            translationRequired: 'Review'
+            translationRequired: tableConfirmed ? 'No' : 'Review'
         }));
     }
     if (audit.dom.autoplayMedia.length) {
@@ -155283,7 +155479,7 @@ function ledgerStatusCounts(criteria = []) {
 }
 //# sourceMappingURL=wcag-criteria.js.map
 ;// CONCATENATED MODULE: ./dist/audit/quality-contract.js
-const AUDIT_QUALITY_CONTRACT_VERSION = '1.1.0';
+const AUDIT_QUALITY_CONTRACT_VERSION = '1.2.0';
 const WCAG_22_AA_CRITERION_COUNT = 55;
 const AUDIT_QUALITY_CONTRACT = {
     version: AUDIT_QUALITY_CONTRACT_VERSION,
@@ -155395,6 +155591,40 @@ function assertAuditQualityContract(summary) {
         throw new Error(`Audit Quality Contract ${AUDIT_QUALITY_CONTRACT_VERSION} failed: ${errors.join('; ')}.`);
 }
 //# sourceMappingURL=quality-contract.js.map
+;// CONCATENATED MODULE: ./dist/audit/standards.js
+// Revised Section 508 E205.4 incorporates the WCAG 2.0 Level A and AA
+// success criteria for covered electronic content. WCAG 2.1/2.2 additions
+// must not be labelled as Section 508 requirements merely because they are
+// part of this tool's WCAG 2.2 conformance target.
+const SECTION_508_WCAG_20_AA = new Set([
+    '1.1.1',
+    '1.2.1', '1.2.2', '1.2.3', '1.2.4', '1.2.5',
+    '1.3.1', '1.3.2', '1.3.3',
+    '1.4.1', '1.4.2', '1.4.3', '1.4.4', '1.4.5',
+    '2.1.1', '2.1.2',
+    '2.2.1', '2.2.2',
+    '2.3.1',
+    '2.4.1', '2.4.2', '2.4.3', '2.4.4', '2.4.5', '2.4.6', '2.4.7',
+    '3.1.1', '3.1.2',
+    '3.2.1', '3.2.2', '3.2.3', '3.2.4',
+    '3.3.1', '3.3.2', '3.3.3', '3.3.4',
+    '4.1.1', '4.1.2'
+]);
+const standards_WCAG_CRITERION = /^\d\.\d\.\d{1,2}$/;
+function standardsForFinding(finding) {
+    const criteria = [...new Set(finding.wcag.filter((criterion) => standards_WCAG_CRITERION.test(criterion)))].sort();
+    const standards = criteria.map((criterion) => `W3C WCAG 2.2 ${criterion}`);
+    for (const criterion of criteria) {
+        if (SECTION_508_WCAG_20_AA.has(criterion)) {
+            standards.push(`Section 508 E205.4 (WCAG 2.0 ${criterion})`);
+        }
+    }
+    if (finding.ruleId.startsWith('axe-')) {
+        standards.push(`Deque axe-core rule ${finding.ruleId.slice(4)}`);
+    }
+    return standards;
+}
+//# sourceMappingURL=standards.js.map
 ;// CONCATENATED MODULE: ./dist/audit/canonical-validation.js
 const AUDIT_CHECK_IDS = [
     'navigation',
@@ -156023,9 +156253,19 @@ var excel = __nccwpck_require__(59203);
 
 const urlPattern = /https?:\/\/[^\s<>'"\])}]+/gi;
 const stagingHostPattern = /(?:^|[.-])(?:dev|development|local|localhost|preview|qa|stage|staging|test|testing|uat)(?:[.\d-]|$)/i;
+function splitUrlListValue(value) {
+    return value
+        .trim()
+        .split(/\s+(?=https?:\/\/)/i)
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
 function normalizeUrl(value) {
     try {
-        const parsed = new URL(value.trim());
+        const trimmed = value.trim();
+        if (/\s/.test(trimmed))
+            return null;
+        const parsed = new URL(trimmed);
         if (!['http:', 'https:'].includes(parsed.protocol))
             return null;
         if (parsed.username || parsed.password) {
@@ -156122,6 +156362,12 @@ async function collectUrls(inputs, options = {}) {
     const found = [];
     const sources = [];
     for (const input of inputs) {
+        const expandedInputs = splitUrlListValue(input);
+        if (expandedInputs.length > 1) {
+            found.push(...expandedInputs);
+            sources.push('command line');
+            continue;
+        }
         const direct = normalizeUrl(input);
         if (direct) {
             found.push(direct);
@@ -156160,6 +156406,7 @@ async function collectUrls(inputs, options = {}) {
 }
 //# sourceMappingURL=urls.js.map
 ;// CONCATENATED MODULE: ./dist/audit/runner.js
+
 
 
 
@@ -156662,7 +156909,19 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
         });
         let response;
         try {
-            response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+            response = await page.goto(url, { waitUntil: 'commit' });
+            status = response?.status() ?? null;
+            try {
+                await page.waitForLoadState('domcontentloaded', { timeout: options.timeoutMs });
+            }
+            catch (error) {
+                const usableDocument = await page.evaluate(() => (document.readyState !== 'loading'
+                    && Boolean(document.body)
+                    && document.body.childElementCount > 0)).catch(() => false);
+                if (!usableDocument)
+                    throw error;
+                errors.push(`Navigation readiness observation: DOMContentLoaded was not observed, but the rendered document was available (${errorMessage(error)}).`);
+            }
         }
         catch (error) {
             if (blockedNavigationReason)
@@ -156674,7 +156933,6 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
         // explicitly before treating the page as successfully loaded.
         if (blockedNavigationReason)
             throw new Error(blockedNavigationReason);
-        status = response?.status() ?? null;
         await page.waitForLoadState('networkidle', { timeout: Math.min(options.timeoutMs, 5_000) }).catch(() => undefined);
         finalUrl = page.url();
         const finalUrlRestriction = /^(file|data):/i.test(url) && finalUrl === url
@@ -156689,10 +156947,15 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
         consent = await dependencies.dismissConsentBanner(page);
         if (consent.error)
             errors.push(`Consent handling error: ${consent.error}`);
-        if (consent.found && !consent.dismissed) {
-            errors.push('A visible consent banner could not be dismissed before accessibility interaction testing.');
-        }
         interactionBlocker = await dependencies.detectInteractionBlocker(page);
+        if (!interactionBlocker && consent.found && !consent.dismissed) {
+            interactionBlocker = {
+                selector: consent.surfaceSelector || 'consent surface',
+                role: 'consent surface',
+                name: consent.buttonName ? `Consent choice: ${consent.buttonName}` : 'Visible consent surface',
+                reason: 'A visible consent surface remained active before page-level interaction tests.'
+            };
+        }
         if (interactionBlocker)
             errors.push(`${interactionBlocker.reason} ${interactionBlocker.selector}`);
         try {
@@ -157075,7 +157338,10 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}) {
     const gatedFindings = applyConfirmedFindingConfidenceGate(classifiedFindings);
     const consolidatedFindings = consolidateFindings(gatedFindings);
     assertLosslessConsolidation(gatedFindings, consolidatedFindings);
-    const findings = assignFindingIds(consolidatedFindings);
+    const findings = assignFindingIds(consolidatedFindings).map((finding) => ({
+        ...finding,
+        standards: standardsForFinding(finding)
+    }));
     retainRepresentativeScreenshotPerFinding(findings);
     assertRemediationOnlyNotes(findings);
     const startedUrls = new Set(pages.map((page) => page.url));
@@ -157763,7 +158029,7 @@ function reportRowValues(finding, id, criteria, outputPath) {
         finding.effort,
         screenshotLink(finding, outputPath),
         finding.ruleId,
-        [finding.classification, finding.ruleId, ...finding.wcag.map((criterion) => `WCAG ${criterion}`)].join(', '),
+        [finding.classification, finding.ruleId, ...(finding.standards ?? finding.wcag.map((criterion) => `WCAG ${criterion}`))].join(', '),
         finding.translationRequired
     ];
 }
@@ -158282,6 +158548,7 @@ function findingRows(summary, outputPath) {
             finding.classification,
             finding.severity,
             ...finding.wcag,
+            ...(finding.standards ?? []),
             ...finding.urls
         ].filter(Boolean).join(' ').toLowerCase())}" data-classification="${escapeHtml(finding.classification)}" data-severity="${escapeHtml(finding.severity)}">
       <td><span class="finding-id">${escapeHtml(id)}</span><br><span class="muted">${escapeHtml(finding.ruleId)}</span></td>
@@ -158297,7 +158564,11 @@ function findingRows(summary, outputPath) {
           ${screenshots ? `<h3>Evidence</h3><ul>${screenshots}</ul>` : ''}
         </details>
       </td>
-      <td>${finding.wcag.length ? finding.wcag.map((criterion) => `<span class="criterion">${escapeHtml(criterion)}</span>`).join(' ') : '<span class="muted">Advisory</span>'}</td>
+      <td>${finding.standards?.length
+            ? finding.standards.map((standard) => `<span class="criterion">${escapeHtml(standard)}</span>`).join(' ')
+            : finding.wcag.length
+                ? finding.wcag.map((criterion) => `<span class="criterion">${escapeHtml(criterion)}</span>`).join(' ')
+                : '<span class="muted">Advisory</span>'}</td>
       <td><ul>${pages}</ul></td>
     </tr>`;
     }).join('');
@@ -158383,7 +158654,7 @@ function renderReport(summary, outputPath) {
 
     <section id="findings" aria-labelledby="findings-title"><h2 id="findings-title">Findings</h2><p class="lede">Confirmed rows are evidence-backed barriers and use impact severity. Review rows are candidates that require human validation; their label is review priority, not a confirmed impact rating. Expand a row for verification steps, remediation and linked evidence.</p>
       <div class="toolbar"><div class="field"><label for="finding-search">Search findings</label><input id="finding-search" type="search" placeholder="Rule, issue, page or WCAG criterion"></div><div class="field"><label for="classification-filter">Classification</label><select id="classification-filter"><option value="">All classifications</option><option value="confirmed">Confirmed</option><option value="review">Review</option><option value="blocker">Blocker</option><option value="manual">Manual</option></select></div><div class="field"><label for="severity-filter">Severity</label><select id="severity-filter"><option value="">All severities</option><option>Critical</option><option>Serious</option><option>Moderate</option><option>Minor</option><option>Advisory</option></select></div><div id="result-count" class="result-count" aria-live="polite"></div></div>
-      <div class="table-wrap"><table><caption>Findings and evidence requiring action or validation</caption><thead><tr><th scope="col">ID / rule</th><th scope="col">Class</th><th scope="col">Impact / priority</th><th scope="col">Finding</th><th scope="col">WCAG</th><th scope="col">Pages</th></tr></thead><tbody id="finding-rows">${findingRows(summary, outputPath)}</tbody></table></div>
+      <div class="table-wrap"><table><caption>Findings and evidence requiring action or validation</caption><thead><tr><th scope="col">ID / rule</th><th scope="col">Class</th><th scope="col">Impact / priority</th><th scope="col">Finding</th><th scope="col">Standards / rule source</th><th scope="col">Pages</th></tr></thead><tbody id="finding-rows">${findingRows(summary, outputPath)}</tbody></table></div>
     </section>
 
     <section id="criteria" aria-labelledby="criteria-title"><h2 id="criteria-title">WCAG 2.2 criterion ledger</h2><p class="lede">Every success criterion is accounted for. The AA conformance target covers Levels A and AA; Level AAA appears only as optional advisory scope. ${unresolvedCriteria} criterion outcome${unresolvedCriteria === 1 ? '' : 's'} still require a human decision or more evidence.</p><div class="table-wrap"><table><caption>Criterion-by-criterion status and evidence</caption><thead><tr><th scope="col">Criterion</th><th scope="col">Level</th><th scope="col">Scope</th><th scope="col">Status</th><th scope="col">Evidence</th><th scope="col">Decision note</th></tr></thead><tbody>${criterionRows(summary)}</tbody></table></div></section>
@@ -158571,6 +158842,7 @@ async function executeAudit(request) {
 
 
 
+
 const FAILURE_POLICIES = ['none', 'blockers', 'confirmed', 'critical', 'serious', 'moderate', 'minor'];
 const severityRank = {
     Advisory: 0,
@@ -158594,10 +158866,10 @@ function parseListInput(value, allowCommas = false) {
         if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== 'string')) {
             throw new Error('List inputs using JSON must contain only strings.');
         }
-        return parsed.map((item) => item.trim()).filter(Boolean);
+        return parsed.flatMap((item) => splitUrlListValue(item));
     }
     const separator = allowCommas ? /[\r\n,]+/ : /[\r\n]+/;
-    return trimmed.split(separator).map((item) => item.trim()).filter(Boolean);
+    return trimmed.split(separator).flatMap((item) => splitUrlListValue(item));
 }
 function resolveAllowedHosts(inputs, configuredHosts) {
     if (configuredHosts.length > 0)

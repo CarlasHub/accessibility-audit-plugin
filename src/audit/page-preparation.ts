@@ -65,6 +65,19 @@ async function visibleConsentSurfaces(frame: Frame): Promise<Locator[]> {
   return result;
 }
 
+async function visibleConsentSurfacesAcrossPage(page: Page): Promise<Locator[]> {
+  return (await Promise.all(page.frames().map(visibleConsentSurfaces))).flat();
+}
+
+async function waitForConsentSurfacesToClear(page: Page, timeoutMs = 3_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if ((await visibleConsentSurfacesAcrossPage(page)).length === 0) return true;
+    await page.waitForTimeout(100);
+  }
+  return (await visibleConsentSurfacesAcrossPage(page)).length === 0;
+}
+
 /** Returns a visible modal surface that would invalidate page-level interaction coverage. */
 export async function detectInteractionBlocker(page: Page): Promise<InteractionBlocker | null> {
   for (const frame of page.frames()) {
@@ -160,9 +173,7 @@ export async function dismissConsentBanner(page: Page): Promise<ConsentHandlingR
             }).catch(() => consentSurfaceSelector);
             result.frameUrl = frame.url();
             await button.click({ timeout: 3_000 });
-            await page.waitForTimeout(400);
-            const remaining = (await Promise.all(page.frames().map(visibleConsentSurfaces))).flat();
-            result.dismissed = remaining.length === 0;
+            result.dismissed = await waitForConsentSurfacesToClear(page);
             return result;
           }
         }

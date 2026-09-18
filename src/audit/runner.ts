@@ -32,6 +32,7 @@ import { findingsFromPage } from './findings.js';
 import { buildCoverageMatrix } from './coverage.js';
 import { buildWcagCriterionLedger } from './wcag-criteria.js';
 import { applyConfirmedFindingConfidenceGate, assertAuditQualityContract, AUDIT_QUALITY_CONTRACT } from './quality-contract.js';
+import { standardsForFinding } from './standards.js';
 import { assertCanonicalAuditSummary, assertCollectionCompleteness } from './canonical-validation.js';
 import { assertLosslessConsolidation, assertRemediationOnlyNotes, consolidateFindings } from '../reporting/consolidate.js';
 import { assignFindingIds } from '../reporting/finding-id.js';
@@ -600,7 +601,19 @@ export async function auditViewport(
     });
     let response: Awaited<ReturnType<Page['goto']>>;
     try {
-      response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+      response = await page.goto(url, { waitUntil: 'commit' });
+      status = response?.status() ?? null;
+      try {
+        await page.waitForLoadState('domcontentloaded', { timeout: options.timeoutMs });
+      } catch (error) {
+        const usableDocument = await page.evaluate(() => (
+          document.readyState !== 'loading'
+          && Boolean(document.body)
+          && document.body.childElementCount > 0
+        )).catch(() => false);
+        if (!usableDocument) throw error;
+        errors.push(`Navigation readiness observation: DOMContentLoaded was not observed, but the rendered document was available (${errorMessage(error)}).`);
+      }
     } catch (error) {
       if (blockedNavigationReason) throw new Error(blockedNavigationReason);
       throw error;
@@ -609,7 +622,6 @@ export async function auditViewport(
     // when a routed redirect destination was aborted, so check the route signal
     // explicitly before treating the page as successfully loaded.
     if (blockedNavigationReason) throw new Error(blockedNavigationReason);
-    status = response?.status() ?? null;
     await page.waitForLoadState('networkidle', { timeout: Math.min(options.timeoutMs, 5_000) }).catch(() => undefined);
     finalUrl = page.url();
     const finalUrlRestriction = /^(file|data):/i.test(url) && finalUrl === url
@@ -623,10 +635,15 @@ export async function auditViewport(
     recordOutcome('navigation', { status: 'completed', observationCount: 1 });
     consent = await dependencies.dismissConsentBanner(page);
     if (consent.error) errors.push(`Consent handling error: ${consent.error}`);
-    if (consent.found && !consent.dismissed) {
-      errors.push('A visible consent banner could not be dismissed before accessibility interaction testing.');
-    }
     interactionBlocker = await dependencies.detectInteractionBlocker(page);
+    if (!interactionBlocker && consent.found && !consent.dismissed) {
+      interactionBlocker = {
+        selector: consent.surfaceSelector || 'consent surface',
+        role: 'consent surface',
+        name: consent.buttonName ? `Consent choice: ${consent.buttonName}` : 'Visible consent surface',
+        reason: 'A visible consent surface remained active before page-level interaction tests.'
+      };
+    }
     if (interactionBlocker) errors.push(`${interactionBlocker.reason} ${interactionBlocker.selector}`);
     try {
       const axeOutput = await dependencies.runAxe(page, options.wcagLevel);
@@ -1032,7 +1049,10 @@ export async function runAudit(
   const gatedFindings = applyConfirmedFindingConfidenceGate(classifiedFindings);
   const consolidatedFindings = consolidateFindings(gatedFindings);
   assertLosslessConsolidation(gatedFindings, consolidatedFindings);
-  const findings = assignFindingIds(consolidatedFindings);
+  const findings = assignFindingIds(consolidatedFindings).map((finding) => ({
+    ...finding,
+    standards: standardsForFinding(finding)
+  }));
   retainRepresentativeScreenshotPerFinding(findings);
   assertRemediationOnlyNotes(findings);
   const startedUrls = new Set(pages.map((page) => page.url));

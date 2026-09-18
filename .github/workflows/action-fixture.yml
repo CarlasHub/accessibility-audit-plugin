@@ -37,7 +37,9 @@ jobs:
         name: Run this repository's built Action
         uses: ./
         with:
-          urls: http://127.0.0.1:4173/pass.html
+          urls: |-
+            http://127.0.0.1:4173/pass.html
+            http://127.0.0.1:4173/pass.html?second-page=1
           allowed-hosts: 127.0.0.1
           staging-only: 'true'
           capture-screenshots: 'false'
@@ -59,7 +61,7 @@ jobs:
           test -f "$HTML_PATH"
           test -f "$REPORT_PATH"
           test -f "$ARCHIVE_PATH"
-          node -e 'const r=require(process.env.JSON_PATH); if(r.pages?.[0]?.viewports?.length!==3) process.exit(1)'
+          node -e 'const r=require(process.env.JSON_PATH); if(r.requestedUrls?.length!==2 || r.pages?.length!==2 || r.pages.some((p) => p.viewports?.length!==3)) process.exit(1)'
           test -d "$OUTPUT_DIR"
       - name: Upload fixture evidence
         if: always() && steps.audit.outputs.output-dir != ''

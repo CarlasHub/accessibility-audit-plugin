@@ -61,12 +61,6 @@ name: Accessibility audit
 
 on:
   workflow_dispatch:
-    inputs:
-      url:
-        description: Public page to audit
-        required: true
-        type: string
-        default: https://example.com/
 
 permissions:
   contents: read
@@ -75,10 +69,12 @@ jobs:
   audit:
     uses: CarlasHub/accessibility-audit-plugin/.github/workflows/reusable-accessibility-audit.yml@v1
     with:
-      url: ${{ inputs.url }}
+      urls: |-
+        https://example.com/
+        https://example.com/contact
 ```
 
-Open **Actions → Accessibility audit → Run workflow**, enter any authorised public page, and start the run. The run summary links directly to the HTML, Excel, JSON, screenshots, and ZIP report. No checkout, browser setup, artifact step, token, or hostname field is required. The Action tests only the URL you enter and does not crawl the rest of the site. See [GitHub Action usage](docs/github-action.md) for advanced inputs, pull-request comments, quality gates, and security recommendations.
+List every page under `urls`, one per line, then open **Actions → Accessibility audit → Run workflow** and start the run. The run summary links directly to the HTML, Excel, JSON, screenshots, and ZIP report. No checkout, browser setup, artifact step, token, or hostname field is required. The Action tests only the URLs in the workflow and does not crawl the rest of the site. See [GitHub Action usage](docs/github-action.md) for advanced inputs, pull-request comments, quality gates, and security recommendations.
 
 ## Start here
 
@@ -152,7 +148,7 @@ The report separates four evidence categories:
 
 Every populated finding starts with `Status = Open` so teams can triage it without implying a final compliance verdict. Use `Evidence type` to distinguish confirmed, review, blocker, and manual records, then follow `Test method` before assigning work.
 
-WCAG 2.2 Level AA is always the public conformance target. Optional AAA automation is advisory only. The HTML report, workbook, and JSON include a criterion-by-criterion ledger using `passed`, `failed`, `manual-review-required`, `not-applicable`, and `inconclusive`; a criterion is never inferred to pass merely because no automated issue was found. The overall conformance decision remains **not determined** until qualified human assessment is complete.
+WCAG 2.2 Level AA is always the public conformance target. Optional AAA automation is advisory only. The HTML report, workbook, and JSON include a criterion-by-criterion ledger using `passed`, `failed`, `manual-review-required`, `not-applicable`, and `inconclusive`; a criterion is never inferred to pass merely because no automated issue was found. Findings also identify their W3C WCAG mapping, Deque axe-core rule source where applicable, and only the WCAG 2.0 A/AA criteria incorporated by [Revised Section 508 E205.4](https://www.access-board.gov/ict/#E205.4). The overall conformance decision remains **not determined** until qualified human assessment is complete.
 
 Severity (`Critical`, `Serious`, `Moderate`, or `Minor`) describes expected user impact. It is different from WCAG level, evidence confidence, remediation effort, and delivery priority.
 
