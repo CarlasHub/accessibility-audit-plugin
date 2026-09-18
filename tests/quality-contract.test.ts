@@ -123,7 +123,7 @@ describe('Audit Quality Contract', () => {
 
   it('makes AQ-16 through AQ-19 executable contract guarantees', () => {
     expect(AUDIT_QUALITY_CONTRACT).toMatchObject({
-      version: '1.1.0',
+      version: '1.2.0',
       guarantees: [
         'failure-isolation',
         'traceable-evidence',

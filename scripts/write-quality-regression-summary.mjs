@@ -5,7 +5,7 @@ const outputPath = new URL('../test-results/software-quality-regression.json', i
 const result = {
   schemaVersion: 1,
   kind: 'software-quality-regression',
-  contractVersion: '1.1.0',
+  contractVersion: '1.2.0',
   status: 'passed',
   conformanceEvidence: false,
   conformanceDecision: 'not-determined',

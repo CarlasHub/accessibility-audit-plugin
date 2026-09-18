@@ -24,7 +24,7 @@
     }
   ],
   "qualityContract": {
-    "version": "1.1.0",
+    "version": "1.2.0",
     "standard": "WCAG 2.2",
     "conformanceTarget": "A/AA",
     "criterionCount": 55,
@@ -36,13 +36,13 @@
       "deterministic-output"
     ]
   },
-  "baselineRationale": "Evidence-gated baseline: two unverified overlap candidates were removed by materiality and browser hit-test controls, and an unmapped broken-fragment result is retained for review rather than reported as a confirmed WCAG failure.",
+  "baselineRationale": "Evidence-gated baseline: unsupported overlap and diagnostic-only review candidates were removed; three repeat-confirmed clipping defects with meaningful content are retained as confirmed failures, and an unmapped broken-fragment result remains review-only rather than being reported as a confirmed WCAG failure.",
   "classifications": {
-    "confirmed": 31,
-    "review": 36,
+    "confirmed": 34,
+    "review": 22,
     "blocker": 1,
     "manualChecks": 55,
-    "totalFindings": 68
+    "totalFindings": 57
   },
   "fullyCompletedPages": 2,
   "partialPages": 2,
@@ -62,5 +62,5 @@
     "inconclusive": 0,
     "total": 42
   },
-  "findingIdentitySha256": "5f0894ba632414c416fb511894e74756afca750e94ae474c2982873a580bb9c8"
+  "findingIdentitySha256": "999ef81e46adc5199d8a6b8b12b975e20cc65c17d9b560e0611cd40a54ddb350"
 }

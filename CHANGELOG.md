@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.8.3 - 2026-09-18
+
+- Persisted landing-page setup drafts for existing and new repositories, including multi-page URL lists and generated workflow fields.
+- Added newline-delimited and JSON-array multi-URL support to the GitHub Action and reusable workflow so every authorized URL is audited in one run.
+- Tightened responsive clipping, text-resize, table, and keyboard evidence gates; removed non-actionable empty-fragment link candidates; and consolidated repeated root causes without discarding their affected scope.
+- Advanced the Audit Quality Contract to 1.2.0 and added regressions for repeatability, geometry, false-positive suppression, multi-URL parsing, report parity, and the packaged Action.
+- Reclassified the supplied L'Oréal validation sample from 102 unverified review rows to 15 confirmed failures, 3 review candidates, 1 execution blocker, and 4 additional confirmed findings produced by the corrected scan; repeated representations are consolidated in the final report.
+
 ## 1.8.2 - 2026-09-14
 
 - Published the compiled landing-page snapshot on public `main` as well as the `gh-pages` branch while keeping the editable site source private.

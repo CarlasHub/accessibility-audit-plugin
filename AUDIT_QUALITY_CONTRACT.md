@@ -1,6 +1,6 @@
 # Audit Quality Contract
 
-**Contract version:** 1.1.0
+**Contract version:** 1.2.0
 **Conformance target:** WCAG 2.2 Level A and AA  
 **Authority:** This document is the normative quality and release contract for CarlasHub Accessibility Audit. If product copy, implementation, tests, examples, or release notes conflict with this contract, this contract takes precedence.
 

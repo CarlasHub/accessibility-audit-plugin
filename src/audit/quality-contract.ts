@@ -1,6 +1,6 @@
 import type { AuditQualityContractMetadata, AuditSummary, EvidenceItem, Finding } from '../types.js';
 
-export const AUDIT_QUALITY_CONTRACT_VERSION = '1.1.0';
+export const AUDIT_QUALITY_CONTRACT_VERSION = '1.2.0';
 export const WCAG_22_AA_CRITERION_COUNT = 55 as const;
 
 export const AUDIT_QUALITY_CONTRACT: AuditQualityContractMetadata = {
