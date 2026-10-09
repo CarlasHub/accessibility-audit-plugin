@@ -27,6 +27,7 @@ const requiredEntries = [
   '.mcp.json',
   '_runtime/bin/launch-mcp.mjs',
   '_runtime/lib/install.mjs',
+  '_runtime/lib/safe-log.mjs',
   'commands/accessibility-audit.md',
   'hooks/hooks.json',
   'install-manifest.json',
@@ -98,6 +99,10 @@ function zipEntryNames(buffer) {
 
 async function assertPayload() {
   for (const entry of requiredEntries) await access(join(source, entry));
+  const launcher = await readFile(join(source, '_runtime', 'bin', 'launch-mcp.mjs'), 'utf8');
+  if (!launcher.includes("../lib/safe-log.mjs")) {
+    throw new Error('Claude plugin launcher must use the credential-safe logger.');
+  }
   const manifest = JSON.parse(await readFile(join(source, '.claude-plugin', 'plugin.json'), 'utf8'));
   if (manifest.name !== 'accessibility-audit') {
     throw new Error('Claude plugin manifest name must be accessibility-audit.');

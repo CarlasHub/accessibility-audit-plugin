@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+- Added reproducible CycloneDX 1.6 release SBOMs, versioned archive checksums, tag-only GitHub build-provenance and SBOM attestations, least-privilege release permissions, independent supply-chain contract coverage, and production dependency updates for newly disclosed advisories without changing plugin behavior.
+
+- Added explicitly opt-in GitHub Pages report hosting to the reusable workflow, with a direct `hosted-report-url`, public-data warnings, immutable Action pins, skipped-by-default deployment, and Pages write permissions confined to the publishing job while local/private behavior remains the default.
+
+- Added first-class pasted explicit URL lists across interactive and automated entry points, with whitespace, newline, bullet, numbered, and JSON-array formats, position-specific validation, stable order and deduplication, and preservation of URL punctuation.
+
+- Added safe local URL-set XML sitemap import with entity/DOCTYPE rejection, format limits, page-only location extraction, host filtering, and explicit no-fetch handling for remote sitemaps and sitemap indexes.
+
+- Added a safe authentication preflight that strictly validates private Playwright storage-state files, rejects public-suffix and out-of-scope session data, keeps state outside report artifacts, and binds one immutable in-memory snapshot to confirmation before browser launch or report creation without exposing authentication paths or values.
+
+- Added defense-in-depth credential redaction across routine and debug CLI failures, structured MCP errors, and GitHub Action annotations while retaining useful public URL context and established actionable guidance.
+- Added explicit authenticated-page security guidance across the plugin, command, skill, README, and security policy, including least-privilege sessions, secret-safe handling, common auth-state ignore rules, confidential artifact handling, and post-audit cleanup without changing audit behavior.
+- Added opt-in Playwright storage-state reuse across configuration, CLI, and MCP audits, with config-relative path resolution, explicit overrides, isolated per-viewport contexts, and path-free pre-audit disclosure while preserving host and consent controls.
+- Added reusable CLI journey configuration files through `journeysFile` and `--journeys-file`, with config-relative paths, explicit override rules, and strict pre-audit validation while retaining inline journeys.
+- Added an explicit journey-draft approval step that freshly validates candidates and safely exports established CLI and GitHub Action journey configuration without running an audit or overwriting files.
+- Added versioned, non-runnable journey drafts that preserve partial JSON without overwriting files, record strict-validation issues, and are explicitly rejected as CLI configuration and GitHub Action journey input.
+- Added stable finding fingerprints, scope-aware baseline comparison across HTML and Excel reports, a `fail-on: new` Action policy, richer pull-request change counts, and an explicit regression matrix that preserves every existing severity gate.
+- Made finished artifacts easier to act on: terminal runs print labelled HTML and portable-ZIP paths, normal audits accept an opt-in `--open`, MCP results expose separate open/share links, and maintained GitHub workflows upload the sibling ZIP with the browsable report folder.
+- Added a shared decision-ready executive summary to HTML and Excel reports, with a plain-language current position and prioritised next step that preserves the mandatory human conformance decision.
+- Added a compact top-actions view to HTML and Excel reports, ranking coverage restoration, confirmed remediation, validation, and manual work while linking back to stable source findings.
+- Added an accessible per-finding **Copy ticket** action to the self-contained HTML report, including complete triage context, live status feedback, and a direct-file clipboard fallback.
+- Reordered and strengthened the HTML report's first screen so the executive position, next step, and direct review shortcuts appear before detailed metrics and the full conformance notice.
+- Reworked finding explanations into plain-language, evidence-specific next actions followed by impact, assessment, remediation, component, selector, and screenshot context; added matching evidence-type guidance to the workbook.
+- Added a self-contained `demo` command that audits a bundled, intentionally imperfect practice page on a temporary loopback-only server, keeps output separate from normal reports, and opens the generated HTML report without visiting an external website.
+- Added a non-destructive `doctor` command and `npm run doctor` shortcut that check the Node.js runtime, canonical report template, report and sibling archive write access, and browser launch readiness, with concise human output, machine-readable JSON, and actionable recovery guidance.
+- Added actionable, consistently classified CLI and MCP failures with stable error codes, ordered recovery guidance, explicit failure stages and retryability, while hiding stack traces by default unless local CLI debugging is enabled.
+- Added a pre-audit summary that resolves page lists before consent and shows page previews, exclusions, host and no-crawl scope, effective settings, output filename and template, auditor, and landing page in CLI and MCP flows; confirmed runs use the approved page snapshot, and no-form MCP approval is bound to a change-detecting digest covering the snapshot and every execution setting.
+- Added reusable `standard`, `thorough`, and `debug` audit presets across configuration, CLI, and MCP, with discoverable CLI help and explicit-setting overrides.
+- Added a one-command Quick Audit path for a single explicit URL, with an exact-host boundary, automatic defaults, optional native HTML report opening, and focused compatibility tests.
+- Added direct HTML resource links to completed MCP audit results so compatible clients can offer one-click report opening.
+
 ## 1.8.4 - 2026-09-18
 
 - Aligned the scanner's nested-link text handling with axe-core and Chromium accessibility-tree behavior for computed `display`, `visibility`, and `aria-hidden` state.

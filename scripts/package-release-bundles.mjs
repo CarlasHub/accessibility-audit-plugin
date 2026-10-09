@@ -12,6 +12,7 @@ import {
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import archiver from 'archiver';
+import { generateReleaseSbom } from './lib/release-sbom.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
@@ -33,10 +34,12 @@ const bundles = [
     manifest: 'plugin.json',
     expectedName: 'accessibility-audit',
     required: [
+      'README.md',
       'plugin.json',
       '.mcp.json',
       '_runtime/bin/launch-mcp.mjs',
       '_runtime/lib/install.mjs',
+      '_runtime/lib/safe-log.mjs',
       'commands/accessibility-audit.md',
       'hooks/hooks.json',
       'install-manifest.json',
@@ -49,10 +52,12 @@ const bundles = [
     manifest: '.claude-plugin/plugin.json',
     expectedName: 'accessibility-audit-vscode',
     required: [
+      'README.md',
       '.claude-plugin/plugin.json',
       '.mcp.json',
       '_runtime/bin/launch-mcp.mjs',
       '_runtime/lib/install.mjs',
+      '_runtime/lib/safe-log.mjs',
       'commands/accessibility-audit.md',
       'hooks/hooks.json',
       'install-manifest.json',
@@ -64,7 +69,7 @@ const bundles = [
 async function collectFiles(directory, prefix = '') {
   const files = [];
   const entries = await readdir(directory, { withFileTypes: true });
-  entries.sort((left, right) => left.name.localeCompare(right.name));
+  entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
   for (const entry of entries) {
     const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
     const absolute = path.join(directory, entry.name);
@@ -81,6 +86,16 @@ async function sha256(file) {
 
 async function assertPayload(bundle, source) {
   for (const relative of bundle.required) await access(path.join(source, relative));
+  const readme = await readFile(path.join(source, 'README.md'), 'utf8');
+  if (!readme.includes('pasted whitespace- or newline-separated URL list')
+    || !readme.includes('a JSON string array')
+    || !readme.includes('validated by position')) {
+    throw new Error(`${bundle.sourceName} README must document pasted URL lists and positional validation.`);
+  }
+  const launcher = await readFile(path.join(source, '_runtime', 'bin', 'launch-mcp.mjs'), 'utf8');
+  if (!launcher.includes("../lib/safe-log.mjs")) {
+    throw new Error(`${bundle.sourceName} launcher must use the credential-safe logger.`);
+  }
   const manifest = JSON.parse(await readFile(path.join(source, bundle.manifest), 'utf8'));
   if (manifest.name !== bundle.expectedName || manifest.version !== version) {
     throw new Error(`${bundle.sourceName} manifest does not match ${bundle.expectedName}@${version}`);
@@ -88,7 +103,12 @@ async function assertPayload(bundle, source) {
 }
 
 async function createArchive(source, destination) {
-  const files = await collectFiles(source);
+  const files = (await collectFiles(source))
+    .sort((left, right) => left.relative < right.relative ? -1 : left.relative > right.relative ? 1 : 0);
+  const entries = [];
+  for (const file of files) {
+    entries.push({ name: file.relative, contents: await readFile(file.absolute) });
+  }
   await new Promise((resolve, reject) => {
     const output = createWriteStream(destination);
     const archive = archiver('zip', { zlib: { level: 9 } });
@@ -96,8 +116,8 @@ async function createArchive(source, destination) {
     output.on('error', reject);
     archive.on('error', reject);
     archive.pipe(output);
-    for (const file of files) {
-      archive.file(file.absolute, { name: file.relative, date: archiveDate, mode: 0o644 });
+    for (const entry of entries) {
+      archive.append(entry.contents, { name: entry.name, date: archiveDate, mode: 0o644 });
     }
     void archive.finalize();
   });
@@ -144,3 +164,6 @@ const agentBundle = await publishFile(
   'accessibility-audit-agent-plugin.tgz',
 );
 console.log(`Packaged local agent bundle: ${path.relative(root, agentBundle.versioned)} and ${path.relative(root, agentBundle.stable)}`);
+
+const sbom = await generateReleaseSbom({ root, artifactsDirectory });
+console.log(`Generated release SBOM: ${path.relative(root, sbom.versioned)} and ${path.relative(root, sbom.stable)}`);

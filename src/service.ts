@@ -11,13 +11,25 @@ import { validateExcelReport, type WorkbookValidation } from './reporting/valida
 import { createAuditArchive } from './reporting/archive.js';
 import { writeHtmlReport } from './reporting/html.js';
 import { writeJsonReport } from './reporting/json.js';
+import { writeCsvReport } from './reporting/csv.js';
+import { writeSarifReport } from './reporting/sarif.js';
+import { compareAuditWithBaseline } from './comparison.js';
+import { createAuditHistory } from './history.js';
+import {
+  resolveAuthenticationForExecution,
+  type AuthenticationPreflightResult
+} from './auth-preflight.js';
 
 export interface AuditRequest {
   inputs: string[];
   options?: Partial<AuditConfigInput>;
   templatePath?: string;
   reportName?: string;
+  baselinePath?: string;
+  historyPaths?: string[];
   execution?: AuditExecutionContext;
+  /** Private in-memory confirmation binding; never included in generated artifacts. */
+  authentication?: AuthenticationPreflightResult;
 }
 
 export interface AuditRunResult {
@@ -25,6 +37,8 @@ export interface AuditRunResult {
   reportPath: string;
   htmlPath: string;
   jsonPath: string;
+  csvPath: string;
+  sarifPath: string;
   archivePath: string;
   requestedPageCount: number;
   auditedPageCount: number;
@@ -69,24 +83,38 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
   if (!request.inputs.length) throw new Error('At least one URL or input file is required.');
   const execution = request.execution ?? {};
   const options = resolveOptions(request.options ?? {});
-  await emitProgress(execution, { phase: 'preparing', message: `Preparing audit output in ${options.outputDir}.` });
-  await mkdir(options.outputDir, { recursive: true });
   await emitProgress(execution, { phase: 'targets', message: 'Reading and validating the authorized page targets.' });
   const collected = await collectUrls(request.inputs, {
     allowedHosts: options.allowedHosts,
+    exactHosts: options.exactHosts,
+    ...(options.maxPages !== undefined ? { maxPages: options.maxPages } : {}),
     stagingOnly: options.stagingOnly
   });
+  if (options.storageState) {
+    await emitProgress(execution, { phase: 'preparing', message: 'Running the authentication safety preflight.' });
+  }
+  const authentication = await resolveAuthenticationForExecution(options, collected.urls, request.authentication);
+  await emitProgress(execution, { phase: 'preparing', message: `Preparing audit output in ${options.outputDir}.` });
+  await mkdir(options.outputDir, { recursive: true });
   await emitProgress(execution, {
     phase: 'targets',
     message: `Resolved ${collected.urls.length} page${collected.urls.length === 1 ? '' : 's'} for testing.`,
     current: collected.urls.length,
     total: collected.urls.length
   });
-  const summary = await runAudit(collected.urls, collected.source, collected.skipped, options, execution);
+  const summary = await runAudit(collected.urls, collected.source, collected.skipped, options, execution, authentication);
+  if (request.baselinePath) {
+    summary.comparison = await compareAuditWithBaseline(summary, request.baselinePath);
+  }
+  if (request.historyPaths?.length) {
+    summary.history = await createAuditHistory(summary, request.historyPaths);
+  }
   const reportName = cleanReportName(request.reportName ?? DEFAULT_REPORT_NAME);
   const reportPath = outputArtifactPath(options.outputDir, reportName);
   const htmlPath = outputArtifactPath(options.outputDir, reportName.replace(/\.xlsx$/i, '.html'));
   const jsonPath = outputArtifactPath(options.outputDir, 'audit-results.json');
+  const csvPath = outputArtifactPath(options.outputDir, 'audit-findings.csv');
+  const sarifPath = outputArtifactPath(options.outputDir, 'audit-results.sarif');
   const applyLateCancellation = async (): Promise<boolean> => {
     if (!execution.signal?.aborted || summary.status === 'cancelled') return false;
     const cancelledAt = new Date().toISOString();
@@ -97,6 +125,9 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
     return true;
   };
   await applyLateCancellation();
+  // runAudit saves early JSON evidence; persist service-level enrichments before
+  // rendering or packaging any downstream artifact.
+  await writeJsonReport(summary, jsonPath);
   await emitProgress(execution, {
     phase: 'reporting',
     message: `${summary.status === 'cancelled' ? 'Writing partial' : 'Writing'} Excel report to ${reportPath}.`
@@ -125,11 +156,16 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
   }
   await emitProgress(execution, { phase: 'reporting', message: `Writing accessible HTML report to ${htmlPath}.` });
   await writeHtmlReport(summary, htmlPath);
+  await emitProgress(execution, { phase: 'reporting', message: 'Writing portable CSV findings and SARIF 2.1.0 results.' });
+  await Promise.all([
+    writeCsvReport(summary, csvPath),
+    writeSarifReport(summary, sarifPath)
+  ]);
   await emitProgress(execution, {
     phase: 'reporting',
-    message: 'Packaging the HTML report, workbook, JSON evidence, and linked screenshots as a portable ZIP archive.'
+    message: 'Packaging the HTML report, workbook, JSON, CSV, SARIF, and linked screenshots as a portable ZIP archive.'
   });
-  const archivePath = await createAuditArchive(options.outputDir, reportPath, htmlPath, jsonPath);
+  const archivePath = await createAuditArchive(options.outputDir, reportPath, htmlPath, jsonPath, [csvPath, sarifPath]);
   const completedPageCount = summary.pages.filter((page) =>
     page.viewports.length === options.viewports.length &&
     !page.partial &&
@@ -150,6 +186,8 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
     reportPath,
     htmlPath,
     jsonPath,
+    csvPath,
+    sarifPath,
     archivePath,
     requestedPageCount: collected.urls.length,
     auditedPageCount: summary.auditedUrls.length,
@@ -167,8 +205,8 @@ export async function executeAudit(request: AuditRequest): Promise<AuditRunResul
   await emitProgress(execution, {
     phase: summary.status === 'cancelled' ? 'cancelled' : 'completed',
     message: summary.status === 'cancelled'
-      ? `Stopped safely. Partial HTML, Excel, and JSON output is in ${options.outputDir}; the portable ZIP is ${archivePath}.`
-      : `Audit completed. HTML, Excel, JSON, and linked screenshots are in ${options.outputDir}; the portable ZIP is ${archivePath}.`
+      ? `Stopped safely. Partial HTML, Excel, JSON, CSV, and SARIF output is in ${options.outputDir}; the portable ZIP is ${archivePath}.`
+      : `Audit completed. HTML, Excel, JSON, CSV, SARIF, and linked screenshots are in ${options.outputDir}; the portable ZIP is ${archivePath}.`
   });
   return result;
 }

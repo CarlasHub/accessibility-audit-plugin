@@ -8,14 +8,14 @@ This guide teaches a first-time user how to add the public Action to a repositor
 
 The Action collects repeatable accessibility evidence. It does **not** certify a website, prove complete WCAG conformance, or replace testing by people with disabilities.
 
-The GitHub Action accepts explicit `http://` or `https://` URLs. It does not crawl a whole site and it does not accept a CSV file as the `urls` input. The separate local CLI/editor integrations can use `.xlsx`, `.csv`, `.txt`, or `.json` URL inventories; that is a different operating mode from this GitHub Actions tutorial.
+The GitHub Action accepts explicit `http://` or `https://` URLs. It does not crawl a whole site and it does not accept a CSV file as the `urls` input. The separate local CLI/editor integrations can use `.xlsx`, `.csv`, `.txt`, `.json`, or local URL-set `.xml` inventories; that is a different operating mode from this GitHub Actions tutorial.
 
 By the end, the learner can:
 
 - add the workflow without installing software locally;
 - run it manually, after a deployment, on a pull request with a real preview URL, or on a schedule;
 - understand which automated tests ran and which WCAG checks still need a person;
-- download the HTML, Excel, JSON, screenshots, and ZIP evidence;
+- download the HTML, Excel, JSON, CSV, SARIF, screenshots, and ZIP evidence;
 - investigate possible false positives instead of treating every signal as a confirmed defect;
 - choose a blocking policy for continuous integration; and
 - fix, deploy, rerun, and compare evidence.
@@ -63,7 +63,8 @@ jobs:
         uses: CarlasHub/accessibility-audit-plugin@v1
         with:
           urls: https://carlashub.github.io/a11y-test-cases/
-          allowed-hosts: carlashub.github.io
+          exact-hosts: carlashub.github.io
+          max-pages: 1
           auditor: Carla / CarlasHub
           wcag-level: AA
           aaa-advisory: 'true'
@@ -75,7 +76,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: accessibility-audit
-          path: ${{ steps.audit.outputs.output-dir }}
+          path: |
+            ${{ steps.audit.outputs.output-dir }}
+            ${{ steps.audit.outputs.archive-path }}
           retention-days: 14
 ```
 
@@ -89,13 +92,14 @@ jobs:
 - `id: audit` lets later steps read the Action's outputs.
 - `@v1` follows compatible version 1 releases. For maximum supply-chain reproducibility, replace it with a reviewed full commit SHA and update it deliberately.
 - `urls` is the exact audit scope. Add one complete URL per line for multiple pages.
-- `allowed-hosts` prevents an accidental redirect or input mistake from moving the audit outside the approved host.
+- `exact-hosts` prevents an accidental redirect or input mistake from moving the audit outside the literal approved host; `allowed-hosts` is the alternative when that host and its subdomains are all approved.
+- `max-pages` rejects an unexpectedly large authorized scope before the browser starts; omission leaves the supplied explicit scope unlimited.
 - `wcag-level: AA` runs the supported A and AA automation.
 - `aaa-advisory: 'true'` adds the supported AAA automation as advisory evidence. It does not turn the result into an AAA conformance assessment.
 - `fail-on: none` is the safest first run because it produces evidence without blocking the workflow.
 - `comment-on-pr: 'false'` avoids pull-request comments in a manual-only starter workflow.
 - `if: always()` preserves evidence even when a later quality gate marks the audit unsuccessful.
-- `upload-artifact` makes the result downloadable from the workflow run. Fourteen days is a requested retention period; the repository or organization maximum can shorten it.
+- `upload-artifact` makes both the report folder and its portable sharing ZIP downloadable from the workflow run. Fourteen days is a requested retention period; the repository or organization maximum can shorten it.
 
 The public demonstration previously used the legacy `wcag-level: AAA` form. New workflows should use `wcag-level: AA` plus `aaa-advisory: 'true'` so the baseline and advisory evidence are explicit.
 
@@ -110,6 +114,7 @@ with:
     https://example.com/help/
     https://example.com/contact/
   allowed-hosts: example.com
+  max-pages: 3
 ```
 
 For more than one host, use one host per line. Do not add third-party hosts merely to silence a scope error.
@@ -167,6 +172,8 @@ The evidence folder can contain:
 - `Accessibility_Audit_Report.html` — the primary visual report, with summary, filters, findings, page inventory, coverage, manual checks, and method;
 - `Accessibility_Audit_Report.xlsx` — the structured workbook for triage, ownership, filtering, and audit records;
 - `audit-results.json` — the machine-readable source for integrations and detailed evidence;
+- `audit-findings.csv` — the flat finding register for spreadsheet and import workflows;
+- `audit-results.sarif` — SARIF 2.1.0 results for compatible automation;
 - `screenshots/` — captured page evidence when enabled; and
 - any additional packaged evidence produced by the Action version and workflow configuration used for that run.
 
@@ -282,11 +289,14 @@ A passing job means the configured gate was not triggered. It never means the we
 | `aaa-advisory` | false | Adds supported AAA checks as advisory evidence. |
 | `output-dir` | accessibility-audit-results | Folder written by the Action. |
 | `landing-page-url` | empty | Optional report link/landing-page metadata. |
-| `allowed-hosts` | empty | Approved hostname allowlist. Strongly recommended. |
+| `allowed-hosts` | hosts in `urls` | Approved hostname-and-subdomain allowlist. The Action derives it from the explicit URLs when omitted. |
+| `exact-hosts` | empty | Literal hostname allowlist for scopes that must not include subdomains. |
+| `max-pages` | unlimited | Optional 1–50,000 hard ceiling applied after authorization and deduplication; excess scope stops before the browser starts. |
 | `staging-only` | false | Requires the configured target to satisfy the Action's staging safeguards. |
 | `capture-screenshots` | true | Saves visual evidence. |
-| `browser-channel` | empty | Selects a supported installed browser channel when needed. |
-| `auto-install-browser` | true | Allows the Action to install its required browser. |
+| `browser` | chromium | Selects Chromium, Firefox, or WebKit. Firefox and WebKit are opt-in. |
+| `browser-channel` | empty | Selects a supported installed Chromium channel when needed; do not combine it with Firefox or WebKit. |
+| `auto-install-browser` | true | Allows the Action to install the selected browser. |
 | `concurrency` | 2 | Parallel page workers; accepted range is 1–8. |
 | `timeout-ms` | 30000 | Per-operation timeout in milliseconds. |
 | `report-name` | Accessibility_Audit_Report.xlsx | Workbook filename. |
@@ -294,7 +304,7 @@ A passing job means the configured gate was not triggered. It never means the we
 | `comment-on-pr` | true | Attempts a pull-request summary when the event and token permit it. |
 | `github-token` | current token | Token used for the pull-request comment. |
 
-Use the Action outputs to connect later workflow steps: `output-dir`, `report-path`, `html-path`, `json-path`, `archive-path`, `confirmed-findings`, `review-findings`, `blockers`, `requested-pages`, `audited-pages`, `completed-pages`, `partial-pages`, `not-started-pages`, `skipped-pages`, and `gate-result`.
+Use the Action outputs to connect later workflow steps: `output-dir`, `report-path`, `html-path`, `json-path`, `csv-path`, `sarif-path`, `archive-path`, `confirmed-findings`, `review-findings`, `blockers`, `requested-pages`, `audited-pages`, `completed-pages`, `partial-pages`, `not-started-pages`, `skipped-pages`, and `gate-result`.
 
 ## 10. Fix, deploy, rerun, and compare
 
@@ -309,7 +319,7 @@ Use the Action outputs to connect later workflow steps: `output-dir`, `report-pa
 ## Troubleshooting
 
 - **No Run workflow button:** put the `workflow_dispatch` workflow on the default branch and confirm Actions/write access.
-- **URL rejected:** use a complete HTTP(S) URL and make `allowed-hosts` match its hostname exactly.
+- **URL rejected:** use a complete HTTP(S) URL and make `exact-hosts` match its hostname literally, or make `allowed-hosts` name the host or an approved parent domain.
 - **Wrong version tested:** wait for deployment and confirm the browser-visible build before starting the audit.
 - **Blocked or partial page:** inspect authentication, consent, bot protection, network failures, timeouts, and screenshots. Do not count it as a pass.
 - **No PR comment:** inspect the event type and token permissions; the artifact remains available even when commenting is not.

@@ -1,5 +1,5 @@
 name: CarlasHub Accessibility Audit
-description: Run an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA and export HTML, Excel, JSON, and screenshot evidence.
+description: Run an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA and export HTML, Excel, JSON, CSV, SARIF, and screenshot evidence.
 author: CarlasHub
 
 branding:
@@ -8,7 +8,7 @@ branding:
 
 inputs:
   urls:
-    description: One explicit http(s) URL per line, or a JSON array of URLs.
+    description: Explicit http(s) URLs, one per line (plain, bulleted, or numbered), or a JSON array of URLs.
     required: true
   auditor:
     description: Name recorded as the auditor in the report.
@@ -30,7 +30,13 @@ inputs:
     description: Optional landing page used for same-origin link context.
     required: false
   allowed-hosts:
-    description: Optional comma-separated or newline-separated allowlist of hostnames. Defaults to the hostnames in urls.
+    description: Optional comma-separated or newline-separated host or parent-domain allowlist. Defaults to the hostnames in urls.
+    required: false
+  exact-hosts:
+    description: Optional comma-separated or newline-separated list of literal allowed hostnames; descendants are rejected.
+    required: false
+  max-pages:
+    description: Optional maximum authorized unique page count from 1 to 50000; the Action stops before auditing if exceeded.
     required: false
   staging-only:
     description: Reject targets that do not look like staging, QA, preview, test, or local hosts.
@@ -40,11 +46,15 @@ inputs:
     description: Capture element-level and viewport evidence screenshots.
     required: false
     default: 'true'
+  browser:
+    description: Browser engine to use, either chromium (default), firefox, or webkit.
+    required: false
+    default: chromium
   browser-channel:
-    description: Optional installed Playwright browser channel, such as chrome.
+    description: Optional installed Chromium channel, such as chrome.
     required: false
   auto-install-browser:
-    description: Install Playwright Chromium if no bundled or system Chromium browser is available.
+    description: Install the selected Playwright browser if it is unavailable.
     required: false
     default: 'true'
   concurrency:
@@ -65,8 +75,14 @@ inputs:
     description: Optional Excel report filename.
     required: false
     default: Accessibility_Audit_Report.xlsx
+  baseline-path:
+    description: Optional prior audit JSON path, relative to the workflow workspace unless absolute.
+    required: false
+  history-paths:
+    description: Optional prior audit JSON paths, one per line, for chronological history and trends.
+    required: false
   fail-on:
-    description: 'Gate policy: none, blockers, confirmed, critical, serious, moderate, or minor.'
+    description: 'Gate policy: none, new, blockers, confirmed, critical, serious, moderate, or minor. new requires baseline-path.'
     required: false
     default: none
   comment-on-pr:
@@ -86,6 +102,10 @@ outputs:
     description: Absolute path to the accessible self-contained HTML report.
   json-path:
     description: Absolute path to the JSON evidence.
+  csv-path:
+    description: Absolute path to the portable CSV findings register.
+  sarif-path:
+    description: Absolute path to the SARIF 2.1.0 results.
   archive-path:
     description: Absolute path to the portable ZIP archive.
   confirmed-findings:

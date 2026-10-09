@@ -48,7 +48,7 @@ mkdir accessibility-audit
 tar -xzf accessibility-audit-agent-plugin.tgz -C accessibility-audit --strip-components=1
 ```
 
-The audit automatically installs headless Playwright Chromium on first use when neither bundled Chromium nor a supported system Chrome/Edge installation is available. Use `--no-auto-install-browser` only when automatic downloads are prohibited and an approved browser is already configured.
+The audit uses Chromium by default and automatically installs the selected Playwright browser on first use when it is unavailable. Chromium can also use a supported system Chrome/Edge installation. Firefox and WebKit are opt-in through `--browser firefox` or `--browser webkit` and never fall back to Chromium. Use `--no-auto-install-browser` only when automatic downloads are prohibited and an approved browser is already configured.
 
 Keep this directory after installation because the clients use it as the plugin source. To update it, download the current archive to a new directory, verify it, then point the client at that directory.
 
@@ -326,12 +326,14 @@ Deleting the separate source checkout is optional after every client has been un
 
 Run `npm ci` and `npm run build` in the plugin checkout. Do not run them in the project being audited.
 
-### Chromium is missing
+### The selected browser is missing
 
-Normally no manual step is required. The plugin tries bundled Chromium, Chrome, and Edge, then installs Playwright Chromium once in plugin-owned storage. If automatic installation is disabled or blocked, run this in the plugin checkout:
+Normally no manual step is required. For the default engine, the plugin tries bundled Chromium, Chrome, and Edge, then installs Playwright Chromium once in plugin-owned storage. Firefox and WebKit runs use their selected Playwright browser. If automatic installation is disabled or blocked, run the matching command in the plugin checkout:
 
 ```sh
 npx playwright install chromium
+# or: npx playwright install firefox
+# or: npx playwright install webkit
 ```
 
 ### The plugin is listed but the MCP server failed

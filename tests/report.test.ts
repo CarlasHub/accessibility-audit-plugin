@@ -12,6 +12,7 @@ import type { AuditSummary } from '../src/types.js';
 function summaryWithScreenshot(screenshot: string): AuditSummary {
   const summary: AuditSummary = {
     status: 'completed', generatedAt: '2026-09-02T10:00:00.000Z', auditor: 'Test Auditor', source: 'test', wcagLevel: 'AA',
+    browserEngine: 'firefox',
     landingPageUrl: 'https://careers.qa.example.org/en', requestedUrls: ['https://careers.qa.example.org/en'],
     auditedUrls: ['https://careers.qa.example.org/en'], skippedUrls: [],
     pages: [{ url: 'https://careers.qa.example.org/en', viewports: [] }], coverage: [],
@@ -32,6 +33,57 @@ function summaryWithScreenshot(screenshot: string): AuditSummary {
     limitations: ['Not a conformance certification.']
   };
   summary.criteria = buildWcagCriterionLedger(summary.pages, summary.findings, summary.manualChecks, false);
+  return summary;
+}
+
+function summaryWithComparison(): AuditSummary {
+  const summary = summaryWithScreenshot('');
+  const record = (fingerprint: string, classification: 'confirmed' | 'review' | 'blocker' | 'manual', severity: 'Serious' | 'Moderate', text: string) => ({
+    fingerprint,
+    id: `A11Y-${fingerprint}`,
+    classification,
+    severity,
+    summary: text,
+    urls: [`https://careers.qa.example.org/en/${'very-long-accessibility-path/'.repeat(8)}`],
+    viewports: ['desktop']
+  });
+  summary.comparison = {
+    kind: 'baseline-comparison',
+    coverage: 'partial',
+    baselineSource: 'baseline-audit.json',
+    baselineGeneratedAt: '2026-09-01T09:00:00.000Z',
+    baselineFindingCount: 4,
+    currentFindingCount: 4,
+    newFindings: [record('new', 'confirmed', 'Serious', '=1+1')],
+    unchangedFindings: [record('same', 'review', 'Moderate', 'Needs review')],
+    resolvedFindings: [record('fixed', 'confirmed', 'Moderate', 'Previously observed issue')],
+    indeterminateCurrentFindings: [record('current', 'blocker', 'Moderate', 'Current scope could not be matched')],
+    unobservedBaselineFindings: [record('baseline', 'manual', 'Moderate', 'Baseline scope was not rerun')],
+    limitations: [`One baseline viewport was not rerun, so the report cannot determine whether findings were resolved in that scope. ${'Qualified human review remains required. '.repeat(8)}`]
+  };
+  return summary;
+}
+
+function summaryWithHistory(): AuditSummary {
+  const summary = summaryWithScreenshot('');
+  summary.history = {
+    kind: 'audit-history',
+    points: [{
+      source: 'audit-2026-08.json', generatedAt: '2026-08-02T10:00:00.000Z', status: 'completed',
+      requestedPageCount: 2, auditedPageCount: 2, findingCount: 2, confirmedCount: 1, reviewCount: 1,
+      blockerCount: 0, manualCount: 0, criticalConfirmedCount: 0, seriousConfirmedCount: 1
+    }, {
+      source: 'Current audit', generatedAt: summary.generatedAt, status: summary.status,
+      browserEngine: 'firefox',
+      requestedPageCount: 1, auditedPageCount: 1, findingCount: 1, confirmedCount: 1, reviewCount: 0,
+      blockerCount: 0, manualCount: 0, criticalConfirmedCount: 0, seriousConfirmedCount: 1,
+      comparisonToPrevious: {
+        coverage: 'partial', newCount: 1, unchangedCount: 0, resolvedCount: 0,
+        indeterminateCurrentCount: 0, unobservedPreviousCount: 2
+      }
+    }],
+    limitations: ['The requested page scope changed between snapshots.']
+  };
   return summary;
 }
 
@@ -73,11 +125,16 @@ describe('Excel report', () => {
     expect(findings.getCell('I7').value).toBe('Desktop (1440×1000)\nMobile (390×844)');
     expect(findings.getCell('V7').value).toEqual(expect.objectContaining({ hyperlink: 'screenshots/elements/element.png' }));
     expect(findings.getCell('W7').value).toBe('image-missing-alt');
+    expect(findings.getCell('A4').value).toContain('Confirmed = reproduced barrier');
+    expect(findings.getCell('A4').value).toContain('Review = evidence requiring a documented human decision');
+    expect(findings.getCell('A4').value).toContain('Blocker = restore the affected scope and rerun it');
+    expect(findings.getCell('A4').value).toContain('Manual = complete the human procedure and record evidence');
 
     const auditSummary = workbook.getWorksheet('Audit Summary')!;
     expect(auditSummary.getCell('B6').value).toBe('Test Auditor');
     expect(auditSummary.getCell('B8').value).toEqual(expect.objectContaining({ text: 'https://careers.qa.example.org/en', hyperlink: 'https://careers.qa.example.org/en' }));
     expect(auditSummary.getCell('E4').value).toBe(1);
+    expect(auditSummary.getCell('A16').value).toContain('Browser engine: firefox');
 
     const manualChecks = workbook.getWorksheet('Manual Checks')!;
     expect(manualChecks.getCell('F5').value).toBe('Not tested');
@@ -101,6 +158,123 @@ describe('Excel report', () => {
     expect(findings.getCell('G7').value).toBe('Manual or advisory check');
     expect(JSON.stringify(findings.getRow(7).values)).not.toContain('[object Object]');
     expect((await validateExcelReport(path)).valid).toBe(true);
+  });
+
+  it('adds a validated baseline comparison sheet only when comparison data is present', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'a11y-report-comparison-'));
+    const path = join(directory, 'report.xlsx');
+    await writeExcelReport(summaryWithComparison(), { outputPath: path });
+
+    const validation = await validateExcelReport(path);
+    expect(validation.valid).toBe(true);
+    expect(validation.errors).toEqual([]);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(path);
+    expect(workbook.worksheets.map((worksheet) => worksheet.name)).toEqual([...EXPECTED_WORKSHEETS, 'Baseline Comparison']);
+    const comparison = workbook.getWorksheet('Baseline Comparison')!;
+    expect(comparison.properties.tabColor?.argb).toBe('FF1A73E8');
+    expect(comparison.getRow(7).values).toEqual([
+      undefined, 'Change', 'Finding ID', 'Classification', 'Impact / priority', 'Finding',
+      'Affected URLs', 'Viewports', 'Stable fingerprint'
+    ]);
+    expect([8, 9, 10, 11, 12].map((row) => comparison.getCell(row, 1).value)).toEqual([
+      'New', 'Unchanged', 'Resolved', 'Indeterminate current', 'Baseline not re-observed'
+    ]);
+    expect(comparison.getCell('E8').value).toBe('=1+1');
+    expect(comparison.getCell('E8').type).toBe(ExcelJS.ValueType.String);
+    expect(comparison.getCell('A8').font.bold).toBe(true);
+    expect(comparison.getCell('A8').fill).toEqual(expect.objectContaining({ fgColor: { argb: 'FFFCE8E6' } }));
+    expect(comparison.getRow(8).height).toBeGreaterThan(54);
+    expect(comparison.getCell('A14').value).toContain('Resolved means the finding was not observed');
+    expect(comparison.getCell('A15').value).toContain('One baseline viewport was not rerun');
+    expect(comparison.getRow(15).height).toBeGreaterThan(42);
+    expect(workbook.getWorksheet('Audit Summary')?.getCell('A16').value).toContain('Partial comparison');
+  });
+
+  it('adds a validated chronological history sheet independently and after baseline comparison', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'a11y-report-history-'));
+    const historyOnlyPath = join(directory, 'history-only.xlsx');
+    await writeExcelReport(summaryWithHistory(), { outputPath: historyOnlyPath });
+    expect((await validateExcelReport(historyOnlyPath)).errors).toEqual([]);
+
+    const historyOnly = new ExcelJS.Workbook();
+    await historyOnly.xlsx.readFile(historyOnlyPath);
+    expect(historyOnly.worksheets.map((worksheet) => worksheet.name)).toEqual([...EXPECTED_WORKSHEETS, 'History & Trends']);
+    const history = historyOnly.getWorksheet('History & Trends')!;
+    expect(history.properties.tabColor?.argb).toBe('FF00897B');
+    expect(history.getCell('A6').value).toBe('audit-2026-08.json');
+    expect(history.getCell('M6').value).toBe('Starting point');
+    expect(history.getCell('A7').value).toBe('Current audit');
+    expect(history.getCell('M7').value).toBe('partial');
+    expect(history.getCell('R7').value).toBe(2);
+    expect(history.getCell('A3').value).toContain('The requested page scope changed');
+
+    const combined = summaryWithComparison();
+    combined.history = summaryWithHistory().history!;
+    const combinedPath = join(directory, 'combined.xlsx');
+    await writeExcelReport(combined, { outputPath: combinedPath });
+    expect((await validateExcelReport(combinedPath)).errors).toEqual([]);
+    const combinedWorkbook = new ExcelJS.Workbook();
+    await combinedWorkbook.xlsx.readFile(combinedPath);
+    expect(combinedWorkbook.worksheets.map((worksheet) => worksheet.name)).toEqual([
+      ...EXPECTED_WORKSHEETS, 'Baseline Comparison', 'History & Trends'
+    ]);
+  });
+
+  it('validates a generated baseline comparison with no baseline or current findings', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'a11y-report-comparison-empty-'));
+    const path = join(directory, 'report.xlsx');
+    const summary = summaryWithComparison();
+    summary.comparison = {
+      ...summary.comparison!,
+      baselineFindingCount: 0,
+      currentFindingCount: 0,
+      newFindings: [],
+      unchangedFindings: [],
+      resolvedFindings: [],
+      indeterminateCurrentFindings: [],
+      unobservedBaselineFindings: []
+    };
+    await writeExcelReport(summary, { outputPath: path });
+
+    const validation = await validateExcelReport(path);
+    expect(validation.valid).toBe(true);
+    expect(validation.errors).toEqual([]);
+  });
+
+  it('rejects truncated, gapped, or sentinel-mixed comparison data', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'a11y-report-comparison-invalid-'));
+    const path = join(directory, 'report.xlsx');
+    await writeExcelReport(summaryWithComparison(), { outputPath: path });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(path);
+    const comparison = workbook.getWorksheet('Baseline Comparison')!;
+    const firstRowValues = comparison.getRow(8).values;
+    if (!Array.isArray(firstRowValues)) {
+      throw new Error('Expected comparison row values to be positional.');
+    }
+    const originalFirstRow = [...firstRowValues];
+
+    comparison.getRow(8).values = [];
+    await workbook.xlsx.writeFile(path);
+    expect((await validateExcelReport(path)).errors).toContain('Baseline Comparison row 9 appears after a gap in the comparison data.');
+
+    comparison.getRow(8).values = originalFirstRow;
+    comparison.getCell('A8').value = '';
+    await workbook.xlsx.writeFile(path);
+    expect((await validateExcelReport(path)).errors).toContain('Baseline Comparison row 8 has data after an empty change category.');
+
+    comparison.getCell('A8').value = 'New';
+    comparison.getRow(9).values = [];
+    await workbook.xlsx.writeFile(path);
+    expect((await validateExcelReport(path)).errors).toContain('Baseline Comparison row 10 appears after a gap in the comparison data.');
+
+    comparison.getCell('A8').value = 'No baseline or current findings were available to compare.';
+    await workbook.xlsx.writeFile(path);
+    const sentinelErrors = (await validateExcelReport(path)).errors;
+    expect(sentinelErrors).toContain('Baseline Comparison row 8 must not contain data after the no-findings message.');
+    expect(sentinelErrors).toContain('Baseline Comparison row 10 contains data after the no-findings message.');
   });
 
   it('keeps mapped AAA criteria outside the AA decision when advisory checks are disabled', async () => {

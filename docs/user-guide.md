@@ -8,9 +8,9 @@ Use the plugin to collect repeatable accessibility evidence from a known set of 
 
 The plugin does three things:
 
-1. Opens each supplied page in headless Chromium at three viewport sizes.
+1. Opens each supplied page in headless Chromium by default, or opt-in Firefox/WebKit, at three viewport sizes.
 2. Runs automated and scripted interaction checks and records the evidence.
-3. Produces a polished self-contained HTML report, a structured Excel workbook, detailed JSON, linked screenshots, and a portable ZIP.
+3. Produces a polished self-contained HTML report, a structured Excel workbook, detailed JSON, a portable CSV finding register, SARIF 2.1.0 results, linked screenshots, and a portable ZIP.
 
 It does not certify WCAG conformance. W3C explains that tools can assist evaluation but cannot determine accessibility without knowledgeable human evaluation.
 
@@ -25,7 +25,7 @@ Prepare:
 - a writable output directory;
 - time after the automated run for review and manual testing.
 
-Do not put passwords, session tokens, or other secrets in URLs, configuration files, filenames, or prompts. Screenshots and page text can contain sensitive information, so store the output according to project policy.
+Do not put passwords, session tokens, or other secrets in URLs, configuration files, filenames, or prompts. For protected pages, create a local Playwright storage-state file through an authorized sign-in, keep it outside source control and the report directory with restricted permissions, and pass only its path through `storageState`, `--storage-state`, or the MCP audit tools. Before browser launch or report creation, the authentication preflight checks the file and its approved host scope; the pre-audit summary reports success without displaying its path or contents. Screenshots and page text can contain sensitive information, so store the output according to project policy. See [Auditing authenticated pages safely](authenticated-pages.md) for the complete least-privilege workflow and cleanup checklist.
 
 ## Step 1: choose the scope
 
@@ -36,9 +36,9 @@ The plugin is URL-list driven. It never assumes that one URL represents an entir
 | One page | One complete HTTP(S) URL |
 | A short user journey | Each page URL in the journey |
 | Selected templates | At least one representative URL for each template, plus pages with meaningful component variations |
-| A complete known site | A complete, deduplicated canonical URL list in XLSX, CSV, TXT, or JSON |
+| A complete known site | A complete, deduplicated canonical URL list in XLSX, CSV, TXT, JSON, or a local URL-set XML sitemap |
 
-Include pages that expose distinct states or content, such as search results, no-results states, form pages, error pages, localized pages, and pages with unique navigation or widgets. A component that is absent from the supplied pages cannot be tested.
+Include pages that expose distinct states or content, such as search results, no-results states, form pages, error pages, localized pages, and pages with unique navigation or widgets. A component that is absent from the supplied pages cannot be tested. Every run uses the fixed `supplied-pages-only` scope mode: link checks may validate destinations, but they never add linked pages as audit targets. The confirmation data and JSON results expose this mode, and the HTML and Excel reports state it in plain language.
 
 The landing-page QA URL is only the main reference link shown in `Audit Summary`. Changing it does not add pages to the audit.
 
@@ -50,6 +50,7 @@ Supported formats:
 - CSV: include the page URLs as values in the file.
 - TXT: normally use one URL per line.
 - JSON: use an array or object containing URL strings.
+- XML: provide a local sitemap with a `<urlset>` root. Only `<url><loc>` page values are imported; image and other metadata URLs are ignored. The plugin does not fetch remote sitemaps or follow sitemap indexes, so provide each child URL-set file explicitly.
 
 Remove production URLs when the assignment is staging-only. Remove duplicate tracking variants unless they intentionally render different content. Keep every required locale or page variation as its own URL.
 
@@ -69,10 +70,18 @@ For selected pages:
 /accessibility-audit https://preview.example.test/ https://preview.example.test/jobs
 ```
 
+You can paste a whitespace- or newline-separated URL list as one input. Bulleted lists, numbered lists, and JSON string arrays are also accepted. The plugin preserves commas and semicolons that belong to a URL and identifies any malformed entry by its list position.
+
 For a page-list file available to the editor:
 
 ```text
 /accessibility-audit pages.xlsx
+```
+
+A local URL-set sitemap works the same way:
+
+```text
+/accessibility-audit sitemap.xml
 ```
 
 The plugin is isolated from the open project. It does not edit the project’s source, dependencies, configuration, governance, or CI. The project only provides working context and, optionally, a page-list file.
@@ -92,8 +101,42 @@ Codex should invoke the installed `run_accessibility_audit` tool and show the sa
 From the built plugin directory:
 
 ```sh
+npm run doctor
 node dist/cli.js audit pages.xlsx
 ```
+
+Run `doctor` before a first audit or when setup fails. It checks Node.js 22+, the canonical report template, write access for both the report directory and its sibling portable ZIP, and the selected browser without visiting a target, installing software, or leaving its temporary write probes behind. Chromium is the unchanged default. Use `--browser firefox` or `--browser webkit` for an opt-in engine, for example `npm run doctor -- --browser firefox`; the same option works with `audit`, `quick`, and `demo`. Browser channels apply only to Chromium. For clean machine-readable output, use `npm run --silent doctor -- --json`. Packaged installs can use `accessibility-audit doctor` directly.
+
+To learn the complete workflow without choosing or authorizing a website, run:
+
+```sh
+node dist/cli.js demo
+```
+
+The demo serves a bundled, intentionally imperfect practice page on a temporary loopback-only address, runs the normal audit, writes every report format to `Accessibility Audit Demo Results`, and opens the HTML result. It never visits an external website. Its findings are examples for learning, not an accessibility certification. Use `--no-open` on a server.
+
+For one authorized URL, Quick Audit fills the safe defaults, restricts scope to the exact hostname, and opens the HTML report when the run finishes:
+
+```sh
+node dist/cli.js quick https://preview.example.test/
+```
+
+Use `--no-open` on a server or when report opening is not wanted. Use the interactive `audit` command for multiple URLs, page-list files, or before-run edits.
+
+For repeatable multi-page audits, choose a named preset:
+
+```sh
+node dist/cli.js presets
+node dist/cli.js audit pages.xlsx --preset thorough
+```
+
+- `standard` is the recommended setup and preserves the established defaults.
+- `thorough` adds AAA advisory checks and raises the timeout, keyboard, and link limits for release readiness.
+- `debug` keeps the core checks but shows the browser, processes one page at a time, and waits longer.
+
+Explicit command-line or config values override a preset. The MCP audit tool accepts the same `preset` field.
+
+Use repeatable `--history <audit-results.json>` options to add prior local reports to the HTML and workbook trend. Comparisons only classify new or resolved findings when browser engine, URL, and viewport scope are equivalent. Older reports without a `browserEngine` field are interpreted as Chromium; a present engine must be `chromium`, `firefox`, or `webkit`, and any other value is rejected. A change of engine is shown as a partial comparison with unmatched findings left indeterminate.
 
 The terminal prompts for:
 
@@ -107,35 +150,43 @@ Press Enter to accept a displayed default. Use `--yes` only in trusted automatio
 
 Before accepting, verify:
 
-- the URL or page-list input is the intended one;
+- the resolved page count and preview are complete, and any exclusions are expected;
+- the listed hosts and supplied-pages-only no-crawl boundary match the intended scope;
 - the auditor name is correct;
 - the landing-page QA URL is the project’s main QA/staging reference;
-- the output directory is appropriate;
+- the output directory, report filename, and bundled or custom template are appropriate;
+- the coverage, viewports, named journeys, preset, browser selection and mode, automatic-install behavior, authentication-state use, concurrency, timeout and traversal limits, and screenshot setting are appropriate;
 - `stagingOnly` is enabled only when every target uses a recognizable staging, QA, preview, test, or local hostname;
 - the host allowlist includes the intended hosts and nothing broader.
 
-If a client cannot display the confirmation form, the agent should show the same values in chat and ask once before retrying the tool with confirmation enabled.
+Page-list files are resolved before this consent step, and the landing page defaults to their first resolved URL. Interactive confirmation audits that approved in-memory page snapshot even if the source file changes afterward. If a client cannot display the confirmation form, the tool returns the same structured summary and a `confirmationDigest` so the agent can show it in chat and ask once before retrying with `confirmed: true` and that digest. A retry without that digest remains `confirmation-required` and cannot start the audit. The digest covers the resolved page snapshot and all effective settings, including the report name and template path. If any of them changed, the tool returns `confirmation-stale` and requires review of the updated summary instead of starting the audit.
 
 ## Step 4: follow progress or stop safely
 
 The run reports preparation, URL resolution, browser progress, report writing, validation, and completion. Browser checks are headless by default.
+
+If a CLI audit fails, it reports a stable error code and a short, ordered list of recovery steps instead of printing a stack trace. MCP failures provide the same information as structured data, plus the `preparation`, `execution`, or `validation` stage and a `retryable` flag. CLI, MCP, GitHub Action, and marketplace runtime failures redact common authentication headers, cookies, URL credentials, sensitive URL parameters, token/password fields, and storage-state values. Release validation rejects credential literals in source and generated manifests without printing the detected value. Start with `nextAction`; correct the input, scope, browser, template, or output problem it identifies, then retry with the same confirmed scope. For local diagnosis only, `ACCESSIBILITY_AUDIT_DEBUG=1` adds a CLI stack trace: filesystem paths may appear, but authentication values remain redacted. Treat redaction as defense in depth, review output before sharing it, and never place secrets in URLs, configuration, filenames, prompts, or artifacts.
 
 To stop:
 
 - use the editor’s Stop control in Cursor, Claude Code, or Codex; or
 - press `Ctrl+C` once in a terminal.
 
-One stop request allows the plugin to close Chromium and write partial HTML and JSON plus validated XLSX and ZIP output. A second `Ctrl+C` exits immediately and may prevent partial reports from being finalized.
+One stop request allows the plugin to close the selected browser and write partial HTML, JSON, CSV, and SARIF plus validated XLSX and ZIP output. A second `Ctrl+C` exits immediately and may prevent partial reports from being finalized.
 
 Cancelled output must be treated as partial. `Page Inventory` lists the URLs whose browser testing started; check the JSON summary to determine which pages and viewports completed, remained partial, or never started.
 
 ## Step 5: open the output correctly
+
+Quick Audit opens the HTML report automatically. For a normal terminal audit, add `--open`; the terminal also prints labelled **Open HTML report** and **Share portable ZIP** paths without changing the structured JSON on stdout. MCP audit results contain separate **Open accessibility audit report** and **Share accessibility audit report** resource links for compatible clients. If none of those actions is available, use the exact `htmlPath` and `archivePath` returned in the structured result.
 
 The output contains:
 
 - `Accessibility_Audit_Report.html` — the easiest report to open, search, filter, print, and share;
 - `Accessibility_Audit_Report.xlsx` — the working accessibility report;
 - `audit-results.json` — detailed evidence and run state;
+- `audit-findings.csv` — flat finding data for spreadsheets and imports;
+- `audit-results.sarif` — SARIF 2.1.0 results for compatible automation;
 - `screenshots/elements/` — focused evidence for confirmed component failures;
 - `screenshots/` — full-page evidence only for page-level failures or blockers;
 - a ZIP beside the output directory containing the portable package.

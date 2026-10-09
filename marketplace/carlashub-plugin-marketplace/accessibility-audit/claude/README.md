@@ -4,15 +4,15 @@ CarlasHub Accessibility Audit is an evidence-backed accessibility pre-audit for 
 
 ## Use
 
-Ask Claude Code and Claude Desktop to use the Accessibility Audit plugin with one URL, several URLs, or one XLSX/CSV/TXT/JSON page-list file. The plugin confirms the exact scope, landing-page QA URL, and auditor before starting. The editable auditor default is `Automated`.
+Ask Claude Code and Claude Desktop to use the Accessibility Audit plugin with one URL, several URLs, a pasted whitespace- or newline-separated URL list, a bulleted or numbered URL list, a JSON string array, or one XLSX/CSV/TXT/JSON/local URL-set XML sitemap page-list file. Every pasted entry is validated by position. The plugin confirms the exact scope, landing-page QA URL, and auditor before starting. The editable auditor default is `Automated`.
 
-The audit runs headlessly at desktop, mobile, and 320px reflow sizes. It reports progress and supports graceful cancellation with partial output. A full-site audit requires a complete canonical URL list. Screen-reader, physical-device, content-meaning, and other judgment-based procedures remain guided manual checks.
+The audit runs headlessly at desktop, mobile, and 320px reflow sizes. Chromium remains the default, with Firefox and WebKit available as opt-in engines. It reports progress and supports graceful cancellation with partial output. A full-site audit requires a complete canonical URL list. Screen-reader, physical-device, content-meaning, and other judgment-based procedures remain guided manual checks.
 
 If consent or another modal surface cannot be dismissed, the plugin records an interaction-coverage blocker and does not claim that underlying page interactions ran. JSON preserves axe incomplete/pass metadata, keyboard and link truncation, and a page/viewport/test-area coverage matrix. Incomplete, sampled, blocked, manual, and unperformed checks are not passes.
 
 ## Isolation and first activation
 
-Node.js 22 or later and npm must be available to the client. The first activation verifies the bundled runtime checksum and installs it into client-owned plugin data; it never modifies the project open in the editor. If no supported Chromium browser exists, the first confirmed audit installs Playwright Chromium once into the same private plugin storage unless automatic browser installation is disabled.
+Node.js 22 or later and npm must be available to the client. The first activation verifies the bundled runtime checksum and installs it into client-owned plugin data; it never modifies the project open in the editor. If the selected browser is unavailable, the first confirmed audit installs its matching Playwright browser once into the same private plugin storage unless automatic browser installation is disabled. Browser channels apply only to Chromium.
 
 ## Output
 

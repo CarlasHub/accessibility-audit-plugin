@@ -10,6 +10,20 @@ import { PLUGIN_VERSION } from '../src/version.js';
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
 
+async function expectCredentialSafeRuntime(archivePath: string): Promise<void> {
+  const [{ stdout: loggerSource }, { stdout: launcherSource }] = await Promise.all([
+    execFileAsync('unzip', ['-p', archivePath, '_runtime/lib/safe-log.mjs']),
+    execFileAsync('unzip', ['-p', archivePath, '_runtime/bin/launch-mcp.mjs'])
+  ]);
+  expect(launcherSource).toContain("../lib/safe-log.mjs");
+  const logger = await import(`data:text/javascript;base64,${Buffer.from(loggerSource).toString('base64')}`);
+  const output = logger.redactLogMessage(
+    'Authorization: Digest realm="SENTINEL.REALM", nonce="SENTINEL-NONCE". Please retry.'
+  );
+  expect(output).not.toContain('SENTINEL');
+  expect(output).toContain('Please retry.');
+}
+
 function archiveEntryNames(buffer: Buffer): string[] {
   let footerOffset = -1;
   for (let offset = buffer.length - 22; offset >= Math.max(0, buffer.length - 65_557); offset -= 1) {
@@ -62,6 +76,7 @@ describe('Claude Desktop custom-plugin package', () => {
     const currentArchiveName = 'accessibility-audit-claude-desktop.zip';
     const currentArchive = await readFile(join(outputDirectory, currentArchiveName));
     const repeatedArchive = await readFile(join(secondOutputDirectory, archiveName));
+    const repeatedCurrentArchive = await readFile(join(secondOutputDirectory, currentArchiveName));
     const checksum = await readFile(join(outputDirectory, `${archiveName}.sha256`), 'utf8');
     const currentChecksum = await readFile(join(outputDirectory, `${currentArchiveName}.sha256`), 'utf8');
     const names = archiveEntryNames(archive);
@@ -70,12 +85,21 @@ describe('Claude Desktop custom-plugin package', () => {
     expect(archive.subarray(0, 2).toString()).toBe('PK');
     expect(names).toContain('.claude-plugin/plugin.json');
     expect(names).toContain('.mcp.json');
+    expect(names).toContain('README.md');
     expect(names).toContain('skills/run-accessibility-audit/SKILL.md');
     expect(names).toContain('_runtime/bin/launch-mcp.mjs');
+    expect(names).toContain('_runtime/lib/safe-log.mjs');
     expect(names.some((name) => name.startsWith('claude/'))).toBe(false);
     expect(repeatedArchive.equals(archive)).toBe(true);
     expect(currentArchive.equals(archive)).toBe(true);
+    expect(repeatedCurrentArchive.equals(currentArchive)).toBe(true);
     expect(checksum).toBe(`${createHash('sha256').update(archive).digest('hex')}  ${archiveName}\n`);
     expect(currentChecksum).toBe(`${createHash('sha256').update(archive).digest('hex')}  ${currentArchiveName}\n`);
+    const { stdout: readme } = await execFileAsync('unzip', ['-p', join(outputDirectory, archiveName), 'README.md']);
+    expect(readme).toContain('pasted whitespace- or newline-separated URL list');
+    expect(readme).toContain('a JSON string array');
+    expect(readme).toContain('validated by position');
+    await expectCredentialSafeRuntime(join(outputDirectory, archiveName));
+    await expectCredentialSafeRuntime(join(outputDirectory, currentArchiveName));
   }, 30_000);
 });

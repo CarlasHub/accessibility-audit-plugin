@@ -5,6 +5,15 @@ import { fileURLToPath } from 'node:url';
 import ExcelJS, { type CellValue, type DataValidation, type Style, type Worksheet } from 'exceljs';
 import type { AuditSummary, Finding, PageAudit } from '../types.js';
 import { assertCanonicalAuditSummary } from '../audit/canonical-validation.js';
+import { AUDIT_SCOPE_LABEL } from '../scope.js';
+import { buildExecutiveSummary } from './executive-summary.js';
+import {
+  comparisonCategories,
+  comparisonHeadline,
+  comparisonPriorityLabel,
+  RESOLUTION_SCOPE_NOTE
+} from './comparison-presentation.js';
+import { buildTopActions } from './finding-actions.js';
 import { findingId } from './finding-id.js';
 import { EXPECTED_REPORT_HEADERS } from './validate.js';
 
@@ -52,7 +61,7 @@ const CLASSIFICATION_COLOURS: Record<Finding['classification'], { background: st
   manual: { background: REPORT_COLOURS.manual, foreground: 'FF137333' }
 };
 
-async function assertCanonicalTemplate(path: string): Promise<void> {
+export async function assertCanonicalTemplate(path: string): Promise<void> {
   const digest = createHash('sha256').update(await readFile(path)).digest('hex');
   if (digest !== CANONICAL_TEMPLATE_SHA256) {
     throw new Error(`The report template does not match the CarlasHub WCAG audit template (${CANONICAL_TEMPLATE_SHA256}); received ${digest}.`);
@@ -61,6 +70,34 @@ async function assertCanonicalTemplate(path: string): Promise<void> {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+const SUMMARY_LINE_LENGTH = 88;
+const SUMMARY_LINE_HEIGHT = 18;
+
+function wrapSummaryText(value: string): string {
+  const wrapped: string[] = [];
+  for (const paragraph of value.split('\n')) {
+    if (!paragraph) {
+      wrapped.push('');
+      continue;
+    }
+    let line = '';
+    for (const originalWord of paragraph.split(/\s+/)) {
+      let word = originalWord;
+      if (line && line.length + word.length + 1 > SUMMARY_LINE_LENGTH) {
+        wrapped.push(line);
+        line = '';
+      }
+      while (word.length > SUMMARY_LINE_LENGTH) {
+        wrapped.push(word.slice(0, SUMMARY_LINE_LENGTH));
+        word = word.slice(SUMMARY_LINE_LENGTH);
+      }
+      if (word) line = line ? `${line} ${word}` : word;
+    }
+    if (line) wrapped.push(line);
+  }
+  return wrapped.join('\n');
 }
 
 function solidFill(cell: ExcelJS.Cell, colour: string): void {
@@ -77,6 +114,18 @@ function styleBadge(cell: ExcelJS.Cell, background: string, foreground: string):
     left: { style: 'thin', color: { argb: REPORT_COLOURS.border } },
     right: { style: 'thin', color: { argb: REPORT_COLOURS.border } }
   };
+}
+
+function comparisonRowHeight(values: string[], widths: number[], minimum = 42): number {
+  const lineCount = values.reduce((maximum, value, index) => {
+    const charactersPerLine = Math.max(8, Math.floor((widths[index] ?? 20) * 0.85));
+    const wrappedLines = value.split(/\r?\n/).reduce(
+      (total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)),
+      0
+    );
+    return Math.max(maximum, wrappedLines);
+  }, 1);
+  return Math.max(minimum, lineCount * 15 + 9);
 }
 
 function evidenceKey(value: string): string {
@@ -442,7 +491,196 @@ function populateCriteria(workbook: ExcelJS.Workbook, summary: AuditSummary): vo
   worksheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
 }
 
+function populateComparison(workbook: ExcelJS.Workbook, summary: AuditSummary): void {
+  const comparison = summary.comparison;
+  if (!comparison) return;
+  const worksheet = workbook.addWorksheet('Baseline Comparison', {
+    properties: { tabColor: { argb: 'FF1A73E8' } }
+  });
+  worksheet.mergeCells('A1:H1');
+  worksheet.getCell('A1').value = 'Baseline comparison';
+  worksheet.getCell('A1').font = { name: 'Arial', size: 18, bold: true, color: { argb: 'FFFFFFFF' } };
+  solidFill(worksheet.getCell('A1'), REPORT_COLOURS.primaryDark);
+  worksheet.getCell('A1').alignment = { vertical: 'middle' };
+  worksheet.getRow(1).height = 32;
+  worksheet.mergeCells('A2:H2');
+  worksheet.getCell('A2').value = comparisonHeadline(comparison);
+  worksheet.getCell('A2').font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF595959' } };
+  worksheet.getCell('A2').alignment = { wrapText: true, vertical: 'middle' };
+  worksheet.getRow(2).height = 32;
+
+  worksheet.getCell('A4').value = 'Baseline source';
+  worksheet.mergeCells('B4:D4');
+  worksheet.getCell('B4').value = comparison.baselineSource;
+  worksheet.getCell('E4').value = 'Coverage';
+  worksheet.mergeCells('F4:H4');
+  worksheet.getCell('F4').value = comparison.coverage === 'complete' ? 'Complete equivalent scope' : 'Partial equivalent scope';
+  worksheet.getCell('A5').value = 'Baseline generated';
+  worksheet.mergeCells('B5:D5');
+  worksheet.getCell('B5').value = comparison.baselineGeneratedAt ?? 'Not recorded';
+  worksheet.getCell('E5').value = 'Baseline findings';
+  worksheet.getCell('F5').value = comparison.baselineFindingCount;
+  worksheet.getCell('G5').value = 'Current findings';
+  worksheet.getCell('H5').value = comparison.currentFindingCount;
+  for (const address of ['A4', 'E4', 'A5', 'E5', 'G5']) {
+    worksheet.getCell(address).font = { name: 'Arial', size: 10, bold: true, color: { argb: REPORT_COLOURS.primaryDark } };
+  }
+  for (const rowNumber of [4, 5]) {
+    worksheet.getRow(rowNumber).height = 24;
+    worksheet.getRow(rowNumber).eachCell((cell) => {
+      cell.alignment = { vertical: 'middle', wrapText: true };
+      cell.border = { bottom: { style: 'hair', color: { argb: REPORT_COLOURS.border } } };
+    });
+  }
+
+  const headers = ['Change', 'Finding ID', 'Classification', 'Impact / priority', 'Finding', 'Affected URLs', 'Viewports', 'Stable fingerprint'];
+  const columnWidths = [24, 16, 18, 22, 44, 46, 22, 34];
+  worksheet.getRow(7).values = headers;
+  const changeColours: Record<string, { background: string; foreground: string }> = {
+    new: { background: REPORT_COLOURS.confirmed, foreground: REPORT_COLOURS.serious },
+    unchanged: { background: REPORT_COLOURS.open, foreground: REPORT_COLOURS.primaryDark },
+    resolved: { background: REPORT_COLOURS.manual, foreground: 'FF137333' },
+    'indeterminate-current': { background: REPORT_COLOURS.review, foreground: 'FF7A4F01' },
+    'unobserved-baseline': { background: 'FFE7E6E6', foreground: REPORT_COLOURS.text }
+  };
+  let rowNumber = 8;
+  for (const category of comparisonCategories(comparison)) {
+    for (const record of category.records) {
+      const row = worksheet.getRow(rowNumber);
+      const values = [
+        category.shortLabel,
+        record.id ?? 'Not recorded',
+        record.classification,
+        comparisonPriorityLabel(record),
+        record.summary,
+        record.urls.join('\n') || 'Not recorded',
+        record.viewports.join('\n') || 'Not recorded',
+        record.fingerprint
+      ];
+      row.values = values;
+      row.height = comparisonRowHeight(values, columnWidths, 54);
+      rowNumber += 1;
+    }
+  }
+  applySupportingSheetPresentation(worksheet, 7, 8, 8, 2);
+  let styledRowNumber = 8;
+  for (const category of comparisonCategories(comparison)) {
+    for (const record of category.records) {
+      const row = worksheet.getRow(styledRowNumber);
+      const changeColour = changeColours[category.key]!;
+      styleBadge(row.getCell(1), changeColour.background, changeColour.foreground);
+      const classificationColour = CLASSIFICATION_COLOURS[record.classification];
+      styleBadge(row.getCell(3), classificationColour.background, classificationColour.foreground);
+      const priorityColour = record.classification === 'confirmed'
+        ? SEVERITY_COLOURS[record.severity]
+        : classificationColour;
+      styleBadge(row.getCell(4), priorityColour.background, priorityColour.foreground);
+      styledRowNumber += 1;
+    }
+  }
+  if (rowNumber === 8) {
+    worksheet.mergeCells('A8:H8');
+    worksheet.getCell('A8').value = 'No baseline or current findings were available to compare.';
+    worksheet.getCell('A8').font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF595959' } };
+  }
+  const noteRow = Math.max(10, rowNumber + 1);
+  worksheet.mergeCells(`A${noteRow}:H${noteRow}`);
+  worksheet.getCell(`A${noteRow}`).value = RESOLUTION_SCOPE_NOTE;
+  worksheet.getCell(`A${noteRow}`).font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF7A4F01' } };
+  worksheet.getCell(`A${noteRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: REPORT_COLOURS.review } };
+  worksheet.getCell(`A${noteRow}`).alignment = { wrapText: true, vertical: 'middle' };
+  worksheet.getRow(noteRow).height = comparisonRowHeight([RESOLUTION_SCOPE_NOTE], [150], 34);
+  worksheet.mergeCells(`A${noteRow + 1}:H${noteRow + 1}`);
+  const limitationText = comparison.limitations.length
+    ? `Comparison limitations: ${comparison.limitations.join(' | ')}`
+    : 'Comparison limitations: No additional limitations were recorded.';
+  worksheet.getCell(`A${noteRow + 1}`).value = limitationText;
+  worksheet.getCell(`A${noteRow + 1}`).font = { name: 'Arial', size: 10, color: { argb: REPORT_COLOURS.text } };
+  worksheet.getCell(`A${noteRow + 1}`).alignment = { wrapText: true, vertical: 'top' };
+  worksheet.getRow(noteRow + 1).height = comparisonRowHeight([limitationText], [150]);
+  worksheet.columns = columnWidths.map((width) => ({ width }));
+  worksheet.autoFilter = { from: { row: 7, column: 1 }, to: { row: Math.max(7, rowNumber - 1), column: 8 } };
+  worksheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+}
+
+function populateHistory(workbook: ExcelJS.Workbook, summary: AuditSummary): void {
+  const history = summary.history;
+  if (!history) return;
+  const worksheet = workbook.addWorksheet('History & Trends', {
+    properties: { tabColor: { argb: 'FF00897B' } }
+  });
+  worksheet.mergeCells('A1:R1');
+  worksheet.getCell('A1').value = 'History and trends';
+  worksheet.getCell('A1').font = { name: 'Arial', size: 18, bold: true, color: { argb: 'FFFFFFFF' } };
+  solidFill(worksheet.getCell('A1'), REPORT_COLOURS.primaryDark);
+  worksheet.getCell('A1').alignment = { vertical: 'middle' };
+  worksheet.getRow(1).height = 32;
+  worksheet.mergeCells('A2:R2');
+  worksheet.getCell('A2').value = 'Chronological audit snapshots; each change is measured against the immediately preceding snapshot and qualified by comparable scope.';
+  worksheet.getCell('A2').font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF595959' } };
+  worksheet.getCell('A2').alignment = { wrapText: true, vertical: 'middle' };
+  worksheet.getRow(2).height = 32;
+  worksheet.mergeCells('A3:R3');
+  worksheet.getCell('A3').value = history.limitations.length
+    ? `History limitations: ${history.limitations.join(' | ')}`
+    : 'History limitations: No additional limitations were recorded.';
+  worksheet.getCell('A3').font = { name: 'Arial', size: 10, color: { argb: REPORT_COLOURS.text } };
+  worksheet.getCell('A3').alignment = { wrapText: true, vertical: 'middle' };
+  worksheet.getRow(3).height = comparisonRowHeight([String(worksheet.getCell('A3').value)], [180], 28);
+
+  const headers = [
+    'Audit', 'Generated (UTC)', 'Status', 'Requested pages', 'Audited pages', 'Findings', 'Confirmed', 'Review',
+    'Blockers', 'Manual', 'Critical confirmed', 'Serious confirmed', 'Coverage vs previous', 'New', 'Unchanged',
+    'Resolved', 'Indeterminate current', 'Previous not re-observed'
+  ];
+  worksheet.getRow(5).values = headers;
+  history.points.forEach((point, index) => {
+    const delta = point.comparisonToPrevious;
+    worksheet.getRow(index + 6).values = [
+      point.source,
+      point.generatedAt,
+      point.status,
+      point.requestedPageCount,
+      point.auditedPageCount,
+      point.findingCount,
+      point.confirmedCount,
+      point.reviewCount,
+      point.blockerCount,
+      point.manualCount,
+      point.criticalConfirmedCount,
+      point.seriousConfirmedCount,
+      delta?.coverage ?? 'Starting point',
+      delta?.newCount ?? '',
+      delta?.unchangedCount ?? '',
+      delta?.resolvedCount ?? '',
+      delta?.indeterminateCurrentCount ?? '',
+      delta?.unobservedPreviousCount ?? ''
+    ];
+  });
+  applySupportingSheetPresentation(worksheet, 5, 6, 18, 2);
+  for (let rowNumber = 6; rowNumber < history.points.length + 6; rowNumber += 1) {
+    const status = valueText(worksheet.getCell(rowNumber, 3));
+    styleBadge(
+      worksheet.getCell(rowNumber, 3),
+      status === 'completed' ? REPORT_COLOURS.manual : REPORT_COLOURS.review,
+      status === 'completed' ? 'FF137333' : 'FF7A4F01'
+    );
+    const coverage = valueText(worksheet.getCell(rowNumber, 13));
+    styleBadge(
+      worksheet.getCell(rowNumber, 13),
+      coverage === 'complete' ? REPORT_COLOURS.manual : coverage === 'partial' ? REPORT_COLOURS.review : REPORT_COLOURS.open,
+      coverage === 'complete' ? 'FF137333' : coverage === 'partial' ? 'FF7A4F01' : REPORT_COLOURS.primaryDark
+    );
+  }
+  worksheet.columns = [28, 25, 14, 16, 15, 12, 12, 12, 12, 12, 19, 18, 22, 10, 13, 12, 22, 26]
+    .map((width) => ({ width }));
+  worksheet.autoFilter = { from: { row: 5, column: 1 }, to: { row: history.points.length + 5, column: 18 } };
+  worksheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+}
+
 function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
+  const executiveSummary = buildExecutiveSummary(summary);
+  const topActions = buildTopActions(summary);
   const allViewports = summary.pages.flatMap((page) => page.viewports);
   const classifications = (classification: Finding['classification']): number =>
     summary.findings.filter((finding) => finding.classification === classification).length;
@@ -470,18 +708,52 @@ function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
   (['Critical', 'Serious', 'Moderate', 'Minor', 'Advisory'] as const).forEach((severity, index) => {
     worksheet.getCell(`H${index + 4}`).value = confirmedSeverities(severity);
   });
-  worksheet.getCell('A14').value = [
+  const summaryStyle = clone(worksheet.getCell('A14').style as Partial<Style>);
+  worksheet.unMergeCells('A14:H16');
+  for (const rowNumber of [14, 15, 16]) {
+    worksheet.mergeCells(`A${rowNumber}:H${rowNumber}`);
+    worksheet.getCell(`A${rowNumber}`).style = clone(summaryStyle);
+  }
+  const scopeAndMethod = [
+    `Browser engine: ${summary.browserEngine ?? 'not recorded'}`,
+    `Scope mode: ${AUDIT_SCOPE_LABEL}`,
     `Requested URLs: ${summary.requestedUrls.length}`,
     `Audited URLs: ${summary.auditedUrls.length}`,
     `Partial pages: ${summary.pages.filter((page) => page.partial).length}`,
     `Skipped URLs: ${summary.skippedUrls.length}`,
     `Viewports run: ${allViewports.length}`,
-    `Conformance target: WCAG 2.2 Level AA`,
+    'Conformance target: WCAG 2.2 Level AA',
     `Audit Quality Contract: ${summary.qualityContract?.version ?? 'not recorded'}`,
     `Finding policy: ${summary.qualityContract?.findingPolicy ?? 'not recorded'}`,
     `AAA advisory checks: ${aaaAdvisory ? 'Enabled' : 'Disabled'}`,
     `Source: ${summary.source}`
-  ].join('\n');
+  ].join('; ');
+  worksheet.getCell('A13').value = 'Executive summary, scope and method';
+  worksheet.getCell('A14').value = wrapSummaryText(`Executive summary: ${executiveSummary.headline}`);
+  worksheet.getCell('A15').value = wrapSummaryText(`Current position: ${executiveSummary.currentPosition}`);
+  worksheet.getCell('A16').value = wrapSummaryText([
+    `Recommended next step: ${executiveSummary.nextStep}`,
+    topActions.length
+      ? ['Top actions:', ...topActions.map((action, index) => `${index + 1}. [${action.id}] ${action.classificationLabel} · ${action.priorityLabel} — ${action.nextStep}`)].join('\n')
+      : `Top actions: ${executiveSummary.nextStep}`,
+    summary.comparison ? `Baseline comparison: ${comparisonHeadline(summary.comparison)} See the Baseline Comparison sheet for details.` : '',
+    `Scope and method: ${scopeAndMethod}`
+  ].filter(Boolean).join('\n'));
+  worksheet.mergeCells('A17:B17');
+  worksheet.getCell('A17').value = 'Open top actions in Findings:';
+  const actionLinkRanges = ['C17:D17', 'E17:F17', 'G17:H17'];
+  const actionLinkCells = ['C17', 'E17', 'G17'];
+  actionLinkRanges.forEach((range) => worksheet.mergeCells(range));
+  actionLinkCells.forEach((address, index) => {
+    const action = topActions[index];
+    worksheet.getCell(address).value = action
+      ? {
+          text: `Open ${action.id}`,
+          hyperlink: `#'Findings'!A${action.sourceIndex + 7}`,
+          tooltip: `Open ${action.id} in the Findings sheet.`
+        }
+      : 'No additional action';
+  });
   const unresolvedCoverage = summary.coverage.flatMap((page) => page.viewports)
     .flatMap((viewport) => viewport.assessments)
     .filter((item) => !['confirmed-passed', 'confirmed-failed', 'not-applicable'].includes(item.status)).length;
@@ -520,7 +792,24 @@ function applySummaryPresentation(worksheet: Worksheet): void {
     styleBadge(worksheet.getCell(`G${index + 4}`), colours.background, colours.foreground);
     styleBadge(worksheet.getCell(`H${index + 4}`), colours.background, colours.foreground);
   });
-  worksheet.getCell('A14').alignment = { vertical: 'top', wrapText: true };
+  for (const rowNumber of [14, 15, 16]) {
+    const cell = worksheet.getCell(`A${rowNumber}`);
+    cell.alignment = { vertical: 'top', wrapText: true };
+    const lineCount = valueText(cell.value).split('\n').length;
+    worksheet.getRow(rowNumber).height = Math.max(36, lineCount * SUMMARY_LINE_HEIGHT + 8);
+  }
+  const actionLabel = worksheet.getCell('A17');
+  solidFill(actionLabel, REPORT_COLOURS.surface);
+  actionLabel.font = { name: 'Arial', size: 10, bold: true, color: { argb: REPORT_COLOURS.text } };
+  actionLabel.alignment = { vertical: 'middle', wrapText: true };
+  for (const address of ['C17', 'E17', 'G17']) {
+    const cell = worksheet.getCell(address);
+    styleBadge(cell, REPORT_COLOURS.open, REPORT_COLOURS.primaryDark);
+    if (typeof cell.value === 'object' && cell.value !== null && 'hyperlink' in cell.value) {
+      cell.font = { ...cell.font, underline: true };
+    }
+  }
+  worksheet.getRow(17).height = 30;
   worksheet.getCell('A19').alignment = { vertical: 'top', wrapText: true };
   worksheet.getRow(19).height = 156;
 }
@@ -540,7 +829,7 @@ function applyFindingPresentation(worksheet: Worksheet, findings: Finding[]): vo
     showGridLines: false,
     zoomScale: 75
   }];
-  worksheet.getCell('A4').value = 'Prioritise confirmed barriers and blockers. Review rows are evidence-led candidates requiring human validation; their rating is review priority, not confirmed impact severity.';
+  worksheet.getCell('A4').value = 'Confirmed = reproduced barrier to assign, fix and retest. Review = evidence requiring a documented human decision. Blocker = restore the affected scope and rerun it. Manual = complete the human procedure and record evidence. Ratings on non-confirmed rows are review priority, not confirmed impact severity.';
   const widths = [12, 14, 12, 16, 14, 8, 22, 34, 18, 22, 22, 32, 36, 34, 30, 34, 36, 34, 36, 14, 12, 18, 18, 18, 16];
   const hiddenColumns = new Set([6, 7, 9, 11, 15, 16, 24, 25]);
   widths.forEach((width, index) => {
@@ -663,6 +952,8 @@ export async function writeExcelReport(summary: AuditSummary, options: ExcelRepo
   populateEvidence(evidenceSheet, summary, options.outputPath);
   populateManualChecks(manualSheet, summary);
   populateCriteria(workbook, summary);
+  populateComparison(workbook, summary);
+  populateHistory(workbook, summary);
   applySummaryPresentation(summarySheet);
   applyFindingPresentation(findingsSheet, summary.findings);
   applySupportingSheetPresentation(pageSheet, 4, 5, 7, 2);

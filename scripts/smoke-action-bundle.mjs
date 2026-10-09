@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { URL } from 'node:url';
+import ExcelJS from 'exceljs';
 
 const root = process.cwd();
 const actionDist = resolve(root, 'action', 'dist');
@@ -14,6 +15,8 @@ const outputNames = [
   'report-path',
   'html-path',
   'json-path',
+  'csv-path',
+  'sarif-path',
   'archive-path',
   'confirmed-findings',
   'review-findings',
@@ -124,12 +127,40 @@ async function assertArtifacts(run, expectedGate) {
   assert(outputs.get('gate-result') === expectedGate, `Expected gate ${expectedGate}, received ${outputs.get('gate-result')}.`);
   assert(outputs.get('output-dir') === join(run.workspace, 'results'), 'The output-dir output is not the resolved workspace path.');
   assert(outputs.get('report-path') === join(run.workspace, 'results', 'Action_E2E_Report.xlsx'), 'The custom report-name input was not used.');
-  for (const name of ['report-path', 'html-path', 'json-path', 'archive-path']) await access(outputs.get(name));
+  for (const name of ['report-path', 'html-path', 'json-path', 'csv-path', 'sarif-path', 'archive-path']) {
+    await access(outputs.get(name));
+  }
   const archive = await readFile(outputs.get('archive-path'));
   assert(archive.subarray(0, 2).toString() === 'PK', 'The bundled Action produced an invalid ZIP archive.');
+  const archiveIndex = archive.toString('latin1');
+  assert(archiveIndex.includes('audit-findings.csv'), 'The Action archive did not include the CSV register.');
+  assert(archiveIndex.includes('audit-results.sarif'), 'The Action archive did not include the SARIF results.');
   const summary = await readFile(run.summaryFile, 'utf8');
   assert(summary.includes('CarlasHub WCAG accessibility audit'), 'The Action did not publish its job summary.');
-  return { outputs, summary, report: JSON.parse(await readFile(outputs.get('json-path'), 'utf8')) };
+  const report = JSON.parse(await readFile(outputs.get('json-path'), 'utf8'));
+  assert(report.scopeMode === 'supplied-pages-only', 'The Action JSON omitted the supplied-pages-only scope contract.');
+  const html = await readFile(outputs.get('html-path'), 'utf8');
+  assert(
+    html.includes('Supplied pages only (no crawl); links are never added as audit targets'),
+    'The Action HTML omitted the no-crawl scope disclosure.'
+  );
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(outputs.get('report-path'));
+  assert(
+    String(workbook.getWorksheet('Audit Summary')?.getCell('A16').value).includes('Scope mode: Supplied pages only (no crawl)'),
+    'The Action workbook omitted the supplied-pages-only scope mode.'
+  );
+  assert(report.findings.every((finding) => (
+    /^A11Y\d{3,}$/.test(finding.id)
+    && /^a11y-fp-v1:[a-f0-9]{64}$/.test(finding.fingerprint)
+  )), 'The Action report did not retain A11Y IDs alongside versioned finding fingerprints.');
+  const csv = await readFile(outputs.get('csv-path'), 'utf8');
+  assert(csv.includes('"id","fingerprint","classification","severity"'), 'The Action CSV did not expose the stable finding fields.');
+  assert(report.findings.every((finding) => csv.includes(`"${finding.id}"`) && csv.includes(`"${finding.fingerprint}"`)), 'The Action CSV did not retain the report finding identities.');
+  const sarif = JSON.parse(await readFile(outputs.get('sarif-path'), 'utf8'));
+  assert(sarif.version === '2.1.0', 'The Action SARIF did not declare SARIF 2.1.0.');
+  assert(sarif.runs[0].results.every((result) => /^a11y-fp-v1:[a-f0-9]{64}$/.test(result.partialFingerprints['accessibility-audit/v1'])), 'The Action SARIF did not retain versioned finding fingerprints.');
+  return { outputs, summary, report };
 }
 
 const validation = await runAction({ GITHUB_ACTIONS: 'true', INPUT_URLS: '' });
@@ -146,6 +177,7 @@ const temporaryRoot = await mkdtemp(join(tmpdir(), 'carlashub-action-e2e-'));
 const pullRequestComments = [];
 const apiCalls = { post: 0, patch: 0, denied: 0 };
 let serverPort = 0;
+let draftTargetRequests = 0;
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', `http://127.0.0.1:${serverPort}`);
   const sendJson = (status, body) => {
@@ -158,6 +190,13 @@ const server = createServer((request, response) => {
     request.on('data', (chunk) => { body += chunk; });
     request.on('end', () => resolveBody(body ? JSON.parse(body) : {}));
   });
+
+  if (url.pathname === '/draft-should-not-run') {
+    draftTargetRequests += 1;
+    response.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+    response.end('A journey draft reached the audit target.');
+    return;
+  }
 
   if (url.pathname === '/review') {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -211,6 +250,45 @@ try {
   const origin = `http://127.0.0.1:${serverPort}`;
   const eventPath = join(temporaryRoot, 'pull-request-event.json');
   await writeFile(eventPath, JSON.stringify({ pull_request: { number: 17 } }), 'utf8');
+  const draftPayload = JSON.stringify({
+    kind: 'accessibility-audit-journey-draft',
+    schemaVersion: 1,
+    status: 'draft',
+    createdAt: '2026-10-08T00:00:00.000Z',
+    updatedAt: '2026-10-08T00:00:00.000Z',
+    candidateJourneys: [{}],
+    validation: { valid: false, issues: ['journeys[0].id: Required.'] }
+  });
+  const draftPath = join(temporaryRoot, 'journey-draft.json');
+  await writeFile(draftPath, draftPayload, 'utf8');
+
+  const inlineDraftRun = await createRunWorkspace(temporaryRoot, 'inline-draft-rejected');
+  const inlineDraftExecution = await runAction(actionEnvironment(
+    inlineDraftRun,
+    `${origin}/draft-should-not-run`,
+    { INPUT_JOURNEYS: draftPayload }
+  ));
+  assert(
+    inlineDraftExecution.status === 1
+      && inlineDraftExecution.output.includes('Journey drafts are non-runnable')
+      && inlineDraftExecution.output.includes('Approve the draft before using it in an audit'),
+    `The built Action did not reject an inline journey draft with approval guidance.\n${inlineDraftExecution.output}`
+  );
+  assert(draftTargetRequests === 0, 'The inline journey draft reached the audit target.');
+
+  const fileDraftRun = await createRunWorkspace(temporaryRoot, 'file-draft-rejected');
+  const fileDraftExecution = await runAction(actionEnvironment(
+    fileDraftRun,
+    `${origin}/draft-should-not-run`,
+    { INPUT_JOURNEYS: '', 'INPUT_JOURNEYS-FILE': draftPath }
+  ));
+  assert(
+    fileDraftExecution.status === 1
+      && fileDraftExecution.output.includes('Journey drafts are non-runnable')
+      && fileDraftExecution.output.includes('Approve the draft before using it in an audit'),
+    `The built Action did not reject a journey draft from journeys-file with approval guidance.\n${fileDraftExecution.output}`
+  );
+  assert(draftTargetRequests === 0, 'The journeys-file draft reached the audit target.');
   const prEnvironment = {
     GITHUB_API_URL: origin,
     GITHUB_EVENT_NAME: 'pull_request',
@@ -224,11 +302,20 @@ try {
   };
 
   const multiUrlRun = await createRunWorkspace(temporaryRoot, 'multi-url');
+  const progressSecret = 'bundled-action-progress-secret';
   const multiUrlExecution = await runAction(actionEnvironment(multiUrlRun, `${origin}/review`, {
-    INPUT_URLS: JSON.stringify([`${origin}/review`, `${origin}/review?second-page=1`]),
+    INPUT_URLS: JSON.stringify([
+      `${origin}/review`,
+      `${origin}/review?access%252525255Ftoken=${progressSecret}&next=/public&second-page=1`
+    ]),
     'INPUT_FAIL-ON': 'none'
   }));
   assert(multiUrlExecution.status === 0, `The multi-URL audit failed.\n${multiUrlExecution.output}`);
+  assert(!multiUrlExecution.output.includes(progressSecret), 'The built Action leaked a sensitive URL value through progress output.');
+  assert(
+    multiUrlExecution.output.includes('access%252525255Ftoken=[redacted]&next=/public'),
+    'The built Action progress output did not retain sanitized public URL context.'
+  );
   const multiUrlArtifacts = await assertArtifacts(multiUrlRun, 'not-evaluated');
   assert(multiUrlArtifacts.report.requestedUrls.length === 2, 'The report did not preserve both requested URLs.');
   assert(multiUrlArtifacts.report.pages.length === 2, 'The Action did not audit both requested URLs.');
@@ -239,12 +326,20 @@ try {
   const firstCommentArtifacts = await assertArtifacts(firstCommentRun, 'passed');
   assert(Number(firstCommentArtifacts.outputs.get('confirmed-findings')) === 0, 'The review-only fixture unexpectedly produced a confirmed finding.');
   assert(Number(firstCommentArtifacts.outputs.get('review-findings')) > 0, 'The review-only fixture did not exercise review classification.');
+  assert(!pullRequestComments[0].body.includes('Changes since baseline'), 'A no-baseline Action comment unexpectedly included comparison counts.');
 
   const secondCommentRun = await createRunWorkspace(temporaryRoot, 'comment-update');
-  const secondCommentExecution = await runAction(actionEnvironment(secondCommentRun, `${origin}/review`, prEnvironment));
+  const secondCommentExecution = await runAction(actionEnvironment(secondCommentRun, `${origin}/review`, {
+    ...prEnvironment,
+    'INPUT_BASELINE-PATH': firstCommentArtifacts.outputs.get('json-path')
+  }));
   assert(secondCommentExecution.status === 0, `The PR comment update run failed.\n${secondCommentExecution.output}`);
   await assertArtifacts(secondCommentRun, 'passed');
   assert(apiCalls.post === 1 && apiCalls.patch === 1 && pullRequestComments.length === 1, 'The Action duplicated its pull-request comment instead of updating it.');
+  assert(pullRequestComments[0].body.includes('### Changes since baseline'), 'The baseline Action comment omitted its comparison summary.');
+  assert(pullRequestComments[0].body.includes('| New findings | 0 |'), 'The baseline Action comment omitted the new-finding count.');
+  assert(pullRequestComments[0].body.includes(`| Persistent findings | ${firstCommentArtifacts.report.findings.length} |`), 'The baseline Action comment omitted the persistent-finding count.');
+  assert(pullRequestComments[0].body.includes('| Resolved findings | 0 |'), 'The baseline Action comment omitted the resolved-finding count.');
 
   const deniedRun = await createRunWorkspace(temporaryRoot, 'comment-denied');
   const deniedExecution = await runAction(actionEnvironment(deniedRun, `${origin}/review`, {
@@ -294,4 +389,4 @@ try {
   await rm(temporaryRoot, { recursive: true, force: true });
 }
 
-process.stdout.write('GitHub Action built-bundle E2E passed: inputs, outputs, gates, artifacts, PR comments, redirects, and cancellation.\n');
+process.stdout.write('GitHub Action built-bundle E2E passed: inputs, draft rejection, outputs, gates, artifacts, PR comments, redirects, and cancellation.\n');

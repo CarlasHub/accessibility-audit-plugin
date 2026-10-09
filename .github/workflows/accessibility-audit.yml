@@ -35,7 +35,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: accessibility-audit
-          path: ${{ steps.audit.outputs.output-dir }}
+          path: |
+            ${{ steps.audit.outputs.output-dir }}
+            ${{ steps.audit.outputs.archive-path }}
           retention-days: 14
       - name: Add the report link to the run summary
         if: always() && steps.evidence.outputs.artifact-url != ''

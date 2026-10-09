@@ -6,9 +6,11 @@ import { describe, expect, it } from 'vitest';
 import { REQUIRED_MANUAL_CHECKS } from '../src/audit/manual-checks.js';
 import { buildWcagCriterionLedger } from '../src/audit/wcag-criteria.js';
 import { createAuditArchive } from '../src/reporting/archive.js';
+import { writeCsvReport } from '../src/reporting/csv.js';
 import { writeExcelReport } from '../src/reporting/excel.js';
 import { writeHtmlReport } from '../src/reporting/html.js';
 import { writeJsonReport } from '../src/reporting/json.js';
+import { writeSarifReport } from '../src/reporting/sarif.js';
 import { validateExcelReport } from '../src/reporting/validate.js';
 import type { AuditSummary, Finding, FindingClassification } from '../src/types.js';
 
@@ -55,6 +57,7 @@ function finding(
 function summary(screenshot: string): AuditSummary {
   const audit: AuditSummary = {
     status: 'completed',
+    scopeMode: 'supplied-pages-only',
     generatedAt: '2026-09-10T12:00:00.000Z',
     auditor: 'CarlasHub',
     source: 'cross-format regression',
@@ -93,13 +96,15 @@ function htmlFindingIds(html: string): string[] {
 }
 
 describe('cross-format report contract', () => {
-  it('keeps identities, totals, state, and evidence links portable across HTML, XLSX, JSON, and ZIP', async () => {
+  it('keeps identities, totals, state, and evidence links portable across every report format', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'a11y-parity-'));
     const outputDir = join(parent, 'Audit Results');
     const screenshot = join(outputDir, 'screenshots', 'elements', 'finding.png');
     const htmlPath = join(outputDir, 'Audit.html');
     const workbookPath = join(outputDir, 'Audit.xlsx');
     const jsonPath = join(outputDir, 'audit-results.json');
+    const csvPath = join(outputDir, 'audit-findings.csv');
+    const sarifPath = join(outputDir, 'audit-results.sarif');
     await mkdir(join(outputDir, 'screenshots', 'elements'), { recursive: true });
     await writeFile(screenshot, PNG);
 
@@ -107,13 +112,26 @@ describe('cross-format report contract', () => {
     await Promise.all([
       writeHtmlReport(audit, htmlPath),
       writeExcelReport(audit, { outputPath: workbookPath }),
-      writeJsonReport(audit, jsonPath)
+      writeJsonReport(audit, jsonPath),
+      writeCsvReport(audit, csvPath),
+      writeSarifReport(audit, sarifPath)
     ]);
-    const archivePath = await createAuditArchive(outputDir, workbookPath, htmlPath, jsonPath);
+    const archivePath = await createAuditArchive(outputDir, workbookPath, htmlPath, jsonPath, [csvPath, sarifPath]);
 
     const html = await readFile(htmlPath, 'utf8');
     const jsonText = await readFile(jsonPath, 'utf8');
     const json = JSON.parse(jsonText) as AuditSummary;
+    const csv = await readFile(csvPath, 'utf8');
+    const sarif = JSON.parse(await readFile(sarifPath, 'utf8')) as {
+      version: string;
+      runs: Array<{
+        results: Array<{
+          kind: string;
+          properties: { auditFindingId: string; classification: string };
+          partialFingerprints: Record<string, string>;
+        }>;
+      }>;
+    };
     const archiveText = (await readFile(archivePath)).toString('latin1');
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(workbookPath);
@@ -125,6 +143,17 @@ describe('cross-format report contract', () => {
     expect(jsonIds).toEqual(['A11Y001', 'A11Y002', 'A11Y003', 'A11Y004']);
     expect(htmlIds).toEqual(jsonIds);
     expect(workbookIds).toEqual(jsonIds);
+    expect(csv.match(/"A11Y\d{3}"/g)).toEqual(jsonIds.map((id) => `"${id}"`));
+    expect(sarif.version).toBe('2.1.0');
+    expect(sarif.runs[0]?.results.map((result) => result.properties.auditFindingId)).toEqual(jsonIds);
+    expect(sarif.runs[0]?.results.map((result) => result.properties.classification))
+      .toEqual(['confirmed', 'review', 'blocker', 'manual']);
+    expect(sarif.runs[0]?.results.map((result) => result.kind)).toEqual(['fail', 'review', 'review', 'review']);
+    expect(sarif.runs[0]?.results.every((result) => /^a11y-fp-v1:[a-f0-9]{64}$/.test(
+      result.partialFingerprints['accessibility-audit/v1'] ?? ''
+    ))).toBe(true);
+    expect(json.scopeMode).toBe('supplied-pages-only');
+    expect(html).toContain('Supplied pages only (no crawl); links are never added as audit targets');
 
     const totals = Object.fromEntries((['confirmed', 'review', 'blocker', 'manual'] as const).map((classification) => [
       classification,
@@ -137,6 +166,42 @@ describe('cross-format report contract', () => {
     expect(html).toContain('<span>Confirmed</span><strong>1</strong>');
     expect(html).toContain('<span>Needs review</span><strong>1</strong>');
     expect(html).toContain('<strong>1 audit blocker:</strong>');
+    expect(html).toContain('Audit coverage is incomplete, so resolve the gaps before drawing conclusions from the results.');
+    expect(String(auditSummary.getCell('A13').value)).toBe('Executive summary, scope and method');
+    expect(String(auditSummary.getCell('A14').value).replace(/\n/g, ' ')).toContain(
+      'Executive summary: Audit coverage is incomplete, so resolve the gaps before drawing conclusions from the results.'
+    );
+    expect(String(auditSummary.getCell('A15').value).replace(/\n/g, ' ')).toContain(
+      'WCAG conformance remains not determined pending qualified human assessment.'
+    );
+    expect(String(auditSummary.getCell('A16').value).replace(/\n/g, ' ')).toContain('Source: cross-format regression');
+    expect(String(auditSummary.getCell('A16').value).replace(/\n/g, ' ')).toContain('Scope mode: Supplied pages only (no crawl)');
+    expect(String(auditSummary.getCell('A16').value)).toContain('Top actions:');
+    expect(String(auditSummary.getCell('A16').value)).toContain(
+      '[A11Y003] Coverage blocker (not a conformance result) · Coverage blocked'
+    );
+    expect(String(auditSummary.getCell('A16').value)).toContain('[A11Y001] Confirmed barrier · Moderate');
+    expect(String(auditSummary.getCell('A16').value)).toContain(
+      '[A11Y002] Requires human validation · Review priority: Moderate'
+    );
+    expect(auditSummary.getCell('C17').value).toEqual(expect.objectContaining({
+      text: 'Open A11Y003',
+      hyperlink: "#'Findings'!A9"
+    }));
+    expect(auditSummary.getCell('E17').value).toEqual(expect.objectContaining({
+      text: 'Open A11Y001',
+      hyperlink: "#'Findings'!A7"
+    }));
+    expect(auditSummary.getCell('G17').value).toEqual(expect.objectContaining({
+      text: 'Open A11Y002',
+      hyperlink: "#'Findings'!A8"
+    }));
+    expect(html).toMatch(/id="top-actions"[\s\S]*?href="#finding-A11Y003"/);
+    for (const rowNumber of [14, 15, 16]) {
+      const lines = String(auditSummary.getCell(`A${rowNumber}`).value).split('\n');
+      expect(lines.every((line) => line.length <= 88)).toBe(true);
+      expect(auditSummary.getRow(rowNumber).height).toBeGreaterThanOrEqual(lines.length * 18 + 8);
+    }
 
     expect(html).toContain('status-partial"></span>Partial');
     expect(html).toContain('tested-inconclusive');
@@ -157,6 +222,8 @@ describe('cross-format report contract', () => {
     expect(archiveText).toContain('Audit Results/Audit.html');
     expect(archiveText).toContain('Audit Results/Audit.xlsx');
     expect(archiveText).toContain('Audit Results/audit-results.json');
+    expect(archiveText).toContain('Audit Results/audit-findings.csv');
+    expect(archiveText).toContain('Audit Results/audit-results.sarif');
     expect(archiveText).toContain(`Audit Results/${relativeScreenshot}`);
     await expect(validateExcelReport(workbookPath)).resolves.toEqual(expect.objectContaining({
       valid: true,
@@ -164,5 +231,17 @@ describe('cross-format report contract', () => {
       evidenceRows: 4,
       imageInventoryRows: 4
     }));
+  });
+
+  it('neutralizes spreadsheet formulas in CSV text cells, including formulas after whitespace', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'a11y-csv-safety-'));
+    const csvPath = join(parent, 'audit-findings.csv');
+    const audit = summary(join(parent, 'finding.png'));
+    audit.findings[0]!.summary = '  =HYPERLINK("https://example.invalid","Open")';
+
+    await writeCsvReport(audit, csvPath);
+
+    const csv = await readFile(csvPath, 'utf8');
+    expect(csv).toContain('"\'  =HYPERLINK(""https://example.invalid"",""Open"")"');
   });
 });

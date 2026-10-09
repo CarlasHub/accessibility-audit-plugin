@@ -1,9 +1,8 @@
 import { join } from 'node:path';
 import { ensureInstalled, resolvePluginDataRoot, resolvePluginRoot } from '../lib/install.mjs';
+import { createSafeLogger } from '../lib/safe-log.mjs';
 
-function log(message) {
-  process.stderr.write(`[accessibility-audit] ${message}\n`);
-}
+const log = createSafeLogger();
 
 try {
   const pluginRoot = resolvePluginRoot();

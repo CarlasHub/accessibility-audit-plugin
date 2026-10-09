@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import { REQUIRED_MANUAL_CHECKS } from '../audit/manual-checks.js';
 import { WCAG_CRITERIA_DEFINITIONS } from '../audit/wcag-criteria.js';
 import { cellText } from './cell-text.js';
+import { RESOLUTION_SCOPE_NOTE } from './comparison-presentation.js';
 
 export interface WorkbookValidation {
   valid: boolean;
@@ -44,13 +45,21 @@ export const EXPECTED_WORKSHEETS = [
   'WCAG Criteria'
 ] as const;
 
+export const OPTIONAL_REPORT_WORKSHEETS = ['Baseline Comparison', 'History & Trends'] as const;
+
 const expectedHeaders = new Map<string, { row: number; values: string[] }>([
   ['Findings', { row: 6, values: EXPECTED_REPORT_HEADERS }],
   ['Page Inventory', { row: 4, values: ['URL', 'Audit state', 'Viewports planned', 'Viewports completed', 'Consent handling', 'Runtime errors', 'Notes'] }],
   ['Evidence', { row: 4, values: ['Evidence path', 'Finding ID', 'Page URL', 'Viewport', 'Rule ID', 'Component', 'Technical locator', 'Evidence type', 'Detail'] }],
   ['Manual Checks', { row: 4, values: ['Check ID', 'Manual check', 'WCAG criterion', 'Applies to', 'Procedure', 'Status', 'Reviewer notes'] }],
   ['WCAG 2.2 Reference', { row: 3, values: ['Success criterion', 'Level', 'Title', 'Understanding link'] }],
-  ['WCAG Criteria', { row: 4, values: ['Criterion', 'Level', 'Scope', 'Status', 'Finding IDs', 'Automated evidence', 'Decision note', 'Understanding'] }]
+  ['WCAG Criteria', { row: 4, values: ['Criterion', 'Level', 'Scope', 'Status', 'Finding IDs', 'Automated evidence', 'Decision note', 'Understanding'] }],
+  ['Baseline Comparison', { row: 7, values: ['Change', 'Finding ID', 'Classification', 'Impact / priority', 'Finding', 'Affected URLs', 'Viewports', 'Stable fingerprint'] }],
+  ['History & Trends', { row: 5, values: [
+    'Audit', 'Generated (UTC)', 'Status', 'Requested pages', 'Audited pages', 'Findings', 'Confirmed', 'Review',
+    'Blockers', 'Manual', 'Critical confirmed', 'Serious confirmed', 'Coverage vs previous', 'New', 'Unchanged',
+    'Resolved', 'Indeterminate current', 'Previous not re-observed'
+  ] }]
 ]);
 
 const expectedTabColors = new Map<string, string>([
@@ -68,6 +77,7 @@ const allowedStatuses = new Set(['Open', 'In progress', 'Resolved', 'Risk accept
 const allowedSeverities = new Set(['Critical', 'Serious', 'Moderate', 'Minor', 'Advisory']);
 const allowedCriterionStatuses = new Set(['passed', 'failed', 'manual-review-required', 'not-applicable', 'inconclusive']);
 const allowedEvidenceKinds = new Set(['axe', 'dom', 'keyboard', 'responsive', 'network', 'manual']);
+const allowedComparisonChanges = new Set(['New', 'Unchanged', 'Resolved', 'Indeterminate current', 'Baseline not re-observed']);
 const criterionDefinitions = new Map(WCAG_CRITERIA_DEFINITIONS.map((criterion) => [criterion.criterion, criterion]));
 const standardCriteria = new Set(WCAG_CRITERIA_DEFINITIONS.filter(({ level }) => level !== 'AAA').map(({ criterion }) => criterion));
 const requiredManualChecks = new Map(REQUIRED_MANUAL_CHECKS.map((check) => [check.id, check]));
@@ -94,8 +104,14 @@ function cellHyperlink(value: unknown): string {
 
 function validateTemplateShape(workbook: ExcelJS.Workbook, errors: string[]): void {
   const names = workbook.worksheets.map((worksheet) => worksheet.name);
-  if (names.join('|') !== EXPECTED_WORKSHEETS.join('|')) {
-    errors.push(`Worksheet names and order must be exactly: ${EXPECTED_WORKSHEETS.join(', ')}.`);
+  const requiredNames = names.slice(0, EXPECTED_WORKSHEETS.length);
+  const optionalNames = names.slice(EXPECTED_WORKSHEETS.length);
+  const optionalIndexes = optionalNames.map((name) => OPTIONAL_REPORT_WORKSHEETS.indexOf(name as typeof OPTIONAL_REPORT_WORKSHEETS[number]));
+  const optionalNamesAreValid = optionalIndexes.every((index) => index >= 0)
+    && new Set(optionalNames).size === optionalNames.length
+    && optionalIndexes.every((index, position) => position === 0 || index > optionalIndexes[position - 1]!);
+  if (requiredNames.join('|') !== EXPECTED_WORKSHEETS.join('|') || !optionalNamesAreValid) {
+    errors.push(`Worksheet names and order must be: ${EXPECTED_WORKSHEETS.join(', ')}, optionally followed in order by ${OPTIONAL_REPORT_WORKSHEETS.join(', ')}.`);
   }
   for (const [name, expected] of expectedHeaders) {
     const worksheet = workbook.getWorksheet(name);
@@ -107,6 +123,130 @@ function validateTemplateShape(workbook: ExcelJS.Workbook, errors: string[]): vo
     if (workbook.getWorksheet(name)?.properties.tabColor?.argb !== color) {
       errors.push(`${name} worksheet tab colour does not match the CarlasHub template.`);
     }
+  }
+  const comparison = workbook.getWorksheet('Baseline Comparison');
+  if (comparison && comparison.properties.tabColor?.argb !== 'FF1A73E8') {
+    errors.push('Baseline Comparison worksheet tab colour does not match the CarlasHub report style.');
+  }
+  const history = workbook.getWorksheet('History & Trends');
+  if (history && history.properties.tabColor?.argb !== 'FF00897B') {
+    errors.push('History & Trends worksheet tab colour does not match the CarlasHub report style.');
+  }
+}
+
+function validateComparisonSheet(workbook: ExcelJS.Workbook, errors: string[]): void {
+  const worksheet = workbook.getWorksheet('Baseline Comparison');
+  if (!worksheet) return;
+  const expectedLabels = new Map([
+    ['A4', 'Baseline source'], ['E4', 'Coverage'], ['A5', 'Baseline generated'],
+    ['E5', 'Baseline findings'], ['G5', 'Current findings']
+  ]);
+  for (const [address, expected] of expectedLabels) {
+    if (cellText(worksheet.getCell(address)) !== expected) errors.push(`Baseline Comparison!${address} must contain “${expected}”.`);
+  }
+  if (!['Complete equivalent scope', 'Partial equivalent scope'].includes(cellText(worksheet.getCell('F4')))) {
+    errors.push('Baseline Comparison!F4 must describe complete or partial equivalent scope.');
+  }
+  if (!cellText(worksheet.getCell('B4'))) errors.push('Baseline Comparison!B4 must identify the baseline source.');
+  let foundComparisonContent = false;
+  let foundNoFindingsSentinel = false;
+  let gapBeforeNextContent = false;
+  let foundScopeNote = false;
+  for (let rowNumber = 8; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+    const changeCell = worksheet.getCell(rowNumber, 1);
+    const change = cellText(changeCell);
+    const remainingValues = Array.from({ length: 7 }, (_, index) => {
+      const cell = worksheet.getCell(rowNumber, index + 2);
+      return cell.isMergedTo(changeCell) ? '' : cellText(cell);
+    });
+    const hasRemainingData = remainingValues.some(Boolean);
+    if (change === RESOLUTION_SCOPE_NOTE) {
+      foundScopeNote = true;
+      break;
+    }
+    if (!change) {
+      if (hasRemainingData) errors.push(`Baseline Comparison row ${rowNumber} has data after an empty change category.`);
+      gapBeforeNextContent = true;
+      continue;
+    }
+    if (change === 'No baseline or current findings were available to compare.') {
+      if (gapBeforeNextContent) errors.push(`Baseline Comparison row ${rowNumber} appears after a gap in the comparison data.`);
+      if (foundComparisonContent || foundNoFindingsSentinel) errors.push(`Baseline Comparison!A${rowNumber} uses the no-findings message alongside comparison data.`);
+      if (hasRemainingData) errors.push(`Baseline Comparison row ${rowNumber} must not contain data after the no-findings message.`);
+      foundNoFindingsSentinel = true;
+      continue;
+    }
+    if (!allowedComparisonChanges.has(change)) {
+      errors.push(`Baseline Comparison!A${rowNumber} contains an unsupported change category.`);
+      continue;
+    }
+    if (gapBeforeNextContent) errors.push(`Baseline Comparison row ${rowNumber} appears after a gap in the comparison data.`);
+    if (foundNoFindingsSentinel) errors.push(`Baseline Comparison row ${rowNumber} contains data after the no-findings message.`);
+    foundComparisonContent = true;
+    for (let column = 1; column <= 8; column += 1) {
+      if (!cellText(worksheet.getCell(rowNumber, column))) {
+        errors.push(`Required comparison cell ${worksheet.getCell(rowNumber, column).address} is empty.`);
+      }
+    }
+    if (!allowedClassifications.has(cellText(worksheet.getCell(rowNumber, 3)))) {
+      errors.push(`Baseline Comparison!C${rowNumber} contains an unsupported classification.`);
+    }
+  }
+  if (!foundComparisonContent && !foundNoFindingsSentinel) errors.push('Baseline Comparison must contain comparison rows or the no-findings message.');
+  if (!foundScopeNote) errors.push('Baseline Comparison must include the resolution scope note.');
+}
+
+function validateHistorySheet(workbook: ExcelJS.Workbook, errors: string[]): void {
+  const worksheet = workbook.getWorksheet('History & Trends');
+  if (!worksheet) return;
+  if (cellText(worksheet.getCell('A1')) !== 'History and trends') {
+    errors.push('History & Trends!A1 must contain “History and trends”.');
+  }
+  if (!cellText(worksheet.getCell('A3')).startsWith('History limitations:')) {
+    errors.push('History & Trends!A3 must describe history limitations.');
+  }
+  let previousTimestamp = Number.NEGATIVE_INFINITY;
+  let pointCount = 0;
+  for (let rowNumber = 6; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+    const source = cellText(worksheet.getCell(rowNumber, 1));
+    const rowValues = Array.from({ length: 18 }, (_, index) => cellText(worksheet.getCell(rowNumber, index + 1)));
+    if (!source) {
+      if (rowValues.some(Boolean)) errors.push(`History & Trends row ${rowNumber} has data after an empty audit source.`);
+      continue;
+    }
+    pointCount += 1;
+    const generatedAt = cellText(worksheet.getCell(rowNumber, 2));
+    const timestamp = Date.parse(generatedAt);
+    if (!generatedAt || Number.isNaN(timestamp)) {
+      errors.push(`History & Trends!B${rowNumber} must contain a valid audit timestamp.`);
+    } else {
+      if (timestamp < previousTimestamp) errors.push(`History & Trends row ${rowNumber} is not in chronological order.`);
+      previousTimestamp = timestamp;
+    }
+    if (!['completed', 'cancelled'].includes(cellText(worksheet.getCell(rowNumber, 3)))) {
+      errors.push(`History & Trends!C${rowNumber} contains an unsupported audit status.`);
+    }
+    for (let column = 4; column <= 12; column += 1) {
+      const value = Number(cellText(worksheet.getCell(rowNumber, column)));
+      if (!Number.isInteger(value) || value < 0) errors.push(`History & Trends!${worksheet.getCell(rowNumber, column).address} must contain a non-negative whole number.`);
+    }
+    const coverage = cellText(worksheet.getCell(rowNumber, 13));
+    if (pointCount === 1) {
+      if (coverage !== 'Starting point') errors.push(`History & Trends!M${rowNumber} must identify the starting point.`);
+      for (let column = 14; column <= 18; column += 1) {
+        if (cellText(worksheet.getCell(rowNumber, column))) errors.push(`History & Trends!${worksheet.getCell(rowNumber, column).address} must be empty for the starting point.`);
+      }
+    } else {
+      if (!['complete', 'partial'].includes(coverage)) errors.push(`History & Trends!M${rowNumber} must contain complete or partial coverage.`);
+      for (let column = 14; column <= 18; column += 1) {
+        const value = Number(cellText(worksheet.getCell(rowNumber, column)));
+        if (!Number.isInteger(value) || value < 0) errors.push(`History & Trends!${worksheet.getCell(rowNumber, column).address} must contain a non-negative whole number.`);
+      }
+    }
+  }
+  if (pointCount < 2) errors.push('History & Trends must contain at least one prior audit and the current audit.');
+  if (pointCount > 0 && cellText(worksheet.getCell(pointCount + 5, 1)) !== 'Current audit') {
+    errors.push('History & Trends must end with the current audit.');
   }
 }
 
@@ -147,6 +287,8 @@ export async function validateExcelReport(path: string): Promise<WorkbookValidat
   const errors: string[] = [];
   const warnings: string[] = [];
   validateTemplateShape(workbook, errors);
+  validateComparisonSheet(workbook, errors);
+  validateHistorySheet(workbook, errors);
   for (const name of EXPECTED_WORKSHEETS) {
     if (!workbook.getWorksheet(name)) errors.push(`Missing ${name} worksheet.`);
   }

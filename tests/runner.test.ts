@@ -1,16 +1,48 @@
 import { describe, expect, it } from 'vitest';
 import {
   browserLaunchCandidates,
+  createBrowserContextOptions,
   createBrowserLaunchOptions,
   isBrowserNetworkConsoleError,
   isMissingBrowserExecutableError,
   needsFullPageScreenshotFallback,
   retainRepresentativeScreenshotPerFinding,
-  screenshotCandidatesForFindings
+  screenshotCandidatesForFindings,
+  unresolvedConsentInteractionBlocker
 } from '../src/audit/runner.js';
 import type { Finding } from '../src/types.js';
 
 describe('browser launch isolation', () => {
+  it('reuses configured storage state in every isolated browser context without changing viewport defaults', () => {
+    const storageState = {
+      cookies: [{
+        name: 'session', value: 'private', domain: 'example.test', path: '/', expires: -1,
+        httpOnly: true, secure: true, sameSite: 'Lax' as const
+      }],
+      origins: []
+    };
+    const first = createBrowserContextOptions(
+      { name: 'mobile', width: 390, height: 844, isMobile: true },
+      storageState
+    );
+    const second = createBrowserContextOptions(
+      { name: 'desktop', width: 1440, height: 1000 },
+      storageState
+    );
+    expect(first).toEqual(expect.objectContaining({
+      storageState,
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      reducedMotion: 'reduce',
+      bypassCSP: true
+    }));
+    expect(first?.storageState).toBe(storageState);
+    expect(second?.storageState).toBe(storageState);
+    expect(createBrowserContextOptions(
+      { name: 'desktop', width: 1440, height: 1000 }
+    )).not.toHaveProperty('storageState');
+  });
+
   it('separates Chromium network noise from authored console errors', () => {
     expect(isBrowserNetworkConsoleError('Failed to load resource: net::ERR_HTTP2_PROTOCOL_ERROR')).toBe(true);
     expect(isBrowserNetworkConsoleError('Failed to load resource: net::ERR_NAME_NOT_RESOLVED')).toBe(true);
@@ -44,11 +76,50 @@ describe('browser launch isolation', () => {
     ]);
   });
 
+  it('keeps Firefox and WebKit opt-in without falling back to Chromium channels', () => {
+    expect(browserLaunchCandidates({ browserEngine: 'firefox' }, true)).toEqual([
+      expect.objectContaining({ headless: true })
+    ]);
+    expect(browserLaunchCandidates({ browserEngine: 'webkit' }, false)).toEqual([
+      expect.objectContaining({ headless: false })
+    ]);
+    expect(browserLaunchCandidates({ browserEngine: 'firefox' }, true)[0]).not.toHaveProperty('channel');
+  });
+
   it('distinguishes missing browser installations from unrelated launch failures', () => {
     expect(isMissingBrowserExecutableError(new Error("Executable doesn't exist at /browser/chromium"))).toBe(true);
     expect(isMissingBrowserExecutableError(new Error('Please run the following command to download new browsers: npx playwright install'))).toBe(true);
     expect(isMissingBrowserExecutableError(new Error("Chromium distribution 'chrome' is not found at /Applications/Google Chrome"))).toBe(true);
+    expect(isMissingBrowserExecutableError(new Error("Executable doesn't exist at /browser/firefox"))).toBe(true);
+    expect(isMissingBrowserExecutableError(new Error('WebKit browser not found'))).toBe(true);
     expect(isMissingBrowserExecutableError(new Error('Target page, context or browser has been closed'))).toBe(false);
+  });
+});
+
+describe('interaction evidence isolation', () => {
+  it('turns unresolved consent into a blocker and never blocks after dismissal', () => {
+    const unresolved = unresolvedConsentInteractionBlocker({
+      found: true,
+      dismissed: false,
+      action: 'none',
+      buttonName: 'Reject all',
+      surfaceSelector: '#privacy-layer',
+      frameUrl: ''
+    });
+    expect(unresolved).toEqual({
+      selector: '#privacy-layer',
+      role: 'consent surface',
+      name: 'Consent choice: Reject all',
+      reason: 'A visible consent surface remained active before page-level interaction tests.'
+    });
+    expect(unresolvedConsentInteractionBlocker({
+      found: true,
+      dismissed: true,
+      action: 'reject',
+      buttonName: 'Reject all',
+      surfaceSelector: '#privacy-layer',
+      frameUrl: ''
+    })).toBeNull();
   });
 });
 

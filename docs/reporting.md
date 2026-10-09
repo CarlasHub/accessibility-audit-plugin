@@ -1,10 +1,14 @@
-# HTML and workbook reporting
+# HTML, workbook, and automation reporting
 
-Every audit writes two human-readable formats. Open the self-contained HTML report first for a clean summary, searchable and filterable findings, page coverage, evidence links, manual checks, and print-friendly sharing. Use the bundled CarlasHub WCAG 2.2 workbook for detailed triage, ownership, remediation, and follow-up.
+Every audit writes two human-readable formats. Open the self-contained HTML report first for a decision-ready executive summary, searchable and filterable findings, page coverage, evidence links, manual checks, and print-friendly sharing. Its first screen leads with the current position, recommended next step, and direct links to the three highest-priority actions, findings, WCAG criteria, and page coverage before the detailed metrics and conformance notice. Coverage blockers come first, followed by confirmed barriers ordered by severity, review candidates, and manual work. Each top-action card links to the unchanged source finding and shows its next step, suggested owner, effort, and affected-page count. The summary never treats automated output as a conformance decision. The bundled CarlasHub WCAG 2.2 workbook repeats the same ranked top actions with its executive guidance, detailed triage, ownership, remediation, and follow-up. JSON preserves the complete evidence model, CSV provides a flat finding register for imports, and SARIF 2.1.0 supports compatible automation systems.
+
+Each HTML finding expands into the same practical reading order: what to do with the result, why the barrier matters, how it was checked, how to fix it, the affected component, technical selectors, and screenshot evidence. The guidance changes with the evidence type so confirmed barriers, review candidates, blockers, and manual procedures are not mistaken for one another. The workbook repeats those evidence-type definitions above its remediation register.
+
+Use **Copy ticket** inside an expanded HTML finding to copy a ready-to-paste work item containing its stable ID, evidence type, priority, standards, affected scope, ownership hints, issue, impact, test method, remediation, next step, and technical selectors. The status beside the button confirms success for keyboard and screen-reader users. The report falls back to a local copy method when the modern clipboard API is unavailable, including when the report is opened directly from disk.
 
 ## Read the workbook in this order
 
-1. **Audit Summary:** confirm the audit metadata, scope, result totals, severity totals, and limitations.
+1. **Audit Summary:** confirm the executive position and next step, audit metadata, scope, result totals, severity totals, and limitations.
 2. **Page Inventory:** review every requested URL, its audit state, completed viewports, consent handling, runtime errors, and notes.
 3. **Findings:** triage confirmed findings, investigate review items, and resolve blockers.
 4. **Evidence:** trace screenshots and other evidence back to a finding, page, viewport, rule, component, and technical locator.
@@ -59,7 +63,9 @@ Images are not embedded. The Evidence sheet stores portable relative links and e
 
 The Page Inventory represents requested scope, including skipped and not-started pages, so missing coverage is visible in the workbook. The JSON coverage matrix remains the authoritative record for each page, viewport, and test area.
 
-Graceful cancellation still writes partial HTML and JSON plus a validated partial XLSX workbook. Interrupted or unperformed work is never presented as passed.
+Graceful cancellation still writes partial HTML, JSON, CSV, and SARIF plus a validated partial XLSX workbook. Interrupted or unperformed work is never presented as passed.
+
+Optional baseline and history comparisons are valid only across equivalent browser-engine, URL, and viewport scope. A report created before browser selection was available has no `browserEngine` field and is interpreted as Chromium for backward compatibility. A present engine must be `chromium`, `firefox`, or `webkit`; unsupported or malformed values are rejected instead of being silently treated as Chromium. Cross-engine comparisons remain partial and never claim unmatched findings as new or resolved.
 
 ## Coverage and pass claims
 

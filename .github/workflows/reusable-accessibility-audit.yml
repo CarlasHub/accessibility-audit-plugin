@@ -2,6 +2,10 @@ name: Reusable accessibility audit
 
 on:
   workflow_call:
+    outputs:
+      hosted-report-url:
+        description: Public GitHub Pages URL when publish-report is explicitly enabled; empty otherwise
+        value: ${{ jobs.publish.outputs.page-url }}
     inputs:
       urls:
         description: Public, non-sensitive HTTP(S) pages, one per line or as a JSON array
@@ -18,8 +22,18 @@ on:
         required: false
         type: string
         default: GitHub Actions
+      baseline-path:
+        description: Optional path to a checked-in prior audit JSON file
+        required: false
+        type: string
+        default: ''
+      history-paths:
+        description: Optional prior audit JSON paths, one per line, for history and trends
+        required: false
+        type: string
+        default: ''
       fail-on:
-        description: none, blockers, confirmed, critical, serious, moderate, or minor
+        description: none, new, blockers, confirmed, critical, serious, moderate, or minor
         required: false
         type: string
         default: none
@@ -33,6 +47,31 @@ on:
         required: false
         type: string
         default: ''
+      allowed-hosts:
+        description: Optional host or parent-domain allowlist; entries also authorize descendants
+        required: false
+        type: string
+        default: ''
+      exact-hosts:
+        description: Optional literal hostname allowlist; descendants are rejected
+        required: false
+        type: string
+        default: ''
+      max-pages:
+        description: Optional hard ceiling from 1 to 50,000 authorized unique pages; empty is unlimited
+        required: false
+        type: string
+        default: ''
+      browser:
+        description: Browser engine to use; chromium (default), firefox, or webkit
+        required: false
+        type: string
+        default: chromium
+      publish-report:
+        description: Explicitly publish the report to GitHub Pages; leave false for private artifact-only storage
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -42,9 +81,11 @@ jobs:
     name: Audit selected pages
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      hosted-artifact-id: ${{ steps.hosted_evidence.outputs.artifact_id }}
     steps:
-      - name: Check out journey definitions
-        if: inputs.journeys-file != ''
+      - name: Check out version-controlled audit inputs
+        if: inputs.journeys-file != '' || inputs.baseline-path != '' || inputs.history-paths != ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - id: audit
         name: Run WCAG 2.2 audit
@@ -52,9 +93,15 @@ jobs:
         with:
           urls: ${{ inputs.urls || inputs.url }}
           auditor: ${{ inputs.auditor }}
+          baseline-path: ${{ inputs.baseline-path }}
+          history-paths: ${{ inputs.history-paths }}
           fail-on: ${{ inputs.fail-on }}
           journeys: ${{ inputs.journeys }}
           journeys-file: ${{ inputs.journeys-file }}
+          allowed-hosts: ${{ inputs.allowed-hosts }}
+          exact-hosts: ${{ inputs.exact-hosts }}
+          max-pages: ${{ inputs.max-pages }}
+          browser: ${{ inputs.browser }}
           comment-on-pr: 'false'
       - id: evidence
         name: Upload the complete report
@@ -62,7 +109,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: accessibility-audit
-          path: ${{ steps.audit.outputs.output-dir }}
+          path: |
+            ${{ steps.audit.outputs.output-dir }}
+            ${{ steps.audit.outputs.archive-path }}
           if-no-files-found: error
           retention-days: 14
       - name: Add the report link to the run summary
@@ -73,5 +122,55 @@ jobs:
           {
             echo '## Accessibility report ready'
             echo
-            echo "[Download the HTML, Excel, JSON, screenshots, and ZIP report]($ARTIFACT_URL)"
+            echo "[Download the complete report and portable sharing ZIP]($ARTIFACT_URL)"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - id: hosted_stage
+        name: Stage the explicitly public report
+        if: always() && inputs.publish-report && steps.audit.outputs.output-dir != ''
+        env:
+          HTML_PATH: ${{ steps.audit.outputs.html-path }}
+          REPORT_DIR: ${{ steps.audit.outputs.output-dir }}
+        run: |
+          hosted_dir="$RUNNER_TEMP/accessibility-audit-hosted"
+          mkdir -p "$hosted_dir"
+          cp -R "$REPORT_DIR"/. "$hosted_dir"/
+          cp "$HTML_PATH" "$hosted_dir/index.html"
+      - id: hosted_evidence
+        name: Upload the explicitly public Pages artifact
+        if: always() && inputs.publish-report && steps.audit.outputs.output-dir != '' && steps.hosted_stage.outcome == 'success'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          name: accessibility-audit-pages
+          path: ${{ runner.temp }}/accessibility-audit-hosted
+
+  publish:
+    name: Publish explicitly shared report
+    needs: audit
+    if: always() && inputs.publish-report && needs.audit.outputs.hosted-artifact-id != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page-url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        name: Deploy the report to GitHub Pages
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        with:
+          artifact_name: accessibility-audit-pages
+      - name: Add the public report link to the run summary
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          {
+            echo '## Public accessibility report published'
+            echo
+            echo "[Open the public HTML report]($PAGE_URL)"
+            echo
+            echo 'Anyone who can reach this URL may be able to read the report and its evidence.'
           } >> "$GITHUB_STEP_SUMMARY"

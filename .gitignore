@@ -19,4 +19,7 @@ test-results/
 .DS_Store
 *.log
 *.tgz
+.auth/
+playwright/.auth/
+audit-session*.json
 !marketplace/carlashub-plugin-marketplace/accessibility-audit/**/_install-source/*.tgz

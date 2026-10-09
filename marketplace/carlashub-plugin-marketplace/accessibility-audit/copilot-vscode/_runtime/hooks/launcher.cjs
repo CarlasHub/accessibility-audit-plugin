@@ -14,7 +14,9 @@ if (!requested || !/^[a-zA-Z0-9._-]+\.mjs$/.test(requested)) {
     ? `${rawRoot[1].toUpperCase()}:${rawRoot.slice(2)}`
     : rawRoot;
   import(pathToFileURL(path.join(pluginRoot, '_runtime', 'hooks', requested)).href).catch((error) => {
-    process.stderr.write(`[accessibility-audit] ${error instanceof Error ? error.message : String(error)}\n`);
+    import(pathToFileURL(path.join(pluginRoot, '_runtime', 'lib', 'safe-log.mjs')).href)
+      .then(({ createSafeLogger }) => createSafeLogger()(error instanceof Error ? error.message : String(error)))
+      .catch(() => process.stderr.write('[accessibility-audit] The requested hook could not be started.\n'));
     process.exitCode = 1;
   });
 }

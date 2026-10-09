@@ -157,6 +157,36 @@ describe('controlled defect, mutation, and metamorphic gates', () => {
     expect(forward[0]?.evidence).toHaveLength(3);
     expect(() => assertLosslessConsolidation([finding!, duplicate, nearDuplicate], forward)).not.toThrow();
   });
+
+  it('gives distinct final rows distinct fingerprints when collector-local keys collide', () => {
+    const native = viewport({
+      url: 'https://fixture.example/a',
+      finalUrl: 'https://fixture.example/a',
+      dom: {
+        ...viewport().dom,
+        emptyNamedControls: [{ selector: '#save', tag: 'button', html: '<button id="save"></button>' }]
+      }
+    });
+    const custom = viewport({
+      url: 'https://fixture.example/b',
+      finalUrl: 'https://fixture.example/b',
+      dom: {
+        ...viewport().dom,
+        emptyNamedControls: [{
+          selector: '#save',
+          tag: 'div',
+          html: '<div id="save" role="button" tabindex="0"></div>'
+        }]
+      }
+    });
+    const collected = [native, custom].flatMap((audit) => findingsFromPage(page(audit)));
+    expect(new Set(collected.map((finding) => finding.key)).size).toBe(1);
+
+    const finalRows = assignFindingIds(consolidateFindings(collected));
+    expect(finalRows).toHaveLength(2);
+    expect(new Set(finalRows.map((finding) => finding.fingerprint)).size).toBe(2);
+    expect(finalRows.map((finding) => finding.id)).toEqual(['A11Y001', 'A11Y002']);
+  });
 });
 
 describe('canonical-result and renderer integrity gates', () => {
@@ -226,6 +256,84 @@ describe('canonical-result and renderer integrity gates', () => {
       generatedBy: 'test'
     };
     expect(() => assertCanonicalAuditSummary(invalidRegression)).toThrow(/conformance evidence/);
+  });
+
+  it('accepts internally consistent history and rejects a mutated current trend point', () => {
+    const summary = strictSummary(viewport({ collectionOutcomes: strictOutcomes() }));
+    summary.history = {
+      kind: 'audit-history',
+      limitations: [],
+      points: [{
+        source: 'previous.json',
+        generatedAt: '2026-08-13T12:00:00.000Z',
+        status: 'completed',
+        requestedPageCount: 1,
+        auditedPageCount: 1,
+        findingCount: 0,
+        confirmedCount: 0,
+        reviewCount: 0,
+        blockerCount: 0,
+        manualCount: 0,
+        criticalConfirmedCount: 0,
+        seriousConfirmedCount: 0
+      }, {
+        source: 'Current audit',
+        generatedAt: summary.generatedAt,
+        status: summary.status,
+        requestedPageCount: 1,
+        auditedPageCount: 1,
+        findingCount: 0,
+        confirmedCount: 0,
+        reviewCount: 0,
+        blockerCount: 0,
+        manualCount: 0,
+        criticalConfirmedCount: 0,
+        seriousConfirmedCount: 0,
+        comparisonToPrevious: {
+          coverage: 'complete',
+          newCount: 0,
+          unchangedCount: 0,
+          resolvedCount: 0,
+          indeterminateCurrentCount: 0,
+          unobservedPreviousCount: 0
+        }
+      }]
+    };
+    expect(() => assertCanonicalAuditSummary(summary)).not.toThrow();
+
+    const mutated = structuredClone(summary);
+    mutated.history!.points[1]!.findingCount = 1;
+    expect(() => assertCanonicalAuditSummary(mutated)).toThrow(/current history point does not match/);
+
+    const impossibleCurrentTotal = structuredClone(summary);
+    impossibleCurrentTotal.history!.points[1]!.comparisonToPrevious!.newCount = 1;
+    expect(() => assertCanonicalAuditSummary(impossibleCurrentTotal)).toThrow(/account for all current findings/);
+
+    const impossiblePreviousTotal = structuredClone(summary);
+    impossiblePreviousTotal.history!.points[1]!.comparisonToPrevious!.resolvedCount = 1;
+    expect(() => assertCanonicalAuditSummary(impossiblePreviousTotal)).toThrow(/account for all previous findings/);
+
+    const completeWithIndeterminateScope = structuredClone(summary);
+    Object.assign(completeWithIndeterminateScope.history!.points[1]!.comparisonToPrevious!, {
+      newCount: 0,
+      indeterminateCurrentCount: 0,
+      resolvedCount: 0,
+      unobservedPreviousCount: 1
+    });
+    completeWithIndeterminateScope.history!.points[0]!.findingCount = 1;
+    completeWithIndeterminateScope.history!.points[0]!.manualCount = 1;
+    expect(() => assertCanonicalAuditSummary(completeWithIndeterminateScope)).toThrow(/scope-indeterminate findings/);
+
+    const validPartial = structuredClone(summary);
+    validPartial.history!.points[1]!.comparisonToPrevious!.coverage = 'partial';
+    validPartial.history!.limitations = [
+      'The trend from previous.json to Current audit is partial because unmatched findings outside equivalently observed scope are indeterminate.'
+    ];
+    expect(() => assertCanonicalAuditSummary(validPartial)).not.toThrow();
+
+    const partialWithoutScopeLimitation = structuredClone(validPartial);
+    partialWithoutScopeLimitation.history!.limitations = ['Comparison details are available.'];
+    expect(() => assertCanonicalAuditSummary(partialWithoutScopeLimitation)).toThrow(/no scope limitation/);
   });
 
   it('prevents a renderer from serialising a non-canonical result', async () => {

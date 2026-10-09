@@ -20,7 +20,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run version:check
+      - name: Verify tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: npm run verify:release-tag
       - run: npm run validate:metadata
+      - run: npm run audit:dependencies
       - run: npx playwright install --with-deps chromium
       - run: npm run lint
       - run: npm run typecheck
@@ -47,3 +52,55 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - run: npm pack --dry-run
+
+  release-artifacts:
+    needs: release-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run audit:dependencies
+      - name: Read package version
+        id: metadata
+        run: node -e "require('node:fs').appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + require('./package.json').version + '\n')"
+      - name: Build reproducible release archives and SBOM
+        run: npm run package:release-bundles
+      - name: Attest release archive provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            artifacts/accessibility-audit-claude-desktop-${{ steps.metadata.outputs.version }}.zip
+            artifacts/accessibility-audit-copilot-cli-${{ steps.metadata.outputs.version }}.zip
+            artifacts/accessibility-audit-copilot-vscode-${{ steps.metadata.outputs.version }}.zip
+            artifacts/accessibility-audit-agent-plugin-${{ steps.metadata.outputs.version }}.tgz
+      - name: Attest release archive SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            artifacts/accessibility-audit-claude-desktop-${{ steps.metadata.outputs.version }}.zip
+            artifacts/accessibility-audit-copilot-cli-${{ steps.metadata.outputs.version }}.zip
+            artifacts/accessibility-audit-copilot-vscode-${{ steps.metadata.outputs.version }}.zip
+            artifacts/accessibility-audit-agent-plugin-${{ steps.metadata.outputs.version }}.tgz
+          sbom-path: artifacts/accessibility-audit-plugin-${{ steps.metadata.outputs.version }}.cdx.json
+      - name: Retain attested release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: attested-release-${{ github.ref_name }}
+          path: |
+            artifacts/*-${{ steps.metadata.outputs.version }}.zip
+            artifacts/*-${{ steps.metadata.outputs.version }}.zip.sha256
+            artifacts/*-${{ steps.metadata.outputs.version }}.tgz
+            artifacts/*-${{ steps.metadata.outputs.version }}.tgz.sha256
+            artifacts/*-${{ steps.metadata.outputs.version }}.cdx.json
+            artifacts/*-${{ steps.metadata.outputs.version }}.cdx.json.sha256
+          if-no-files-found: error
+          retention-days: 90

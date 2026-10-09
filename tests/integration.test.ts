@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import axe from 'axe-core';
+import ExcelJS from 'exceljs';
 import { chromium } from 'playwright';
 import { describe, expect, it } from 'vitest';
 import { resolveOptions } from '../src/config.js';
@@ -444,6 +445,9 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       ...(channel ? { channel } : {})
     });
     const result = await runAudit([url], 'fixture', [], options);
+    expect(result.scopeMode).toBe('supplied-pages-only');
+    expect(result.requestedUrls).toEqual([url]);
+    expect(result.pages.map((page) => page.url)).toEqual([url]);
     expect(result.auditedUrls).toEqual([url]);
     expect(result.findings.some((finding) => finding.ruleId.includes('image-alt') || finding.ruleId.includes('image-redundant-alt'))).toBe(true);
     expect(result.findings.some((finding) => finding.ruleId === 'form-field-no-label' || finding.ruleId === 'axe-label')).toBe(true);
@@ -904,6 +908,74 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
     }
   }, 120_000);
 
+  it('validates linked HTTP destinations without promoting them to audit targets', async () => {
+    let linkedDestinationRequests = 0;
+    const server = createServer((request, response) => {
+      if (request.url === '/linked-destination') {
+        linkedDestinationRequests += 1;
+        response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Not found');
+        return;
+      }
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(`<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width"><title>No-crawl fixture</title></head><body>
+        <main><h1>Explicit audit target</h1><a id="linked-page" href="/linked-destination">Missing linked page</a></main>
+      </body></html>`);
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+    const outputDir = await mkdtemp(join(tmpdir(), 'a11y-no-crawl-'));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Fixture server did not expose a TCP port.');
+      const rootUrl = `http://127.0.0.1:${address.port}/`;
+      const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+      const result = await executeAudit({
+        inputs: [rootUrl],
+        options: {
+          auditor: 'No-crawl Test Auditor',
+          outputDir,
+          allowedHosts: ['127.0.0.1'],
+          stagingOnly: false,
+          concurrency: 1,
+          captureScreenshots: false,
+          maxLinksPerPage: 10,
+          viewports: [
+            { name: 'desktop', width: 1200, height: 800 },
+            { name: 'mobile', width: 390, height: 844, isMobile: true }
+          ],
+          ...(channel ? { channel } : {})
+        }
+      });
+      const json = JSON.parse(await readFile(result.jsonPath, 'utf8')) as {
+        scopeMode: string;
+        requestedUrls: string[];
+        auditedUrls: string[];
+        pages: Array<{ url: string; viewports: unknown[] }>;
+        findings: Array<{ ruleId: string; issue: string }>;
+      };
+      expect(linkedDestinationRequests).toBeGreaterThan(0);
+      expect(json.findings).toContainEqual(expect.objectContaining({
+        ruleId: 'link-broken-destination',
+        issue: expect.stringContaining('HTTP 404')
+      }));
+      expect(json.scopeMode).toBe('supplied-pages-only');
+      expect(json.requestedUrls).toEqual([rootUrl]);
+      expect(json.auditedUrls).toEqual([rootUrl]);
+      expect(json.pages.map((page) => page.url)).toEqual([rootUrl]);
+      expect(json.pages[0]?.viewports).toHaveLength(2);
+
+      const html = await readFile(result.htmlPath, 'utf8');
+      expect(html).toContain('Supplied pages only (no crawl); links are never added as audit targets');
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(result.reportPath);
+      expect(String(workbook.getWorksheet('Audit Summary')?.getCell('A16').value))
+        .toContain('Scope mode: Supplied pages only (no crawl)');
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()));
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it('runs the professional service entry point and validates its workbook', async () => {
     const fixture = await readFile(resolve('tests/fixtures/site/index.html'));
     const server = createServer((request, response) => {
@@ -954,7 +1026,11 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       expect(generatedScreenshots).toHaveLength(referencedScreenshots.size);
       expect(result.reportPath).toMatch(/Accessibility_Audit_Report\.xlsx$/);
       expect(result.htmlPath).toMatch(/Accessibility_Audit_Report\.html$/);
+      expect(result.csvPath).toMatch(/audit-findings\.csv$/);
+      expect(result.sarifPath).toMatch(/audit-results\.sarif$/);
       expect(await readFile(result.htmlPath, 'utf8')).toContain('<title>Accessibility audit report');
+      expect(await readFile(result.csvPath, 'utf8')).toContain('"id","fingerprint","classification","severity"');
+      expect(JSON.parse(await readFile(result.sarifPath, 'utf8'))).toEqual(expect.objectContaining({ version: '2.1.0' }));
       expect(Buffer.byteLength(await readFile(result.archivePath))).toBeGreaterThan(0);
     } finally {
       await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()));
@@ -1043,6 +1119,8 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
         expect(Date.now() - started).toBeLessThan(10_000);
         const partial = JSON.parse(await readFile(result.jsonPath, 'utf8')) as { status: string };
         expect(partial.status).toBe('cancelled');
+        expect(await readFile(result.csvPath, 'utf8')).toContain('"id","fingerprint","classification","severity"');
+        expect(JSON.parse(await readFile(result.sarifPath, 'utf8'))).toEqual(expect.objectContaining({ version: '2.1.0' }));
       } finally {
         clearTimeout(cancellation);
       }
@@ -1100,7 +1178,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       const [exitCode] = await once(child, 'exit') as [number | null, NodeJS.Signals | null];
 
       expect(exitCode).toBe(130);
-      expect(stderr).toContain('Stopped safely. Partial HTML, Excel, and JSON output is in');
+      expect(stderr).toContain('Stopped safely. Partial HTML, Excel, JSON, CSV, and SARIF output is in');
       expect(stderr).toContain('the portable ZIP is');
       const cliResult = JSON.parse(stdout) as { status: string; validation: { valid: boolean; auditor: string } };
       expect(cliResult.status).toBe('cancelled');

@@ -41,8 +41,11 @@ jobs:
             http://127.0.0.1:4173/pass.html
             http://127.0.0.1:4173/pass.html?second-page=1
           allowed-hosts: 127.0.0.1
+          exact-hosts: 127.0.0.1
+          max-pages: 2
           staging-only: 'true'
           capture-screenshots: 'false'
+          browser: chromium
           browser-channel: chromium
           auto-install-browser: 'false'
           fail-on: confirmed
@@ -70,6 +73,7 @@ jobs:
           name: built-action-fixture-evidence
           path: |
             ${{ steps.audit.outputs.output-dir }}
+            ${{ steps.audit.outputs.archive-path }}
             fixture-server.log
           if-no-files-found: error
           retention-days: 14

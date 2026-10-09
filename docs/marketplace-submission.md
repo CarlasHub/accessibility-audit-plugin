@@ -27,6 +27,7 @@ npm run build:marketplace
 npm run validate:marketplace
 npm run test:marketplace
 npm run test:marketplace-compatibility
+npm run package:release-bundles
 npm pack --dry-run
 git diff --exit-code -- action/dist
 git diff --exit-code -- marketplace
@@ -42,9 +43,11 @@ Generated payloads must not be edited by hand. Re-run `npm run build:marketplace
 
 1. Review the final diff and confirm that it contains no credentials, cookies, private URLs, captured page content, or private screenshots.
 2. Merge the approved change to the default branch.
-3. Create an immutable version tag and GitHub release from the tested commit.
-4. Attach the generated release archive when a client or marketplace requires a downloadable package.
-5. Follow each client marketplace's current review process, using this repository and release tag as the source.
+3. Create an immutable version tag that exactly equals `v<package.json version>` from the tested commit and wait for the release-tag workflow to pass. A mismatched tag stops before packaging or attestation.
+4. Download the `attested-release-<tag>` workflow artifact. It contains versioned client archives, SHA-256 files, and the reproducible CycloneDX 1.6 production-dependency SBOM; the workflow does not publish a release automatically.
+5. Verify each archive with its SHA-256 file and `gh attestation verify <archive> --repo CarlasHub/accessibility-audit-plugin` before distribution.
+6. Create the GitHub release from the same tag and attach the reviewed versioned archives, their checksums, and the SBOM when a client or marketplace requires downloadable evidence.
+7. Follow each client marketplace's current review process, using this repository, immutable release tag, and attestations as the source.
 
 The public listing should link to [Privacy](../PRIVACY.md), [Terms](../TERMS.md), [Security](../SECURITY.md), and [Support](../SUPPORT.md). Use the repository issue tracker for non-sensitive bugs and the security policy for vulnerabilities.
 

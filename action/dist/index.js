@@ -2087,6 +2087,26 @@ var EXPANSION_MAX = 100000
 // characters) so legitimate input is unaffected.
 var EXPANSION_MAX_LENGTH = 4000000
 
+// `expand` recurses once per level of brace *nesting* - both when expanding a
+// set's comma members and when re-wrapping a set whose body is a single part.
+// The CVE-2026-14257 fix made the *tail* iterative (recursion on `m.post`, one
+// level per chained group), which left nesting depth unbounded: about 3,100
+// levels of `{{{...a,b...}}}` - only ~6KB of input - exhausted the native stack
+// and crashed the process. `EXPANSION_MAX_DEPTH` bounds how deep the parser
+// will follow nesting. It sits far above any realistic pattern and well below
+// the depth at which the stack runs out.
+var EXPANSION_MAX_DEPTH = 1000
+
+// Bash keeps a quirk where a brace group followed by a comma set still expands
+// (`{a},b}`). The parser implements it by rewriting the string and restarting
+// the scan, absorbing one `}` per pass. `n` trailing braces therefore cost `n`
+// full passes over a string that itself grows by one `escClose` sentinel each
+// time - quadratic in `n`, with a ~26x constant from the sentinel's length.
+// 128KB of `'{a}' + '}'.repeat(n) + ',z}'` blocked the event loop for 27
+// seconds to produce two results. `EXPANSION_MAX_REWRITES` bounds how many
+// times the scan may restart. Real `{a},b}` input needs a handful.
+var EXPANSION_MAX_REWRITES = 1000
+
 function numeric(str) {
   return parseInt(str, 10) == str
     ? parseInt(str, 10)
@@ -2110,34 +2130,54 @@ function unescapeBraces(str) {
 }
 
 
+// Like `target.push(...items)` but doesn't overflow the stack
+function pushAll(target, items) {
+  for (var i = 0; i < items.length; i++) {
+    target.push(items[i]);
+  }
+}
+
 // Basically just str.split(","), but handling cases
 // where we have nested braced sections, which should be
 // treated as individual members, like {a,{b,c},d}
 function parseCommaParts(str) {
-  if (!str)
-    return [''];
-
   var parts = [];
-  var m = balanced('{', '}', str);
 
-  if (!m)
-    return str.split(',');
+  // Walk the brace groups iteratively. Recursing on `post` once per group let a
+  // chain of them exhaust the stack - the parsing-side counterpart to
+  // the `expand` overflow fixed for CVE-2026-14257, and not something `max` or
+  // `maxLength` can bound, since it happens before expansion.
+  //
+  // The part the next chunk continues
+  var carry = '';
 
-  var pre = m.pre;
-  var body = m.body;
-  var post = m.post;
-  var p = pre.split(',');
+  for (;;) {
+    var m = balanced('{', '}', str);
 
-  p[p.length-1] += '{' + body + '}';
-  var postParts = parseCommaParts(post);
-  if (post.length) {
-    p[p.length-1] += postParts.shift();
-    p.push.apply(p, postParts);
+    if (!m) {
+      var tail = str.split(',');
+      tail[0] = carry + tail[0];
+      pushAll(parts, tail);
+      return parts;
+    }
+
+    var pre = m.pre;
+    var body = m.body;
+    var post = m.post;
+    var p = pre.split(',');
+
+    p[0] = carry + p[0];
+    p[p.length-1] += '{' + body + '}';
+
+    if (!post.length) {
+      pushAll(parts, p);
+      return parts;
+    }
+
+    carry = p.pop();
+    pushAll(parts, p);
+    str = post;
   }
-
-  parts.push.apply(parts, p);
-
-  return parts;
 }
 
 function expandTop(str, options) {
@@ -2147,6 +2187,8 @@ function expandTop(str, options) {
   options = options || {};
   var max = options.max == null ? EXPANSION_MAX : options.max;
   var maxLength = options.maxLength == null ? EXPANSION_MAX_LENGTH : options.maxLength;
+  var maxDepth = options.maxDepth == null ? EXPANSION_MAX_DEPTH : options.maxDepth;
+  var maxRewrites = options.maxRewrites == null ? EXPANSION_MAX_REWRITES : options.maxRewrites;
 
   // I don't know why Bash 4.3 does this, but it does.
   // Anything starting with {} will have the first two bytes preserved
@@ -2158,7 +2200,7 @@ function expandTop(str, options) {
     str = '\\{\\}' + str.substr(2);
   }
 
-  return expand(escapeBraces(str), max, maxLength, true).map(unescapeBraces);
+  return expand(escapeBraces(str), max, maxLength, maxDepth, 0, maxRewrites, true).map(unescapeBraces);
 }
 
 function embrace(str) {
@@ -2270,8 +2312,18 @@ function expand(
   str,
   max,
   maxLength,
+  maxDepth,
+  depth,
+  maxRewrites,
   isTop
 ) {
+  // Too deeply nested to keep following: treat the rest as literal, the same
+  // way a group that cannot expand is already handled. Truncating rather than
+  // throwing keeps expansion total, matching `max` and `maxLength`.
+  if (depth > maxDepth) {
+    return [str];
+  }
+
   // Consume the string's top-level brace groups left to right, threading a
   // running set of combined prefixes (`acc`). Expanding the tail iteratively -
   // rather than recursing on `m.post` once per group - keeps the native stack
@@ -2284,6 +2336,9 @@ function expand(
   // comma set - a sequence like `{a..\}` may legitimately yield ''. The drop
   // is on the final strings, so it is applied to whichever `combine` produces
   // them (the one with no brace set left in the tail).
+  // How many times the `{a},b}` rewrite below has restarted the scan. Each pass
+  // re-reads the whole string, so leaving this unbounded is quadratic.
+  var rewrites = 0
   var dropEmpties = false
   var firstGroup = true
 
@@ -2319,7 +2374,8 @@ function expand(
     var isOptions = m.body.indexOf(',') >= 0;
     if (!isSequence && !isOptions) {
       // {a},b}
-      if (m.post.match(/,(?!,).*\}/)) {
+      if (rewrites < maxRewrites && m.post.match(/,(?!,).*\}/)) {
+        rewrites++;
         str = m.pre + '{' + m.body + escClose + m.post;
         isTop = true;
         continue;
@@ -2347,7 +2403,7 @@ function expand(
       var n = parseCommaParts(m.body);
       if (n.length === 1 && n[0] !== undefined) {
         // x{{a,b}}y ==> x{a}y x{b}y
-        n = expand(n[0], max, maxLength, false).map(embrace);
+        n = expand(n[0], max, maxLength, maxDepth, depth + 1, maxRewrites, false).map(embrace);
         //XXX is this necessary? Can't seem to hit it in tests.
         /* c8 ignore start */
         if (n.length === 1) {
@@ -2381,7 +2437,7 @@ function expand(
       values = []
       var valuesLength = 0
       outer: for (var j = 0; j < n.length; j++) {
-        var expanded = expand(n[j], max, maxLength, false)
+        var expanded = expand(n[j], max, maxLength, maxDepth, depth + 1, maxRewrites, false)
         for (var k = 0; k < expanded.length; k++) {
           var v = expanded[k]
           if (dropsEmpties && !v) continue
@@ -32294,6 +32350,26 @@ var EXPANSION_MAX = 100000
 // characters) so legitimate input is unaffected.
 var EXPANSION_MAX_LENGTH = 4000000
 
+// `expand` recurses once per level of brace *nesting* - both when expanding a
+// set's comma members and when re-wrapping a set whose body is a single part.
+// The CVE-2026-14257 fix made the *tail* iterative (recursion on `m.post`, one
+// level per chained group), which left nesting depth unbounded: about 3,100
+// levels of `{{{...a,b...}}}` - only ~6KB of input - exhausted the native stack
+// and crashed the process. `EXPANSION_MAX_DEPTH` bounds how deep the parser
+// will follow nesting. It sits far above any realistic pattern and well below
+// the depth at which the stack runs out.
+var EXPANSION_MAX_DEPTH = 1000
+
+// Bash keeps a quirk where a brace group followed by a comma set still expands
+// (`{a},b}`). The parser implements it by rewriting the string and restarting
+// the scan, absorbing one `}` per pass. `n` trailing braces therefore cost `n`
+// full passes over a string that itself grows by one `escClose` sentinel each
+// time - quadratic in `n`, with a ~26x constant from the sentinel's length.
+// 128KB of `'{a}' + '}'.repeat(n) + ',z}'` blocked the event loop for 27
+// seconds to produce two results. `EXPANSION_MAX_REWRITES` bounds how many
+// times the scan may restart. Real `{a},b}` input needs a handful.
+var EXPANSION_MAX_REWRITES = 1000
+
 function numeric(str) {
   return parseInt(str, 10) == str
     ? parseInt(str, 10)
@@ -32317,34 +32393,54 @@ function unescapeBraces(str) {
 }
 
 
+// Like `target.push(...items)` but doesn't overflow the stack
+function pushAll(target, items) {
+  for (var i = 0; i < items.length; i++) {
+    target.push(items[i]);
+  }
+}
+
 // Basically just str.split(","), but handling cases
 // where we have nested braced sections, which should be
 // treated as individual members, like {a,{b,c},d}
 function parseCommaParts(str) {
-  if (!str)
-    return [''];
-
   var parts = [];
-  var m = balanced('{', '}', str);
 
-  if (!m)
-    return str.split(',');
+  // Walk the brace groups iteratively. Recursing on `post` once per group let a
+  // chain of them exhaust the stack - the parsing-side counterpart to
+  // the `expand` overflow fixed for CVE-2026-14257, and not something `max` or
+  // `maxLength` can bound, since it happens before expansion.
+  //
+  // The part the next chunk continues
+  var carry = '';
 
-  var pre = m.pre;
-  var body = m.body;
-  var post = m.post;
-  var p = pre.split(',');
+  for (;;) {
+    var m = balanced('{', '}', str);
 
-  p[p.length-1] += '{' + body + '}';
-  var postParts = parseCommaParts(post);
-  if (post.length) {
-    p[p.length-1] += postParts.shift();
-    p.push.apply(p, postParts);
+    if (!m) {
+      var tail = str.split(',');
+      tail[0] = carry + tail[0];
+      pushAll(parts, tail);
+      return parts;
+    }
+
+    var pre = m.pre;
+    var body = m.body;
+    var post = m.post;
+    var p = pre.split(',');
+
+    p[0] = carry + p[0];
+    p[p.length-1] += '{' + body + '}';
+
+    if (!post.length) {
+      pushAll(parts, p);
+      return parts;
+    }
+
+    carry = p.pop();
+    pushAll(parts, p);
+    str = post;
   }
-
-  parts.push.apply(parts, p);
-
-  return parts;
 }
 
 function expandTop(str, options) {
@@ -32354,6 +32450,8 @@ function expandTop(str, options) {
   options = options || {};
   var max = options.max == null ? EXPANSION_MAX : options.max;
   var maxLength = options.maxLength == null ? EXPANSION_MAX_LENGTH : options.maxLength;
+  var maxDepth = options.maxDepth == null ? EXPANSION_MAX_DEPTH : options.maxDepth;
+  var maxRewrites = options.maxRewrites == null ? EXPANSION_MAX_REWRITES : options.maxRewrites;
 
   // I don't know why Bash 4.3 does this, but it does.
   // Anything starting with {} will have the first two bytes preserved
@@ -32365,7 +32463,7 @@ function expandTop(str, options) {
     str = '\\{\\}' + str.substr(2);
   }
 
-  return expand(escapeBraces(str), max, maxLength, true).map(unescapeBraces);
+  return expand(escapeBraces(str), max, maxLength, maxDepth, 0, maxRewrites, true).map(unescapeBraces);
 }
 
 function identity(e) {
@@ -32489,8 +32587,18 @@ function expand(
   str,
   max,
   maxLength,
+  maxDepth,
+  depth,
+  maxRewrites,
   isTop
 ) {
+  // Too deeply nested to keep following: treat the rest as literal, the same
+  // way a group that cannot expand is already handled. Truncating rather than
+  // throwing keeps expansion total, matching `max` and `maxLength`.
+  if (depth > maxDepth) {
+    return [str];
+  }
+
   // Consume the string's top-level brace groups left to right, threading a
   // running set of combined prefixes (`acc`). Expanding the tail iteratively -
   // rather than recursing on `m.post` once per group - keeps the native stack
@@ -32511,6 +32619,9 @@ function expand(
   // `accBase[a]` records how much of `acc[a]` predates the current run;
   // `combine` treats an expansion as empty when it adds nothing past that.
   var accBase = [0]
+  // How many times the `{a},b}` rewrite below has restarted the scan. Each pass
+  // re-reads the whole string, so leaving this unbounded is quadratic.
+  var rewrites = 0
   var dropEmpties = false
   var firstGroup = true
   var nextBase
@@ -32542,7 +32653,8 @@ function expand(
     var isOptions = m.body.indexOf(',') >= 0;
     if (!isSequence && !isOptions) {
       // {a},b}
-      if (m.post.match(/,(?!,).*\}/)) {
+      if (rewrites < maxRewrites && m.post.match(/,(?!,).*\}/)) {
+        rewrites++;
         str = m.pre + '{' + m.body + escClose + m.post;
         // The rewritten string is expanded as if it were a fresh top-level one,
         // so start a new empty-drop run: anchor the baseline at what `acc`
@@ -32581,7 +32693,7 @@ function expand(
       var n = parseCommaParts(m.body);
       if (n.length === 1 && n[0] !== undefined) {
         // x{{a,b}}y ==> x{a}y x{b}y
-        n = expand(n[0], max, maxLength, false).map(embrace);
+        n = expand(n[0], max, maxLength, maxDepth, depth + 1, maxRewrites, false).map(embrace);
         //XXX is this necessary? Can't seem to hit it in tests.
         /* c8 ignore start */
         if (n.length === 1) {
@@ -32620,7 +32732,7 @@ function expand(
       values = []
       var valuesLength = 0
       outer: for (var j = 0; j < n.length; j++) {
-        var expanded = expand(n[j], max, maxLength, false)
+        var expanded = expand(n[j], max, maxLength, maxDepth, depth + 1, maxRewrites, false)
         for (var k = 0; k < expanded.length; k++) {
           var v = expanded[k]
           if (dropsEmpties && !v) continue
@@ -119667,6 +119779,26 @@ var EXPANSION_MAX = 100000
 // characters) so legitimate input is unaffected.
 var EXPANSION_MAX_LENGTH = 4000000
 
+// `expand` recurses once per level of brace *nesting* - both when expanding a
+// set's comma members and when re-wrapping a set whose body is a single part.
+// The CVE-2026-14257 fix made the *tail* iterative (recursion on `m.post`, one
+// level per chained group), which left nesting depth unbounded: about 3,100
+// levels of `{{{...a,b...}}}` - only ~6KB of input - exhausted the native stack
+// and crashed the process. `EXPANSION_MAX_DEPTH` bounds how deep the parser
+// will follow nesting. It sits far above any realistic pattern and well below
+// the depth at which the stack runs out.
+var EXPANSION_MAX_DEPTH = 1000
+
+// Bash keeps a quirk where a brace group followed by a comma set still expands
+// (`{a},b}`). The parser implements it by rewriting the string and restarting
+// the scan, absorbing one `}` per pass. `n` trailing braces therefore cost `n`
+// full passes over a string that itself grows by one `escClose` sentinel each
+// time - quadratic in `n`, with a ~26x constant from the sentinel's length.
+// 128KB of `'{a}' + '}'.repeat(n) + ',z}'` blocked the event loop for 27
+// seconds to produce two results. `EXPANSION_MAX_REWRITES` bounds how many
+// times the scan may restart. Real `{a},b}` input needs a handful.
+var EXPANSION_MAX_REWRITES = 1000
+
 function numeric(str) {
   return parseInt(str, 10) == str
     ? parseInt(str, 10)
@@ -119690,34 +119822,54 @@ function unescapeBraces(str) {
 }
 
 
+// Like `target.push(...items)` but doesn't overflow the stack
+function pushAll(target, items) {
+  for (var i = 0; i < items.length; i++) {
+    target.push(items[i]);
+  }
+}
+
 // Basically just str.split(","), but handling cases
 // where we have nested braced sections, which should be
 // treated as individual members, like {a,{b,c},d}
 function parseCommaParts(str) {
-  if (!str)
-    return [''];
-
   var parts = [];
-  var m = balanced('{', '}', str);
 
-  if (!m)
-    return str.split(',');
+  // Walk the brace groups iteratively. Recursing on `post` once per group let a
+  // chain of them exhaust the stack - the parsing-side counterpart to
+  // the `expand` overflow fixed for CVE-2026-14257, and not something `max` or
+  // `maxLength` can bound, since it happens before expansion.
+  //
+  // The part the next chunk continues
+  var carry = '';
 
-  var pre = m.pre;
-  var body = m.body;
-  var post = m.post;
-  var p = pre.split(',');
+  for (;;) {
+    var m = balanced('{', '}', str);
 
-  p[p.length-1] += '{' + body + '}';
-  var postParts = parseCommaParts(post);
-  if (post.length) {
-    p[p.length-1] += postParts.shift();
-    p.push.apply(p, postParts);
+    if (!m) {
+      var tail = str.split(',');
+      tail[0] = carry + tail[0];
+      pushAll(parts, tail);
+      return parts;
+    }
+
+    var pre = m.pre;
+    var body = m.body;
+    var post = m.post;
+    var p = pre.split(',');
+
+    p[0] = carry + p[0];
+    p[p.length-1] += '{' + body + '}';
+
+    if (!post.length) {
+      pushAll(parts, p);
+      return parts;
+    }
+
+    carry = p.pop();
+    pushAll(parts, p);
+    str = post;
   }
-
-  parts.push.apply(parts, p);
-
-  return parts;
 }
 
 function expandTop(str, options) {
@@ -119727,6 +119879,8 @@ function expandTop(str, options) {
   options = options || {};
   var max = options.max == null ? EXPANSION_MAX : options.max;
   var maxLength = options.maxLength == null ? EXPANSION_MAX_LENGTH : options.maxLength;
+  var maxDepth = options.maxDepth == null ? EXPANSION_MAX_DEPTH : options.maxDepth;
+  var maxRewrites = options.maxRewrites == null ? EXPANSION_MAX_REWRITES : options.maxRewrites;
 
   // I don't know why Bash 4.3 does this, but it does.
   // Anything starting with {} will have the first two bytes preserved
@@ -119738,7 +119892,7 @@ function expandTop(str, options) {
     str = '\\{\\}' + str.substr(2);
   }
 
-  return expand(escapeBraces(str), max, maxLength, true).map(unescapeBraces);
+  return expand(escapeBraces(str), max, maxLength, maxDepth, 0, maxRewrites, true).map(unescapeBraces);
 }
 
 function embrace(str) {
@@ -119850,8 +120004,18 @@ function expand(
   str,
   max,
   maxLength,
+  maxDepth,
+  depth,
+  maxRewrites,
   isTop
 ) {
+  // Too deeply nested to keep following: treat the rest as literal, the same
+  // way a group that cannot expand is already handled. Truncating rather than
+  // throwing keeps expansion total, matching `max` and `maxLength`.
+  if (depth > maxDepth) {
+    return [str];
+  }
+
   // Consume the string's top-level brace groups left to right, threading a
   // running set of combined prefixes (`acc`). Expanding the tail iteratively -
   // rather than recursing on `m.post` once per group - keeps the native stack
@@ -119864,6 +120028,9 @@ function expand(
   // comma set - a sequence like `{a..\}` may legitimately yield ''. The drop
   // is on the final strings, so it is applied to whichever `combine` produces
   // them (the one with no brace set left in the tail).
+  // How many times the `{a},b}` rewrite below has restarted the scan. Each pass
+  // re-reads the whole string, so leaving this unbounded is quadratic.
+  var rewrites = 0
   var dropEmpties = false
   var firstGroup = true
 
@@ -119899,7 +120066,8 @@ function expand(
     var isOptions = m.body.indexOf(',') >= 0;
     if (!isSequence && !isOptions) {
       // {a},b}
-      if (m.post.match(/,(?!,).*\}/)) {
+      if (rewrites < maxRewrites && m.post.match(/,(?!,).*\}/)) {
+        rewrites++;
         str = m.pre + '{' + m.body + escClose + m.post;
         isTop = true;
         continue;
@@ -119927,7 +120095,7 @@ function expand(
       var n = parseCommaParts(m.body);
       if (n.length === 1 && n[0] !== undefined) {
         // x{{a,b}}y ==> x{a}y x{b}y
-        n = expand(n[0], max, maxLength, false).map(embrace);
+        n = expand(n[0], max, maxLength, maxDepth, depth + 1, maxRewrites, false).map(embrace);
         //XXX is this necessary? Can't seem to hit it in tests.
         /* c8 ignore start */
         if (n.length === 1) {
@@ -119961,7 +120129,7 @@ function expand(
       values = []
       var valuesLength = 0
       outer: for (var j = 0; j < n.length; j++) {
-        var expanded = expand(n[j], max, maxLength, false)
+        var expanded = expand(n[j], max, maxLength, maxDepth, depth + 1, maxRewrites, false)
         for (var k = 0; k < expanded.length; k++) {
           var v = expanded[k]
           if (dropsEmpties && !v) continue
@@ -126753,6 +126921,1189 @@ function trailingBytesSeen(data) {
 
   return 0
 }
+
+
+/***/ }),
+
+/***/ 20935:
+/***/ ((__unused_webpack_module, exports) => {
+
+var __webpack_unused_export__;
+
+
+/**
+ * Check if `vhost` is a valid suffix of `hostname` (top-domain)
+ *
+ * It means that `vhost` needs to be a suffix of `hostname` and we then need to
+ * make sure that: either they are equal, or the character preceding `vhost` in
+ * `hostname` is a '.' (it should not be a partial label).
+ *
+ * * hostname = 'not.evil.com' and vhost = 'vil.com'      => not ok
+ * * hostname = 'not.evil.com' and vhost = 'evil.com'     => ok
+ * * hostname = 'not.evil.com' and vhost = 'not.evil.com' => ok
+ */
+function shareSameDomainSuffix(hostname, vhost) {
+    if (hostname.endsWith(vhost)) {
+        return (hostname.length === vhost.length ||
+            hostname[hostname.length - vhost.length - 1] === '.');
+    }
+    return false;
+}
+/**
+ * Given a hostname and its public suffix, extract the general domain.
+ */
+function extractDomainWithSuffix(hostname, publicSuffix) {
+    // Locate the index of the last '.' in the part of the `hostname` preceding
+    // the public suffix.
+    //
+    // examples:
+    //   1. not.evil.co.uk  => evil.co.uk
+    //         ^    ^
+    //         |    | start of public suffix
+    //         | index of the last dot
+    //
+    //   2. example.co.uk   => example.co.uk
+    //     ^       ^
+    //     |       | start of public suffix
+    //     |
+    //     | (-1) no dot found before the public suffix
+    const publicSuffixIndex = hostname.length - publicSuffix.length - 2;
+    const lastDotBeforeSuffixIndex = hostname.lastIndexOf('.', publicSuffixIndex);
+    // No '.' found, then `hostname` is the general domain (no sub-domain)
+    if (lastDotBeforeSuffixIndex === -1) {
+        return hostname;
+    }
+    // Extract the part between the last '.'
+    return hostname.slice(lastDotBeforeSuffixIndex + 1);
+}
+/**
+ * Detects the domain based on rules and upon and a host string
+ */
+function getDomain$1(suffix, hostname, options) {
+    // Check if `hostname` ends with a member of `validHosts`.
+    if (options.validHosts !== null) {
+        const validHosts = options.validHosts;
+        for (const vhost of validHosts) {
+            if ( /*@__INLINE__*/shareSameDomainSuffix(hostname, vhost)) {
+                return vhost;
+            }
+        }
+    }
+    let numberOfLeadingDots = 0;
+    if (hostname.startsWith('.')) {
+        while (numberOfLeadingDots < hostname.length &&
+            hostname[numberOfLeadingDots] === '.') {
+            numberOfLeadingDots += 1;
+        }
+    }
+    // If `hostname` is a valid public suffix, then there is no domain to return.
+    // Since we already know that `getPublicSuffix` returns a suffix of `hostname`
+    // there is no need to perform a string comparison and we only compare the
+    // size.
+    if (suffix.length === hostname.length - numberOfLeadingDots) {
+        return null;
+    }
+    // To extract the general domain, we start by identifying the public suffix
+    // (if any), then consider the domain to be the public suffix with one added
+    // level of depth. (e.g.: if hostname is `not.evil.co.uk` and public suffix:
+    // `co.uk`, then we take one more level: `evil`, giving the final result:
+    // `evil.co.uk`).
+    return /*@__INLINE__*/ extractDomainWithSuffix(hostname, suffix);
+}
+
+/**
+ * Return the part of domain without suffix.
+ *
+ * Example: for domain 'foo.com', the result would be 'foo'.
+ */
+function getDomainWithoutSuffix$1(domain, suffix) {
+    // Note: here `domain` and `suffix` cannot have the same length because in
+    // this case we set `domain` to `null` instead. It is thus safe to assume
+    // that `suffix` is shorter than `domain`.
+    return domain.slice(0, -suffix.length - 1);
+}
+
+/**
+ * Matches an ASCII tab (U+0009) or newline (U+000A / U+000D). The WHATWG URL
+ * parser strips these before parsing; we only allocate a cleaned copy (and
+ * re-parse) on the rare input that actually contains one.
+ */
+const CONTROL_CHARS = /[\t\n\r]/g;
+// Set by `extractHostname` (a module-scope flag, read synchronously by
+// `parseImpl` right after the call — same pattern as the reused RESULT object).
+// `true` ONLY when extraction validated the returned host inline (a confirmed-
+// valid, "simple" authority) so `parseImpl` can skip the separate
+// `isValidHostname` pass. `false` in every other case (validation disabled, a
+// complex authority — userinfo/port/brackets/trailing-dot/control — an invalid
+// host, or a non-main return path); `parseImpl` then validates as usual. The
+// fast path can only ever SKIP a redundant scan for hosts already known valid,
+// never accept an invalid one.
+let extractedHostnameValidated = false;
+/**
+ * True if char `code` is a valid hostname character. This is the per-char half
+ * of `is-valid.ts`'s `isValidAscii` (a-z, 0-9, > U+007F) PLUS three additions:
+ * A-Z (the host is lowercased before validation, so uppercase ≡ a valid
+ * lowercase letter) and '-' / '_' (valid inside a label). KEEP IN SYNC with
+ * `is-valid.ts`: these rules are deliberately duplicated to validate during
+ * extraction, so any change to the accepted character set there must be
+ * mirrored here (and vice-versa).
+ */
+function isValidHostnameChar(code) {
+    return ((code >= 97 && code <= 122) || // a-z
+        (code >= 48 && code <= 57) || // 0-9
+        code > 127 || // non-ASCII (accepted, not punycode-checked)
+        (code >= 65 && code <= 90) || // A-Z (becomes valid once lowercased)
+        code === 45 || // '-'
+        code === 95 // '_'
+    );
+}
+/**
+ * Classify scheme `url.slice(schemeStart, colonIndex)` as a WHATWG special
+ * scheme without allocating a substring (case-insensitive via `| 32`).
+ * Special schemes: ftp, file, http, https, ws, wss
+ * (https://url.spec.whatwg.org/#special-scheme).
+ *
+ * @returns 0 = not special, 1 = special, 2 = file (its host sits only between
+ *          "//" and the next slash).
+ */
+function getSpecialScheme(url, schemeStart, colonIndex) {
+    const length = colonIndex - schemeStart;
+    const c0 = url.charCodeAt(schemeStart) | 32;
+    if (length === 2) {
+        return c0 === 119 && (url.charCodeAt(schemeStart + 1) | 32) === 115 ? 1 : 0; // ws
+    }
+    else if (length === 3) {
+        const c1 = url.charCodeAt(schemeStart + 1) | 32;
+        const c2 = url.charCodeAt(schemeStart + 2) | 32;
+        if (c0 === 119 && c1 === 115 && c2 === 115)
+            return 1; // wss
+        if (c0 === 102 && c1 === 116 && c2 === 112)
+            return 1; // ftp
+        return 0;
+    }
+    else if (length === 4) {
+        const c1 = url.charCodeAt(schemeStart + 1) | 32;
+        const c2 = url.charCodeAt(schemeStart + 2) | 32;
+        const c3 = url.charCodeAt(schemeStart + 3) | 32;
+        if (c0 === 104 && c1 === 116 && c2 === 116 && c3 === 112)
+            return 1; // http
+        if (c0 === 102 && c1 === 105 && c2 === 108 && c3 === 101)
+            return 2; // file
+        return 0;
+    }
+    else if (length === 5) {
+        return c0 === 104 &&
+            (url.charCodeAt(schemeStart + 1) | 32) === 116 &&
+            (url.charCodeAt(schemeStart + 2) | 32) === 116 &&
+            (url.charCodeAt(schemeStart + 3) | 32) === 112 &&
+            (url.charCodeAt(schemeStart + 4) | 32) === 115
+            ? 1
+            : 0; // https
+    }
+    return 0;
+}
+/**
+ * Extract a hostname from `url`, matching a WHATWG URL parser's host-boundary
+ * behaviour (https://url.spec.whatwg.org/#concept-basic-url-parser) for tldts'
+ * scope. It deliberately does NOT normalise the host (no IDNA/punycode or IPv4
+ * canonicalisation; IPv6 brackets are stripped, not compressed), strips trailing
+ * dots, and stays lenient where a strict parser rejects (bare host:port,
+ * out-of-range port, user@host) — all documented deviations.
+ *
+ * @param urlIsValidHostname - when true, `url` is already a valid hostname and is
+ *   returned by the same reference (factory.ts skips re-validation on that
+ *   identity), keeping the common path allocation-free.
+ * @param validate - when true, validate the host inline during the authority
+ *   scan and publish the verdict via `extractedHostnameValidated` so `parseImpl`
+ *   can skip the redundant `isValidHostname` pass for simple authorities.
+ */
+function extractHostname(url, urlIsValidHostname, validate = false) {
+    let start = 0;
+    let end = url.length;
+    let hasUpper = false;
+    let isSpecial = false;
+    extractedHostnameValidated = false;
+    if (!urlIsValidHostname) {
+        // Data URLs never carry a host (and may be huge — short-circuit them).
+        if (url.startsWith('data:')) {
+            return null;
+        }
+        // WHATWG step 1: trim leading/trailing C0 control or space (<= U+0020).
+        // Tab/newline elsewhere are handled lazily below.
+        while (start < url.length && url.charCodeAt(start) <= 32) {
+            start += 1;
+        }
+        while (end > start + 1 && url.charCodeAt(end - 1) <= 32) {
+            end -= 1;
+        }
+        if (url.charCodeAt(start) === 47 /* '/' */ &&
+            url.charCodeAt(start + 1) === 47 /* '/' */) {
+            // Scheme-relative reference ("//host/path").
+            start += 2;
+        }
+        else {
+            const indexOfProtocol = url.indexOf(':/', start);
+            if (indexOfProtocol !== -1) {
+                // "scheme://…". Classify the scheme, then position `start` at the host.
+                const special = getSpecialScheme(url, start, indexOfProtocol);
+                if (special === 1) {
+                    // Special scheme: skip the run of '/' and '\' after it
+                    // (special-authority-(ignore-)slashes states; '\' acts as '/').
+                    isSpecial = true;
+                    start = indexOfProtocol + 2;
+                    while (url.charCodeAt(start) === 47 /* '/' */ ||
+                        url.charCodeAt(start) === 92 /* '\' */) {
+                        start += 1;
+                    }
+                }
+                else if (special === 2) {
+                    // file: the host is only what sits between "//" and the next slash, so
+                    // "file://h/x" => "h" but "file:///x" / "file:/x" => no host.
+                    isSpecial = true;
+                    start = indexOfProtocol + 1;
+                    let slashes = 0;
+                    while ((url.charCodeAt(start) === 47 || url.charCodeAt(start) === 92) &&
+                        slashes < 2) {
+                        start += 1;
+                        slashes += 1;
+                    }
+                    if (slashes < 2) {
+                        return null;
+                    }
+                }
+                else {
+                    // Unknown scheme: validate the WHATWG scheme grammar [A-Za-z0-9+.-];
+                    // a control char means it was split by a tab/newline (strip + re-parse).
+                    for (let i = start; i < indexOfProtocol; i += 1) {
+                        const code = url.charCodeAt(i) | 32;
+                        if (!((code >= 97 && code <= 122) || // [a, z]
+                            (code >= 48 && code <= 57) || // [0, 9]
+                            code === 46 || // '.'
+                            code === 45 || // '-'
+                            code === 43 // '+'
+                        )) {
+                            const raw = url.charCodeAt(i);
+                            if (raw === 9 || raw === 10 || raw === 13) {
+                                return extractHostname(url.replace(CONTROL_CHARS, ''), urlIsValidHostname, validate);
+                            }
+                            return null;
+                        }
+                    }
+                    // A non-special scheme has an authority only after "//" (else it is an
+                    // opaque path with no host). `indexOf(':/')` already gave the first '/'.
+                    if (url.charCodeAt(indexOfProtocol + 2) === 47 /* '/' */) {
+                        start = indexOfProtocol + 3;
+                    }
+                    else {
+                        return null;
+                    }
+                }
+            }
+            else if (url.charCodeAt(start) !== 91 /* '[' */) {
+                // Cold path: no scheme "://", and not a bare IPv6 literal (whose first
+                // ':' would otherwise look like a scheme separator; "[…]" falls through
+                // to the ipv6 handling below). May be a bare host, a host:port, a
+                // user@host, a slash-less special scheme ("https:host"), or an opaque
+                // URI ("mailto:", "tel:", "urn:…").
+                let indexOfColon = -1;
+                for (let i = start; i < end; i += 1) {
+                    const code = url.charCodeAt(i);
+                    if (code === 9 || code === 10 || code === 13) {
+                        return extractHostname(url.replace(CONTROL_CHARS, ''), urlIsValidHostname, validate);
+                    }
+                    if (code === 58 /* ':' */) {
+                        indexOfColon = i;
+                        break;
+                    }
+                    if (code === 47 || code === 92 || code === 63 || code === 35) {
+                        break;
+                    }
+                }
+                if (indexOfColon !== -1) {
+                    // An '@' before the next delimiter => the ':' is userinfo, not a
+                    // scheme ("user:pass@host", "mailto:a@b"): keep the whole authority.
+                    let hasIdentifier = false;
+                    for (let i = indexOfColon + 1; i < end; i += 1) {
+                        const code = url.charCodeAt(i);
+                        if (code === 47 || code === 92 || code === 63 || code === 35) {
+                            break;
+                        }
+                        if (code === 64 /* '@' */) {
+                            hasIdentifier = true;
+                            break;
+                        }
+                    }
+                    if (!hasIdentifier) {
+                        // All-digits after ':' => a bare "host:port" (tldts accepts
+                        // hostnames too); keep `start` and let the port handling trim it.
+                        let allDigits = true;
+                        let i = indexOfColon + 1;
+                        for (; i < end; i += 1) {
+                            const code = url.charCodeAt(i);
+                            if (code === 47 || code === 92 || code === 63 || code === 35) {
+                                break;
+                            }
+                            if (code < 48 /* '0' */ || code > 57 /* '9' */) {
+                                allDigits = false;
+                                break;
+                            }
+                        }
+                        if (i === indexOfColon + 1) {
+                            allDigits = false; // nothing after ':' => not a port
+                        }
+                        if (!allDigits) {
+                            const special = getSpecialScheme(url, start, indexOfColon);
+                            if (special === 0) {
+                                // No "://" anywhere on the cold path and not a special scheme.
+                                // A second ':' before the host's end marks a bare, unbracketed
+                                // IPv6 literal ("2a01:e35::1"): fall through and let the host
+                                // loop + isIp classify it. Without one this is an opaque path
+                                // with no host ("mailto:x", "foo:bar").
+                                let isBareIpv6 = false;
+                                for (let j = indexOfColon + 1; j < end; j += 1) {
+                                    const code = url.charCodeAt(j);
+                                    if (code === 47 ||
+                                        code === 92 ||
+                                        code === 63 ||
+                                        code === 35) {
+                                        break;
+                                    }
+                                    if (code === 58 /* ':' */) {
+                                        isBareIpv6 = true;
+                                        break;
+                                    }
+                                }
+                                if (!isBareIpv6) {
+                                    return null;
+                                }
+                            }
+                            else {
+                                isSpecial = true;
+                                start = indexOfColon + 1;
+                                if (special === 2) {
+                                    // file (e.g. "file:\\host"): host only between "//" and next slash.
+                                    let slashes = 0;
+                                    while ((url.charCodeAt(start) === 47 ||
+                                        url.charCodeAt(start) === 92) &&
+                                        slashes < 2) {
+                                        start += 1;
+                                        slashes += 1;
+                                    }
+                                    if (slashes < 2) {
+                                        return null;
+                                    }
+                                }
+                                else {
+                                    while (url.charCodeAt(start) === 47 ||
+                                        url.charCodeAt(start) === 92) {
+                                        start += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Find the host's end: first '/', '?' or '#' (and '\' for special URLs,
+        // which WHATWG treats like '/'). Track the last '@', ']' and ':' for
+        // userinfo, ipv6 and port, plus the first ':' of the host (reset at each
+        // '@') to tell a bare IPv6 (>= 2 colons) from a host:port (exactly one);
+        // flag uppercase and a stray tab/newline. The loop is split on `code < 64`
+        // so common host characters take fewer comparisons.
+        //
+        // When `validate`, also accumulate `is-valid.ts`'s checks over the scanned
+        // run so a simple authority's host can be validated in this single pass.
+        // `vValid` only stays meaningful for a "simple" authority (no userinfo, port,
+        // brackets, control or trailing dot); those cases clear it / are rejected by
+        // the guard below, falling back to `isValidHostname`.
+        let indexOfIdentifier = -1;
+        let indexOfClosingBracket = -1;
+        let indexOfPort = -1;
+        let indexOfFirstColon = -1;
+        let hasControl = false;
+        let vValid = validate; // seeded true when validating; cleared on the first invalid char
+        let vLastDot = start - 1; // mirrors is-valid.ts `lastDotIndex = -1` at host start
+        let vLastCode = -1;
+        if (validate && start < end) {
+            // First-char rule: must be a valid host char, '.', or '_' (NOT '-').
+            const c0 = url.charCodeAt(start);
+            if (
+            // Keep these parens: they scope /*@__INLINE__*/ for terser.
+            // prettier-ignore
+            !(
+            /*@__INLINE__*/ (isValidHostnameChar(c0) ||
+                c0 === 46 /* '.' */ ||
+                c0 === 95 /* '_' */)) ||
+                c0 === 45 /* '-' (isValidHostnameChar allows it mid-label, not first) */) {
+                vValid = false;
+            }
+        }
+        for (let i = start; i < end; i += 1) {
+            const code = url.charCodeAt(i);
+            if (code < 64) {
+                if (code === 47 || code === 35 || code === 63) {
+                    end = i;
+                    break;
+                }
+                else if (code === 58 /* ':' */) {
+                    if (indexOfFirstColon === -1) {
+                        indexOfFirstColon = i;
+                    }
+                    indexOfPort = i;
+                }
+                else if (code === 9 || code === 10 || code === 13) {
+                    hasControl = true;
+                }
+                else if (validate) {
+                    if (code === 46 /* '.' */) {
+                        if (i - vLastDot > 64 || vLastCode === 46 || vLastCode === 45) {
+                            vValid = false;
+                        }
+                        vLastDot = i;
+                    }
+                    else if (code < 48 || code > 57) {
+                        // < 64 and not a delimiter/dot/digit => only '-' (45) is a valid
+                        // host char here; everything else (space, %, !, etc.) is invalid.
+                        // A '-' must also not START a label (the byte right after a '.') —
+                        // mirrors is-valid.ts; the first label is covered by the first-char
+                        // rule above. (RFC 1034 §3.5 / RFC 1035 §2.3.1 LDH.)
+                        if (code !== 45 || vLastCode === 46 /* label-leading '-' */) {
+                            vValid = false;
+                        }
+                    }
+                }
+            }
+            else if (isSpecial && code === 92 /* '\' */) {
+                end = i;
+                break;
+            }
+            else if (code === 64 /* '@' */) {
+                indexOfIdentifier = i;
+                indexOfFirstColon = -1; // colons before '@' are userinfo, not the host
+            }
+            else if (code === 93 /* ']' */) {
+                indexOfClosingBracket = i;
+            }
+            else if (code >= 65 && code <= 90) {
+                hasUpper = true;
+            }
+            else if (validate && !( /*@__INLINE__*/isValidHostnameChar(code))) {
+                // >= 64, not '@'/']'/upper: valid only if a-z, '_', or non-ASCII.
+                vValid = false;
+            }
+            if (validate) {
+                vLastCode = code;
+            }
+        }
+        // A tab/newline inside the authority: strip everything and re-parse (rare).
+        if (hasControl) {
+            return extractHostname(url.replace(CONTROL_CHARS, ''), urlIsValidHostname, validate);
+        }
+        // Skip userinfo. '>= start' so an empty userinfo ("http://@host") works too.
+        if (indexOfIdentifier !== -1 &&
+            indexOfIdentifier >= start &&
+            indexOfIdentifier < end) {
+            start = indexOfIdentifier + 1;
+        }
+        if (url.charCodeAt(start) === 91 /* '[' */) {
+            // ipv6 address: return what is between the brackets, or null if unclosed.
+            if (indexOfClosingBracket !== -1) {
+                return url.slice(start + 1, indexOfClosingBracket).toLowerCase();
+            }
+            return null;
+        }
+        else if (indexOfPort !== -1 &&
+            indexOfPort > start &&
+            indexOfPort < end &&
+            // A host:port has exactly one ':' in the host (so its first ':' is its
+            // last); a bare, unbracketed IPv6 literal ("2a01:e35::1") has >= 2, so
+            // its first ':' precedes the last. Only the former has a ':port' to trim.
+            indexOfFirstColon === indexOfPort) {
+            end = indexOfPort; // trim ':port'
+        }
+        // Empty authority ("http://", "file:///path", "//"); only reachable here via
+        // extraction — a bare valid hostname never lands here.
+        if (start >= end) {
+            return null;
+        }
+        // Publish the inline-validation verdict — but only for a "simple" authority,
+        // where the scanned run equals the final host: no userinfo skip, no port
+        // trim, no brackets, no trailing dot (trimmed below), and length within RFC
+        // limits. Anything else leaves it `false` so `parseImpl` re-validates.
+        //
+        // Every clause below is load-bearing for CORRECTNESS, not just speed: the
+        // loop accumulates `vValid` over the whole scanned run (it does not stop at
+        // ':' or '@', so any port/userinfo bytes are included), so the verdict is
+        // only sound when that run equals the final host. Do not drop a clause as
+        // "redundant" — e.g. without `indexOfPort === -1`, `host:8080` would be
+        // wrongly accepted.
+        if (validate &&
+            vValid &&
+            indexOfIdentifier === -1 &&
+            indexOfPort === -1 &&
+            indexOfClosingBracket === -1 &&
+            url.charCodeAt(end - 1) !== 46 /* no trailing dot */ &&
+            end - start <= 255 && // total length
+            end - vLastDot - 1 <= 63 && // last label length
+            vLastCode !== 45 /* last char not '-' */) {
+            extractedHostnameValidated = true;
+        }
+    }
+    // Trim trailing dots
+    while (end > start + 1 && url.charCodeAt(end - 1) === 46 /* '.' */) {
+        end -= 1;
+    }
+    const hostname = start !== 0 || end !== url.length ? url.slice(start, end) : url;
+    if (hasUpper) {
+        return hostname.toLowerCase();
+    }
+    return hostname;
+}
+
+/**
+ * Check if a hostname is an IP. You should be aware that this only works
+ * because `hostname` is already garanteed to be a valid hostname!
+ */
+function isProbablyIpv4(hostname) {
+    // Cannot be shorted than 1.1.1.1
+    if (hostname.length < 7) {
+        return false;
+    }
+    // Cannot be longer than: 255.255.255.255
+    if (hostname.length > 15) {
+        return false;
+    }
+    let numberOfDots = 0;
+    for (let i = 0; i < hostname.length; i += 1) {
+        const code = hostname.charCodeAt(i);
+        if (code === 46 /* '.' */) {
+            numberOfDots += 1;
+        }
+        else if (code < 48 /* '0' */ || code > 57 /* '9' */) {
+            return false;
+        }
+    }
+    return (numberOfDots === 3 &&
+        hostname.charCodeAt(0) !== 46 /* '.' */ &&
+        hostname.charCodeAt(hostname.length - 1) !== 46 /* '.' */);
+}
+/**
+ * Similar to isProbablyIpv4.
+ */
+function isProbablyIpv6(hostname) {
+    if (hostname.length < 3) {
+        return false;
+    }
+    let start = hostname.startsWith('[') ? 1 : 0;
+    let end = hostname.length;
+    if (hostname[end - 1] === ']') {
+        end -= 1;
+    }
+    // We only consider the maximum size of a normal IPV6. Note that this will
+    // fail on so-called "IPv4 mapped IPv6 addresses" but this is a corner-case
+    // and a proper validation library should be used for these.
+    if (end - start > 39) {
+        return false;
+    }
+    let hasColon = false;
+    for (; start < end; start += 1) {
+        const code = hostname.charCodeAt(start);
+        if (code === 58 /* ':' */) {
+            hasColon = true;
+        }
+        else if (!((code >= 48 && code <= 57) || // 0-9
+            (code >= 97 && code <= 102) || // a-f
+            (code >= 65 && code <= 70) // A-F (RFC 4291 §2.2: an IPv6 hextet is hex digits only)
+        )) {
+            return false;
+        }
+    }
+    return hasColon;
+}
+/**
+ * Check if `hostname` is *probably* a valid ip addr (either ipv6 or ipv4).
+ * This *will not* work on any string. We need `hostname` to be a valid
+ * hostname.
+ */
+function isIp(hostname) {
+    return isProbablyIpv6(hostname) || isProbablyIpv4(hostname);
+}
+
+/**
+ * Special-use domain names from the IANA "Special-Use Domain Names" registry:
+ * the authoritative list, created by RFC 6761 and maintained as new RFCs add to
+ * it: https://www.iana.org/assignments/special-use-domain-names/
+ * Snapshot: 2026-05-24. (RFC 6761 is not obsoleted; draft-hoffman-rfc6761bis
+ * proposes to retire its prose but keep this registry, so the registry is the
+ * source of truth; re-sync this list against it.)
+ *
+ * These names never correspond to a public registration, yet neither
+ * `isIcann` nor `isPrivate` marks one as special-use: most are absent from the
+ * Public Suffix List (so `a.test` looks like a registrable domain), and the
+ * few that are listed (`onion`, `home.arpa`) appear there as ordinary ICANN
+ * suffixes. `isSpecialUse` is the single signal that covers them all.
+ *
+ * Per the registry and RFC 6761 ("and any names falling within these domains"),
+ * the designation covers each listed name AND all of its sub-domains. DNS labels
+ * are case-insensitive (RFC 4343); `hostname` is expected to be already
+ * lower-cased and trailing-dot-stripped, as produced by `extractHostname`, the
+ * same normalization the Public-Suffix-List lookup relies on.
+ *
+ * Two groups of registry entries are intentionally excluded: the numeric
+ * reverse-DNS delegation zones (`10.in-addr.arpa`, the `*.ip6.arpa` ranges, …),
+ * which are reverse-DNS PTR zones rather than hostnames and whose parents
+ * (`in-addr.arpa`/`ip6.arpa`) are already in the Public Suffix List; and the
+ * deprecated `eap-noob.arpa` entry.
+ */
+const SPECIAL_USE_DOMAINS = [
+    'test', // RFC 6761
+    'localhost', // RFC 6761
+    'invalid', // RFC 6761
+    'example', // RFC 6761
+    'example.com', // RFC 6761
+    'example.net', // RFC 6761
+    'example.org', // RFC 6761
+    'local', // RFC 6762 (mDNS)
+    'onion', // RFC 7686 (Tor)
+    'alt', // RFC 9476
+    'home.arpa', // RFC 8375
+    'ipv4only.arpa', // RFC 8880
+    'resolver.arpa', // RFC 9462
+    'service.arpa', // RFC 9665
+    '6tisch.arpa', // RFC 9031
+    'eap.arpa', // RFC 9965
+];
+/**
+ * Return `true` if `hostname` is, or is a sub-domain of, a special-use domain
+ * (see the registry note above). Expects an already-normalized `hostname`.
+ */
+function isSpecialUse(hostname) {
+    for (const name of SPECIAL_USE_DOMAINS) {
+        // Match on a label boundary: `hostname` is either exactly `name` or ends
+        // with `.name` (so `latest` is not matched by `test`, nor `myexample.com`
+        // by `example.com`).
+        if (hostname.endsWith(name) &&
+            (hostname.length === name.length ||
+                hostname.charCodeAt(hostname.length - name.length - 1) === 46) /* '.' */) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Implements fast shallow verification of hostnames. This does not perform a
+ * struct check on the content of labels (classes of Unicode characters, etc.)
+ * but instead check that the structure is valid (number of labels, length of
+ * labels, etc.).
+ *
+ * If you need stricter validation, consider using an external library.
+ */
+// KEEP IN SYNC with `extract-hostname.ts` `isValidHostnameChar` + its inline
+// scan/verdict, which duplicate these structural rules to validate during
+// extraction (a perf fusion). That copy additionally accepts A-Z (the host is
+// not yet lowercased there) and folds in '-' / '_'. Any change to the accepted
+// character set or the label/length rules here must be mirrored there.
+function isValidAscii(code) {
+    return ((code >= 97 && code <= 122) || (code >= 48 && code <= 57) || code > 127);
+}
+/**
+ * Check if a hostname string is valid. It's usually a preliminary check before
+ * trying to use getDomain or anything else.
+ *
+ * Beware: it does not check if the TLD exists.
+ */
+function isValidHostname (hostname) {
+    if (hostname.length > 255) {
+        return false;
+    }
+    if (hostname.length === 0) {
+        return false;
+    }
+    if (
+    /*@__INLINE__*/ !isValidAscii(hostname.charCodeAt(0)) &&
+        hostname.charCodeAt(0) !== 46 && // '.' (dot)
+        hostname.charCodeAt(0) !== 95 // '_' (underscore)
+    ) {
+        return false;
+    }
+    // Validate hostname according to RFC
+    let lastDotIndex = -1;
+    let lastCharCode = -1;
+    const len = hostname.length;
+    for (let i = 0; i < len; i += 1) {
+        const code = hostname.charCodeAt(i);
+        if (code === 46 /* '.' */) {
+            if (
+            // Check that previous label is < 63 bytes long (64 = 63 + '.')
+            i - lastDotIndex > 64 ||
+                // Check that previous character was not already a '.'
+                lastCharCode === 46 ||
+                // Check that the previous label does not end with '-' (RFC 1035 §2.3.1 LDH).
+                // '_' is intentionally NOT restricted: DNS allows any octet (RFC 2181 §11) and
+                // WHATWG URL does not treat '_' as a forbidden host code point.
+                lastCharCode === 45) {
+                return false;
+            }
+            lastDotIndex = i;
+        }
+        else if (
+        // A forbidden character in the label...
+        // Keep these parens: they scope /*@__INLINE__*/ for terser.
+        // prettier-ignore
+        !( /*@__INLINE__*/(isValidAscii(code) || code === 45 || code === 95)) ||
+            // ...or a '-' starting a label (the byte right after a '.'). A label must
+            // not begin with a hyphen (RFC 1034 §3.5 / RFC 1035 §2.3.1 LDH, as amended
+            // by RFC 1123 §2.1; cf. UTS #46 CheckHyphens). The first label is covered by
+            // the leading-character guard above; mirrors the trailing-'-' rule below.
+            (code === 45 && lastCharCode === 46)) {
+            return false;
+        }
+        lastCharCode = code;
+    }
+    return (
+    // Check that last label is shorter than 63 chars
+    len - lastDotIndex - 1 <= 63 &&
+        // Check that the last character is an allowed trailing label character.
+        // Since we already checked that the char is a valid hostname character,
+        // we only need to check that it's different from '-'.
+        lastCharCode !== 45);
+}
+
+function setDefaultsImpl({ allowIcannDomains = true, allowPrivateDomains = false, detectIp = true, detectSpecialUse = false, extractHostname = true, mixedInputs = true, validHosts = null, validateHostname = true, }) {
+    return {
+        allowIcannDomains,
+        allowPrivateDomains,
+        detectIp,
+        detectSpecialUse,
+        extractHostname,
+        mixedInputs,
+        validHosts,
+        validateHostname,
+    };
+}
+const DEFAULT_OPTIONS = /*@__INLINE__*/ setDefaultsImpl({});
+function setDefaults(options) {
+    if (options === undefined) {
+        return DEFAULT_OPTIONS;
+    }
+    return /*@__INLINE__*/ setDefaultsImpl(options);
+}
+
+/**
+ * Returns the subdomain of a hostname string
+ */
+function getSubdomain$1(hostname, domain) {
+    // If `hostname` and `domain` are the same, then there is no sub-domain
+    if (domain.length === hostname.length) {
+        return '';
+    }
+    return hostname.slice(0, -domain.length - 1);
+}
+
+/**
+ * Implement a factory allowing to plug different implementations of suffix
+ * lookup (e.g.: using a trie or the packed hashes datastructures). This is used
+ * and exposed in `tldts.ts` and `tldts-experimental.ts` bundle entrypoints.
+ */
+function getEmptyResult() {
+    return {
+        domain: null,
+        domainWithoutSuffix: null,
+        hostname: null,
+        isIcann: null,
+        isIp: null,
+        isPrivate: null,
+        isSpecialUse: null,
+        publicSuffix: null,
+        subdomain: null,
+    };
+}
+function resetResult(result) {
+    result.domain = null;
+    result.domainWithoutSuffix = null;
+    result.hostname = null;
+    result.isIcann = null;
+    result.isIp = null;
+    result.isPrivate = null;
+    result.isSpecialUse = null;
+    result.publicSuffix = null;
+    result.subdomain = null;
+}
+function parseImpl(url, step, suffixLookup, partialOptions, result) {
+    const options = /*@__INLINE__*/ setDefaults(partialOptions);
+    // Very fast approximate check to make sure `url` is a string. This is needed
+    // because the library will not necessarily be used in a typed setup and
+    // values of arbitrary types might be given as argument.
+    if (typeof url !== 'string') {
+        return result;
+    }
+    // Extract hostname from `url` only if needed. This can be made optional
+    // using `options.extractHostname`. This option will typically be used
+    // whenever we are sure the inputs to `parse` are already hostnames and not
+    // arbitrary URLs.
+    //
+    // `mixedInput` allows to specify if we expect a mix of URLs and hostnames
+    // as input. If only hostnames are expected then `extractHostname` can be
+    // set to `false` to speed-up parsing. If only URLs are expected then
+    // `mixedInputs` can be set to `false`. The `mixedInputs` is only a hint
+    // and will not change the behavior of the library.
+    // Whether `url` itself was already a valid hostname (only computed on the
+    // mixedInputs path). Lets us skip the post-extraction validation below when
+    // extractHostname returned `url` unchanged (same reference).
+    let urlIsValid = false;
+    if (!options.extractHostname) {
+        result.hostname = url;
+    }
+    else if (options.mixedInputs) {
+        urlIsValid = isValidHostname(url);
+        result.hostname = extractHostname(url, urlIsValid, options.validateHostname);
+    }
+    else {
+        result.hostname = extractHostname(url, false, options.validateHostname);
+    }
+    // Check if `hostname` is a valid ip address
+    if (options.detectIp && result.hostname !== null) {
+        result.isIp = isIp(result.hostname);
+        if (result.isIp) {
+            return result;
+        }
+    }
+    // Perform hostname validation if enabled. If hostname is not valid, no need to
+    // go further as there will be no valid domain or sub-domain. This validation
+    // is applied before any early returns to ensure consistent behavior across
+    // all API methods including getHostname().
+    if (options.validateHostname &&
+        options.extractHostname &&
+        result.hostname !== null &&
+        // Skip the re-scan when `url` was already validated and extractHostname
+        // returned it unchanged (same reference => identical string, still valid).
+        !(urlIsValid && result.hostname === url) &&
+        // Skip the re-scan when extractHostname already validated the host inline
+        // (a confirmed-valid simple authority — see extract-hostname.ts).
+        !extractedHostnameValidated &&
+        !isValidHostname(result.hostname)) {
+        result.hostname = null;
+        return result;
+    }
+    if (step === 0 /* FLAG.HOSTNAME */ || result.hostname === null) {
+        return result;
+    }
+    // Flag special-use domains, only when opted in (`detectSpecialUse`) and only
+    // for the full `parse()` result (FLAG.ALL). Computed here, before the
+    // public-suffix/domain early-returns below, so single-label names like
+    // `localhost` (which have no registrable domain) are still flagged.
+    if (step === 5 /* FLAG.ALL */ && options.detectSpecialUse) {
+        result.isSpecialUse = isSpecialUse(result.hostname);
+    }
+    // Extract public suffix
+    suffixLookup(result.hostname, options, result);
+    if (step === 2 /* FLAG.PUBLIC_SUFFIX */ || result.publicSuffix === null) {
+        return result;
+    }
+    // Extract domain
+    result.domain = getDomain$1(result.publicSuffix, result.hostname, options);
+    if (step === 3 /* FLAG.DOMAIN */ || result.domain === null) {
+        return result;
+    }
+    // Extract subdomain
+    result.subdomain = getSubdomain$1(result.hostname, result.domain);
+    if (step === 4 /* FLAG.SUB_DOMAIN */) {
+        return result;
+    }
+    // Extract domain without suffix
+    result.domainWithoutSuffix = getDomainWithoutSuffix$1(result.domain, result.publicSuffix);
+    return result;
+}
+
+function fastPathLookup (hostname, options, out) {
+    // Fast path for very popular suffixes; this allows to by-pass lookup
+    // completely as well as any extra allocation or string manipulation.
+    if (!options.allowPrivateDomains && hostname.length > 3) {
+        const last = hostname.length - 1;
+        const c3 = hostname.charCodeAt(last);
+        const c2 = hostname.charCodeAt(last - 1);
+        const c1 = hostname.charCodeAt(last - 2);
+        const c0 = hostname.charCodeAt(last - 3);
+        if (c3 === 109 /* 'm' */ &&
+            c2 === 111 /* 'o' */ &&
+            c1 === 99 /* 'c' */ &&
+            c0 === 46 /* '.' */) {
+            out.isIcann = true;
+            out.isPrivate = false;
+            out.publicSuffix = 'com';
+            return true;
+        }
+        else if (c3 === 103 /* 'g' */ &&
+            c2 === 114 /* 'r' */ &&
+            c1 === 111 /* 'o' */ &&
+            c0 === 46 /* '.' */) {
+            out.isIcann = true;
+            out.isPrivate = false;
+            out.publicSuffix = 'org';
+            return true;
+        }
+        else if (c3 === 117 /* 'u' */ &&
+            c2 === 100 /* 'd' */ &&
+            c1 === 101 /* 'e' */ &&
+            c0 === 46 /* '.' */) {
+            out.isIcann = true;
+            out.isPrivate = false;
+            out.publicSuffix = 'edu';
+            return true;
+        }
+        else if (c3 === 118 /* 'v' */ &&
+            c2 === 111 /* 'o' */ &&
+            c1 === 103 /* 'g' */ &&
+            c0 === 46 /* '.' */) {
+            out.isIcann = true;
+            out.isPrivate = false;
+            out.publicSuffix = 'gov';
+            return true;
+        }
+        else if (c3 === 116 /* 't' */ &&
+            c2 === 101 /* 'e' */ &&
+            c1 === 110 /* 'n' */ &&
+            c0 === 46 /* '.' */) {
+            out.isIcann = true;
+            out.isPrivate = false;
+            out.publicSuffix = 'net';
+            return true;
+        }
+        else if (c3 === 101 /* 'e' */ &&
+            c2 === 100 /* 'd' */ &&
+            c1 === 46 /* '.' */) {
+            out.isIcann = true;
+            out.isPrivate = false;
+            out.publicSuffix = 'de';
+            return true;
+        }
+    }
+    return false;
+}
+
+// Auto-generated flat public-suffix trie. Do not edit.
+const nodeFlags = /*#__PURE__*/ new Uint8Array([1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 2, 2, 2, 0, 2, 2, 0, 2, 0, 0, 1, 0, 0, 2, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 0, 0, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2, 2, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 2, 1, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 2, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 2, 2, 0, 0, 0, 2, 0, 1, 1, 0, 2, 0, 2, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 2, 2, 0, 2, 2, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 2, 2, 0, 2, 2, 2, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 2, 2, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 2, 2, 0, 0, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 2, 2, 1, 2, 1, 1, 1, 2, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 2, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0]);
+const edgeStart = /*#__PURE__*/ new Uint16Array([0, 0, 0, 10, 11, 18, 106, 111, 117, 124, 130, 136, 145, 146, 147, 148, 149, 150, 151, 153, 154, 155, 157, 159, 228, 241, 243, 244, 245, 260, 267, 268, 271, 272, 273, 276, 278, 297, 298, 300, 309, 314, 331, 332, 335, 337, 338, 340, 374, 375, 377, 380, 381, 385, 387, 391, 394, 426, 429, 442, 443, 451, 452, 454, 464, 478, 479, 480, 481, 490, 491, 528, 533, 549, 569, 575, 617, 618, 645, 672, 673, 821, 827, 830, 831, 832, 837, 842, 851, 873, 874, 875, 876, 877, 878, 879, 897, 899, 900, 903, 905, 906, 908, 910, 925, 940, 945, 946, 948, 949, 950, 951, 952, 954, 957, 962, 963, 964, 966, 967, 970, 973, 974, 975, 988, 990, 1002, 1013, 1021, 1023, 1064, 1067, 1071, 1072, 1074, 1077, 1088, 1090, 1100, 1102, 1108, 1110, 1111, 1113, 1116, 1117, 1118, 1171, 1173, 1175, 1195, 1196, 1197, 1198, 1200, 1211, 1242, 1253, 1265, 1274, 1281, 1286, 1299, 1310, 1323, 1324, 1335, 1369, 1370, 1371, 1386, 1401, 1473, 1474, 1476, 1477, 1513, 1532, 1533, 1534, 1535, 1536, 1539, 1543, 1546, 1548, 1582, 1583, 1591, 1592, 1593, 1594, 1596, 1598, 1599, 1601, 1602, 1603, 1614, 1615, 1616, 1617, 1618, 1619, 1620, 1621, 1622, 1623, 1624, 1625, 1626, 1627, 1629, 1630, 1631, 2086, 2089, 2090, 2092, 2099, 2106, 2116, 2120, 2131, 2132, 2133, 2145, 2146, 2148, 2150, 2151, 2158, 2159, 2161, 2162, 2164, 2165, 2166, 2167, 2168, 2242, 2244, 2265, 2266, 2267, 2269, 2271, 2272, 2323, 2324, 2326, 2333, 2339, 2349, 2359, 2412, 2413, 2414, 2424, 2438, 2439, 2442, 2449, 2450, 2458, 2459, 2460, 2461, 2462, 2473, 2474, 2475, 2477, 2478, 2479, 2488, 2500, 2506, 2538, 2542, 2544, 2545, 2547, 2548, 2559, 2560, 2562, 2570, 2577, 2583, 2588, 2589, 2595, 2598, 2604, 2611, 2612, 2619, 2627, 2628, 2629, 2667, 2673, 2688, 2689, 2694, 2712, 2743, 2761, 2763, 2766, 2774, 2776, 2783, 2835, 2859, 2860, 2861, 2862, 2863, 2864, 2865, 2872, 2873, 2874, 2875, 2876, 2877, 2879, 2880, 2884, 2964, 2977, 2978, 3415, 3419, 3433, 3485, 3513, 3535, 3593, 3615, 3630, 3693, 3744, 3782, 3818, 3843, 3985, 4031, 4082, 4101, 4135, 4150, 4170, 4200, 4231, 4254, 4285, 4315, 4347, 4374, 4449, 4471, 4509, 4519, 4553, 4572, 4598, 4640, 4690, 4716, 4785, 4786, 4788, 4811, 4834, 4870, 4901, 4918, 4975, 4988, 5012, 5041, 5043, 5077, 5093, 5121, 5426, 5435, 5444, 5451, 5468, 5472, 5478, 5517, 5519, 5526, 5533, 5542, 5549, 5550, 5551, 5563, 5566, 5581, 5582, 5591, 5592, 5601, 5610, 5616, 5618, 5619, 5620, 5657, 5658, 5660, 5668, 5675, 5688, 5692, 5694, 5695, 5701, 5708, 5722, 5732, 5737, 5745, 5753, 5759, 5760, 5764, 5766, 5767, 5779, 5851, 5852, 5853, 5854, 5856, 5857, 5860, 5862, 5865, 5869, 5870, 5871, 5877, 5878, 5879, 5881, 5883, 5885, 5886, 5887, 5890, 5892, 5895, 5896, 5898, 6096, 6103, 6104, 6105, 6115, 6120, 6137, 6151, 6160, 6161, 6162, 6166, 6167, 6169, 6171, 6177, 6178, 6181, 6182, 6184, 6185, 6186, 7086, 7089, 7093, 7111, 7120, 7123, 7130, 7131, 7133, 7134, 7135, 7137, 7189, 7190, 7193, 7194, 7311, 7312, 7323, 7334, 7341, 7344, 7353, 7354, 7355, 7370, 7425, 7617, 7619, 7620, 7622, 7627, 7640, 7655, 7662, 7671, 7674, 7677, 7684, 7692, 7696, 7697, 7698, 7712, 7716, 7725, 7726, 7727, 7731, 7766, 7767, 7785, 7792, 7800, 7801, 7806, 7814, 7858, 7859, 7865, 7868, 7880, 7885, 7886, 7889, 7891, 7926, 7927, 7933, 7940, 7941, 7950, 7959, 7974, 7978, 7979, 8031, 8032, 8037, 8039, 8042, 8044, 8045, 8046, 8055, 8069, 8077, 8091, 8103, 8104, 8106, 8108, 8130, 8141, 8147, 8148, 8160, 8172, 8259, 8271, 8279, 8282, 8288, 8313, 8316, 8317, 8318, 8319, 8321, 8324, 8327, 8338, 8340, 8342, 8370, 8445, 8452, 8456, 8457, 8466, 8488, 8489, 8494, 8495, 8574, 8576, 8578, 8587, 8591, 8597, 8603, 8609, 8619, 8624, 8625, 8643, 8654, 8659, 8664, 8674, 8680, 8684, 8690, 8696, 10304, 10305, 10306, 10313, 10315]);
+const edgeLength = /*#__PURE__*/ new Uint8Array([3, 3, 3, 3, 3, 3, 3, 3, 5, 8, 8, 2, 2, 3, 3, 3, 3, 3, 8, 5, 5, 5, 5, 5, 3, 3, 5, 5, 9, 12, 19, 8, 19, 8, 11, 9, 9, 8, 7, 7, 6, 8, 9, 16, 10, 7, 7, 11, 8, 6, 6, 9, 7, 11, 7, 14, 4, 4, 4, 4, 4, 4, 10, 7, 6, 6, 6, 6, 10, 10, 6, 10, 10, 22, 11, 9, 10, 10, 10, 9, 10, 8, 7, 7, 7, 8, 21, 13, 11, 11, 9, 10, 9, 13, 10, 8, 8, 9, 12, 9, 7, 10, 7, 7, 13, 7, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 8, 6, 3, 3, 3, 3, 3, 3, 2, 5, 3, 3, 3, 7, 2, 2, 2, 2, 2, 2, 3, 3, 3, 1, 1, 7, 8, 5, 2, 2, 7, 2, 2, 1, 4, 1, 11, 9, 9, 5, 5, 8, 5, 5, 5, 5, 5, 5, 5, 3, 3, 3, 3, 3, 5, 11, 9, 9, 13, 7, 14, 7, 6, 6, 6, 7, 6, 6, 6, 6, 6, 6, 10, 7, 11, 9, 4, 4, 4, 4, 4, 6, 6, 6, 6, 13, 6, 8, 7, 10, 9, 9, 7, 9, 8, 9, 8, 7, 10, 6, 9, 8, 10, 10, 7, 8, 1, 9, 10, 12, 12, 12, 10, 9, 9, 10, 10, 9, 9, 1, 1, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 6, 6, 6, 4, 3, 3, 3, 7, 4, 4, 4, 3, 3, 6, 7, 3, 4, 1, 2, 2, 2, 6, 1, 2, 2, 2, 2, 2, 12, 5, 3, 8, 9, 13, 4, 4, 13, 9, 9, 11, 7, 3, 12, 9, 2, 2, 2, 3, 3, 3, 3, 3, 8, 2, 2, 3, 3, 3, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 3, 7, 10, 15, 7, 15, 15, 20, 15, 9, 10, 10, 12, 14, 14, 14, 12, 12, 12, 12, 12, 14, 14, 10, 10, 10, 10, 14, 9, 9, 9, 10, 14, 14, 14, 13, 13, 9, 9, 9, 9, 9, 9, 7, 8, 6, 8, 8, 6, 8, 13, 8, 8, 6, 13, 8, 11, 13, 8, 6, 13, 8, 6, 9, 10, 10, 12, 14, 14, 14, 12, 12, 12, 12, 14, 14, 10, 10, 10, 10, 9, 9, 9, 10, 14, 14, 11, 13, 13, 9, 9, 9, 9, 9, 9, 2, 6, 9, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 2, 3, 3, 3, 3, 3, 3, 7, 7, 2, 3, 2, 2, 5, 3, 3, 3, 3, 3, 3, 4, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 4, 5, 7, 4, 2, 2, 12, 8, 10, 8, 10, 7, 18, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 5, 2, 2, 3, 3, 3, 5, 5, 3, 8, 8, 6, 8, 6, 6, 4, 6, 7, 7, 7, 10, 11, 2, 5, 5, 3, 3, 3, 3, 3, 3, 5, 5, 6, 11, 10, 7, 7, 7, 4, 4, 4, 2, 3, 3, 3, 3, 3, 2, 2, 7, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 7, 7, 7, 11, 7, 6, 9, 6, 6, 8, 10, 8, 6, 8, 13, 4, 4, 4, 4, 4, 10, 8, 11, 8, 8, 8, 10, 10, 7, 10, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 2, 2, 2, 2, 2, 2, 5, 5, 5, 5, 5, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 7, 10, 13, 7, 8, 7, 11, 8, 8, 6, 9, 8, 8, 6, 6, 6, 8, 8, 6, 6, 6, 6, 6, 9, 7, 6, 4, 4, 4, 4, 4, 4, 4, 6, 6, 6, 9, 7, 8, 10, 8, 8, 2, 3, 3, 3, 3, 3, 2, 8, 9, 9, 2, 2, 2, 3, 3, 3, 2, 3, 3, 3, 9, 2, 2, 3, 3, 3, 3, 3, 3, 5, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 12, 5, 5, 3, 5, 4, 2, 3, 2, 4, 3, 9, 2, 2, 2, 2, 2, 5, 5, 3, 8, 8, 13, 6, 10, 9, 4, 7, 9, 11, 2, 3, 7, 3, 3, 4, 1, 3, 4, 2, 9, 3, 3, 12, 5, 3, 7, 10, 10, 7, 4, 4, 6, 14, 7, 9, 7, 13, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 8, 15, 4, 4, 2, 3, 3, 3, 7, 4, 9, 9, 2, 3, 3, 3, 5, 3, 2, 2, 7, 2, 7, 6, 6, 7, 2, 4, 2, 2, 2, 2, 2, 2, 8, 8, 8, 9, 5, 2, 3, 3, 3, 3, 3, 3, 10, 7, 4, 4, 4, 4, 3, 4, 2, 3, 3, 3, 3, 3, 10, 7, 4, 4, 4, 4, 2, 3, 3, 3, 3, 10, 7, 4, 4, 4, 4, 3, 9, 6, 6, 6, 9, 13, 9, 2, 2, 2, 8, 7, 9, 5, 3, 3, 3, 5, 5, 13, 12, 9, 10, 7, 8, 7, 6, 8, 6, 11, 12, 7, 9, 10, 4, 4, 7, 8, 11, 6, 7, 9, 8, 7, 10, 8, 9, 15, 7, 8, 5, 4, 7, 2, 3, 3, 3, 2, 14, 10, 2, 14, 10, 2, 14, 3, 9, 13, 13, 10, 14, 16, 17, 11, 2, 14, 2, 14, 3, 9, 13, 10, 14, 16, 17, 11, 14, 10, 14, 2, 7, 3, 10, 7, 14, 10, 2, 14, 10, 9, 9, 17, 6, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 10, 10, 10, 12, 9, 4, 10, 10, 11, 8, 8, 8, 7, 9, 5, 3, 3, 3, 3, 3, 3, 3, 3, 5, 8, 4, 4, 4, 4, 4, 4, 6, 16, 3, 3, 14, 3, 14, 2, 14, 9, 13, 10, 10, 14, 16, 17, 11, 6, 9, 10, 10, 12, 14, 14, 14, 12, 12, 12, 12, 14, 14, 10, 10, 10, 10, 14, 9, 9, 9, 10, 14, 14, 14, 9, 9, 9, 9, 9, 9, 2, 14, 9, 13, 10, 10, 14, 16, 17, 11, 6, 2, 14, 9, 17, 13, 10, 10, 14, 16, 17, 11, 6, 2, 14, 9, 13, 10, 14, 16, 17, 11, 2, 14, 9, 13, 10, 16, 11, 2, 14, 10, 19, 7, 2, 14, 9, 13, 10, 19, 10, 7, 14, 16, 17, 11, 6, 2, 14, 9, 13, 10, 19, 7, 14, 16, 17, 11, 2, 14, 9, 13, 17, 13, 10, 10, 14, 16, 17, 11, 6, 3, 2, 14, 9, 13, 10, 10, 14, 16, 17, 11, 6, 9, 10, 12, 14, 14, 14, 12, 12, 12, 12, 12, 14, 14, 14, 10, 10, 10, 14, 9, 9, 9, 9, 14, 14, 14, 13, 13, 14, 9, 9, 9, 9, 9, 9, 4, 11, 2, 14, 9, 13, 17, 13, 10, 19, 10, 7, 14, 16, 17, 11, 6, 2, 14, 9, 13, 17, 13, 10, 19, 10, 7, 14, 16, 17, 11, 6, 2, 9, 10, 10, 7, 17, 3, 3, 12, 12, 16, 15, 15, 12, 14, 14, 14, 20, 20, 13, 12, 12, 12, 12, 12, 12, 20, 25, 14, 14, 12, 12, 10, 10, 10, 10, 9, 9, 9, 25, 4, 9, 17, 10, 7, 14, 16, 21, 13, 13, 14, 20, 14, 13, 17, 24, 9, 12, 13, 25, 13, 21, 20, 17, 9, 9, 9, 9, 9, 9, 12, 17, 4, 4, 9, 9, 9, 10, 10, 12, 14, 14, 14, 12, 12, 12, 12, 12, 14, 14, 10, 10, 10, 10, 14, 9, 9, 9, 9, 10, 14, 14, 14, 13, 13, 14, 9, 9, 9, 9, 9, 9, 9, 10, 14, 12, 12, 14, 14, 10, 9, 9, 9, 10, 14, 14, 14, 9, 9, 9, 9, 2, 1, 5, 8, 7, 11, 11, 1, 3, 3, 3, 5, 3, 3, 4, 8, 9, 10, 10, 12, 14, 14, 14, 12, 12, 12, 12, 14, 14, 10, 10, 10, 10, 14, 9, 9, 9, 10, 14, 14, 14, 13, 13, 14, 9, 9, 9, 9, 9, 9, 7, 4, 4, 4, 4, 4, 4, 4, 4, 4, 7, 4, 9, 12, 6, 14, 4, 12, 7, 2, 2, 1, 2, 7, 6, 4, 4, 4, 6, 8, 8, 7, 4, 5, 6, 3, 3, 3, 3, 4, 16, 8, 5, 4, 3, 3, 3, 5, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 11, 12, 7, 7, 13, 9, 10, 17, 12, 8, 9, 7, 8, 5, 12, 10, 13, 14, 5, 5, 5, 13, 5, 5, 5, 3, 3, 3, 5, 16, 5, 5, 5, 5, 7, 12, 14, 8, 12, 8, 10, 12, 9, 11, 7, 9, 7, 10, 7, 13, 9, 7, 12, 8, 17, 7, 7, 16, 10, 13, 13, 8, 10, 10, 14, 17, 7, 16, 16, 15, 8, 10, 10, 12, 17, 17, 7, 17, 14, 7, 10, 17, 8, 7, 7, 7, 8, 15, 15, 7, 14, 10, 10, 10, 11, 11, 7, 7, 13, 8, 10, 7, 16, 7, 8, 7, 14, 17, 12, 10, 11, 21, 8, 9, 7, 13, 9, 8, 13, 6, 12, 7, 6, 13, 10, 10, 10, 8, 18, 9, 17, 13, 10, 12, 6, 13, 6, 11, 8, 13, 10, 13, 18, 13, 11, 13, 8, 16, 7, 10, 8, 16, 12, 10, 8, 8, 14, 11, 8, 15, 8, 8, 7, 7, 12, 7, 8, 9, 14, 15, 8, 9, 10, 9, 15, 7, 8, 8, 12, 13, 9, 10, 15, 13, 7, 10, 10, 20, 7, 6, 9, 6, 6, 14, 11, 14, 11, 12, 9, 10, 16, 16, 12, 7, 11, 28, 8, 11, 10, 7, 21, 8, 7, 9, 4, 4, 4, 17, 7, 8, 6, 9, 6, 6, 13, 6, 6, 6, 6, 18, 20, 14, 8, 11, 12, 9, 10, 13, 15, 15, 19, 8, 9, 12, 7, 10, 16, 12, 9, 9, 9, 14, 12, 11, 9, 12, 11, 18, 9, 9, 9, 10, 7, 7, 16, 8, 9, 7, 13, 12, 10, 14, 18, 7, 8, 11, 7, 7, 8, 8, 13, 7, 7, 7, 11, 15, 13, 11, 7, 8, 15, 11, 7, 8, 18, 14, 13, 18, 15, 10, 12, 12, 9, 7, 11, 11, 8, 7, 10, 8, 14, 12, 10, 18, 7, 10, 9, 7, 8, 13, 10, 14, 10, 8, 8, 23, 7, 7, 11, 12, 12, 17, 7, 7, 11, 11, 17, 16, 16, 7, 8, 11, 14, 14, 8, 10, 7, 7, 16, 16, 13, 9, 11, 9, 15, 15, 11, 11, 7, 7, 14, 7, 9, 7, 7, 16, 10, 13, 10, 11, 14, 7, 11, 10, 11, 7, 11, 10, 11, 15, 11, 15, 10, 12, 10, 14, 13, 11, 11, 12, 13, 10, 7, 13, 10, 16, 12, 21, 15, 9, 10, 10, 7, 11, 14, 17, 7, 7, 8, 11, 12, 8, 15, 14, 14, 8, 17, 12, 10, 10, 7, 9, 11, 7, 10, 7, 11, 18, 7, 11, 7, 12, 11, 8, 8, 14, 12, 7, 8, 15, 3, 7, 7, 5, 2, 9, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 2, 5, 3, 3, 3, 3, 3, 3, 4, 4, 3, 3, 3, 3, 3, 3, 5, 11, 6, 4, 7, 10, 7, 7, 11, 1, 10, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 5, 7, 3, 5, 6, 3, 3, 5, 2, 2, 5, 3, 4, 13, 11, 3, 3, 6, 3, 5, 14, 2, 2, 3, 8, 2, 2, 12, 5, 18, 5, 3, 3, 3, 16, 5, 5, 5, 10, 7, 13, 12, 13, 9, 12, 14, 19, 9, 9, 21, 9, 9, 10, 6, 9, 6, 15, 10, 6, 12, 8, 6, 10, 15, 4, 4, 6, 6, 9, 9, 12, 16, 14, 23, 7, 7, 7, 14, 9, 7, 7, 11, 14, 10, 7, 10, 10, 10, 12, 6, 11, 10, 13, 11, 15, 11, 7, 12, 10, 3, 7, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 4, 3, 7, 1, 5, 2, 2, 2, 5, 5, 5, 5, 3, 3, 3, 3, 3, 5, 5, 10, 9, 11, 8, 7, 12, 8, 9, 7, 6, 13, 11, 6, 13, 7, 9, 9, 4, 4, 4, 4, 4, 6, 10, 7, 8, 13, 8, 8, 9, 14, 7, 8, 10, 7, 7, 7, 9, 6, 9, 7, 2, 12, 5, 3, 3, 13, 4, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 4, 5, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 9, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 2, 2, 2, 5, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 1, 7, 6, 4, 12, 3, 3, 3, 3, 3, 8, 7, 3, 3, 3, 3, 3, 3, 4, 4, 11, 14, 2, 8, 3, 5, 5, 8, 10, 8, 6, 4, 7, 17, 7, 4, 5, 2, 6, 3, 2, 2, 12, 5, 5, 3, 15, 13, 8, 11, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 5, 3, 3, 3, 3, 4, 18, 2, 12, 5, 3, 3, 3, 3, 3, 5, 16, 8, 8, 9, 6, 6, 4, 4, 4, 4, 31, 6, 6, 10, 11, 21, 10, 9, 7, 10, 7, 7, 2, 4, 4, 4, 4, 6, 5, 3, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 6, 6, 6, 2, 2, 2, 5, 3, 3, 3, 7, 7, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 8, 2, 3, 3, 3, 3, 3, 5, 9, 11, 3, 3, 3, 3, 4, 4, 3, 3, 3, 3, 3, 5, 10, 9, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 11, 10, 10, 10, 10, 10, 11, 10, 11, 10, 11, 10, 9, 9, 11, 3, 3, 3, 3, 3, 3, 5, 3, 7, 8, 8, 7, 6, 6, 11, 4, 4, 4, 7, 8, 9, 9, 2, 3, 7, 4, 4, 2, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 2, 2, 5, 5, 5, 5, 5, 3, 3, 5, 5, 5, 7, 7, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6, 8, 8, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 6, 9, 12, 3, 7, 10, 7, 2, 2, 3, 3, 3, 3, 3, 4, 3, 3, 2, 2, 2, 2, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 5, 8, 8, 6, 6, 8, 6, 7, 4, 4, 4, 4, 4, 4, 6, 7, 5, 5, 20, 19, 8, 10, 9, 7, 10, 6, 8, 11, 6, 6, 6, 6, 13, 12, 8, 6, 7, 14, 11, 9, 2, 5, 3, 6, 2, 3, 2, 2, 2, 2, 2, 2, 2, 5, 4, 3, 7, 6, 4, 7, 4, 3, 6, 4, 7, 2, 7, 7, 7, 5, 5, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 9, 10, 10, 11, 7, 8, 20, 7, 8, 9, 8, 12, 6, 6, 6, 8, 9, 8, 12, 6, 6, 8, 13, 10, 12, 6, 6, 7, 7, 9, 6, 4, 4, 4, 4, 4, 4, 10, 6, 6, 6, 7, 14, 11, 10, 7, 8, 10, 8, 11, 14, 11, 11, 9, 7, 9, 8, 11, 9, 17, 10, 9, 2, 2, 2, 9, 3, 3, 3, 3, 15, 14, 9, 5, 5, 2, 8, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 15, 12, 22, 19, 17, 18, 18, 19, 21, 7, 16, 16, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 7, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 9, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 7, 16, 11, 11, 7, 7, 7, 7, 17, 7, 8, 12, 15, 9, 19, 7, 19, 8, 21, 11, 12, 19, 14, 22, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 16, 16, 19, 24, 12, 7, 14, 7, 12, 7, 8, 10, 10, 13, 7, 12, 12, 7, 7, 10, 18, 15, 12, 16, 7, 14, 12, 17, 10, 16, 17, 12, 17, 25, 7, 7, 7, 13, 6, 9, 6, 9, 18, 6, 6, 11, 20, 10, 6, 6, 6, 6, 6, 6, 17, 6, 6, 6, 15, 6, 6, 6, 6, 6, 8, 14, 11, 12, 11, 15, 13, 19, 17, 21, 7, 18, 8, 13, 13, 8, 12, 8, 6, 6, 13, 6, 15, 15, 16, 6, 6, 16, 6, 6, 6, 14, 6, 18, 6, 6, 6, 17, 18, 9, 13, 15, 8, 19, 8, 15, 15, 18, 14, 16, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 11, 10, 11, 6, 21, 23, 12, 17, 12, 11, 14, 13, 22, 15, 15, 11, 12, 14, 12, 7, 12, 8, 12, 14, 12, 18, 10, 8, 16, 19, 17, 12, 14, 15, 8, 19, 17, 12, 13, 13, 15, 18, 13, 23, 24, 23, 21, 17, 24, 8, 21, 8, 14, 14, 16, 20, 14, 8, 8, 15, 20, 8, 19, 21, 9, 8, 13, 12, 13, 15, 11, 8, 11, 9, 9, 8, 11, 8, 21, 14, 21, 15, 15, 13, 7, 19, 7, 7, 7, 7, 7, 7, 16, 12, 17, 18, 7, 7, 11, 11, 7, 9, 9, 2, 2, 3, 3, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 10, 10, 7, 9, 7, 7, 7, 6, 8, 6, 6, 6, 6, 6, 6, 6, 7, 6, 8, 6, 6, 9, 7, 7, 7, 4, 4, 4, 4, 4, 4, 4, 4, 8, 9, 8, 7, 8, 7, 8, 10, 7, 5, 5, 5, 5, 5, 5, 3, 9, 7, 7, 8, 6, 6, 6, 6, 6, 6, 6, 6, 9, 6, 6, 9, 11, 13, 7, 8, 9, 9, 5, 5, 5, 7, 8, 6, 6, 6, 6, 6, 6, 6, 7, 8, 9, 7, 10, 9, 10, 7, 8, 5, 5, 5, 5, 5, 5, 7, 7, 9, 8, 7, 7, 6, 6, 6, 6, 6, 6, 10, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 9, 10, 4, 4, 4, 4, 8, 7, 7, 10, 10, 9, 8, 8, 15, 9, 8, 8, 8, 8, 8, 9, 10, 9, 10, 7, 8, 13, 5, 5, 5, 5, 5, 3, 3, 7, 7, 8, 6, 6, 6, 4, 4, 11, 9, 7, 8, 9, 10, 7, 5, 5, 5, 5, 5, 3, 3, 7, 6, 6, 13, 7, 9, 8, 7, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 3, 3, 7, 8, 7, 8, 13, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 8, 8, 6, 6, 6, 6, 7, 6, 7, 6, 6, 9, 7, 4, 4, 4, 4, 4, 4, 4, 7, 8, 7, 8, 9, 8, 8, 8, 7, 10, 7, 8, 5, 5, 5, 5, 5, 5, 5, 5, 3, 7, 7, 7, 7, 9, 7, 10, 9, 6, 6, 6, 6, 6, 8, 8, 6, 6, 6, 7, 6, 6, 6, 9, 9, 4, 4, 13, 7, 10, 9, 9, 12, 7, 8, 8, 10, 8, 8, 8, 8, 8, 8, 5, 5, 5, 5, 3, 7, 7, 11, 7, 9, 8, 8, 6, 6, 10, 6, 8, 8, 8, 6, 7, 6, 6, 12, 4, 4, 4, 4, 4, 4, 4, 4, 4, 9, 8, 8, 16, 8, 9, 8, 7, 5, 5, 5, 5, 5, 3, 3, 7, 7, 7, 10, 15, 8, 9, 8, 9, 9, 6, 6, 6, 6, 6, 6, 7, 4, 8, 7, 8, 8, 7, 8, 11, 8, 5, 5, 5, 5, 5, 3, 7, 7, 6, 11, 16, 7, 6, 4, 4, 4, 4, 9, 9, 8, 8, 8, 13, 12, 8, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 11, 7, 8, 8, 9, 13, 7, 7, 7, 9, 8, 8, 9, 12, 7, 12, 7, 12, 8, 7, 10, 12, 9, 9, 6, 6, 8, 8, 6, 6, 6, 6, 6, 6, 6, 9, 8, 9, 11, 8, 6, 6, 6, 6, 6, 12, 7, 6, 6, 6, 9, 7, 7, 6, 6, 6, 6, 6, 11, 9, 6, 6, 6, 6, 6, 7, 9, 4, 4, 4, 4, 4, 4, 4, 4, 9, 9, 9, 9, 7, 7, 7, 7, 7, 11, 7, 7, 8, 8, 8, 8, 8, 8, 9, 8, 9, 9, 7, 7, 11, 11, 7, 12, 8, 8, 8, 8, 8, 7, 8, 8, 8, 8, 8, 13, 12, 8, 8, 8, 8, 7, 7, 7, 9, 5, 5, 5, 5, 5, 5, 5, 3, 3, 7, 7, 11, 7, 8, 8, 8, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 10, 11, 6, 7, 9, 4, 4, 4, 4, 4, 4, 9, 9, 8, 9, 8, 8, 8, 7, 7, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 11, 7, 7, 7, 9, 6, 6, 11, 8, 10, 6, 6, 6, 12, 8, 8, 7, 6, 6, 8, 7, 4, 4, 4, 4, 4, 4, 4, 4, 9, 10, 9, 9, 8, 10, 9, 11, 8, 5, 5, 5, 7, 6, 6, 8, 7, 4, 4, 4, 4, 8, 7, 7, 8, 7, 8, 8, 5, 5, 5, 5, 7, 7, 8, 8, 8, 6, 6, 6, 6, 6, 10, 8, 9, 13, 6, 7, 6, 6, 8, 7, 8, 4, 4, 4, 4, 11, 8, 8, 8, 10, 5, 5, 8, 7, 8, 13, 8, 7, 6, 8, 6, 9, 7, 8, 7, 5, 5, 5, 5, 5, 5, 3, 3, 7, 8, 9, 6, 4, 8, 10, 10, 8, 12, 9, 13, 2, 7, 5, 5, 5, 5, 5, 7, 7, 10, 6, 6, 6, 6, 6, 6, 6, 8, 4, 4, 9, 8, 8, 8, 14, 8, 8, 8, 9, 8, 5, 5, 5, 5, 5, 3, 3, 9, 6, 6, 6, 6, 10, 12, 6, 6, 6, 6, 6, 6, 6, 4, 4, 4, 4, 11, 8, 7, 8, 8, 8, 5, 5, 3, 3, 3, 3, 7, 7, 6, 8, 6, 8, 11, 7, 6, 6, 6, 7, 4, 8, 11, 9, 10, 5, 5, 5, 3, 3, 3, 7, 7, 8, 9, 8, 15, 9, 6, 6, 6, 6, 6, 6, 11, 11, 4, 4, 4, 4, 4, 7, 9, 9, 10, 8, 7, 5, 5, 5, 5, 5, 5, 3, 3, 8, 6, 6, 6, 6, 6, 6, 6, 6, 6, 9, 7, 4, 4, 4, 4, 4, 9, 9, 8, 8, 10, 13, 5, 5, 5, 3, 17, 7, 7, 7, 7, 7, 8, 6, 8, 13, 6, 6, 6, 6, 6, 6, 6, 6, 4, 4, 4, 9, 10, 8, 8, 8, 5, 5, 5, 5, 3, 7, 7, 7, 8, 8, 6, 6, 6, 8, 8, 8, 9, 10, 8, 4, 8, 10, 9, 8, 8, 8, 9, 13, 10, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 7, 8, 9, 9, 7, 7, 7, 10, 9, 9, 8, 9, 8, 8, 8, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 8, 12, 6, 6, 6, 6, 6, 6, 6, 6, 6, 12, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 11, 8, 8, 9, 9, 10, 8, 9, 7, 7, 5, 5, 5, 5, 5, 5, 3, 7, 8, 7, 6, 6, 8, 6, 6, 10, 4, 7, 8, 9, 12, 8, 7, 7, 5, 5, 5, 5, 5, 5, 3, 3, 7, 14, 7, 9, 8, 8, 6, 6, 8, 12, 12, 6, 6, 7, 7, 10, 4, 4, 4, 4, 4, 9, 9, 14, 9, 13, 8, 7, 5, 5, 5, 6, 6, 6, 7, 4, 8, 7, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 7, 7, 7, 8, 6, 6, 6, 6, 6, 6, 12, 6, 6, 6, 6, 4, 4, 9, 9, 8, 8, 11, 7, 7, 7, 5, 5, 5, 3, 9, 8, 6, 6, 7, 4, 4, 4, 4, 4, 4, 8, 8, 11, 5, 5, 5, 7, 7, 7, 9, 6, 6, 6, 6, 6, 6, 9, 8, 4, 4, 4, 4, 7, 12, 9, 8, 8, 8, 7, 10, 10, 5, 5, 5, 5, 5, 5, 5, 3, 11, 14, 8, 7, 8, 8, 6, 6, 6, 6, 6, 8, 7, 6, 6, 6, 7, 6, 8, 9, 4, 4, 4, 7, 8, 9, 7, 9, 7, 7, 9, 8, 5, 5, 5, 5, 5, 5, 5, 5, 5, 11, 3, 9, 7, 7, 12, 14, 8, 6, 6, 12, 11, 8, 6, 6, 6, 6, 6, 6, 6, 6, 6, 15, 7, 4, 4, 4, 16, 9, 9, 9, 8, 9, 9, 9, 9, 9, 8, 8, 8, 13, 11, 8, 5, 5, 5, 5, 3, 7, 6, 6, 8, 8, 8, 6, 6, 7, 10, 7, 4, 4, 4, 4, 9, 7, 8, 7, 7, 7, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 7, 7, 7, 9, 6, 6, 6, 6, 6, 8, 8, 7, 7, 9, 6, 6, 6, 7, 6, 6, 6, 6, 6, 15, 4, 4, 4, 4, 4, 8, 8, 7, 8, 12, 9, 8, 8, 8, 8, 8, 9, 8, 8, 10, 8, 8, 8, 8, 16, 9, 10, 2, 5, 5, 5, 5, 5, 5, 5, 9, 7, 6, 8, 9, 4, 4, 4, 4, 4, 7, 8, 8, 8, 9, 8, 11, 10, 5, 5, 5, 5, 3, 7, 8, 6, 6, 6, 6, 6, 8, 6, 6, 6, 6, 4, 12, 10, 12, 7, 7, 7, 7, 7, 7, 7, 5, 5, 5, 5, 3, 3, 7, 7, 10, 8, 9, 7, 6, 10, 7, 6, 6, 4, 4, 8, 9, 7, 9, 9, 9, 9, 8, 8, 8, 8, 10, 5, 5, 5, 5, 5, 5, 8, 7, 6, 6, 6, 10, 6, 7, 10, 7, 4, 4, 4, 4, 4, 4, 4, 12, 9, 10, 7, 7, 10, 8, 10, 5, 12, 9, 6, 6, 6, 6, 6, 7, 6, 4, 4, 4, 10, 9, 9, 8, 7, 7, 5, 5, 5, 5, 5, 5, 3, 3, 13, 7, 7, 9, 7, 7, 7, 8, 9, 9, 7, 8, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 13, 9, 15, 15, 4, 4, 4, 4, 4, 10, 10, 9, 8, 9, 8, 8, 9, 7, 8, 7, 8, 5, 5, 7, 6, 6, 6, 4, 4, 4, 7, 8, 11, 8, 5, 5, 5, 5, 5, 5, 5, 7, 6, 6, 6, 6, 6, 6, 9, 11, 10, 7, 4, 4, 4, 9, 8, 8, 5, 5, 5, 5, 5, 9, 9, 6, 6, 6, 6, 6, 6, 6, 9, 9, 4, 4, 4, 4, 8, 8, 8, 9, 9, 8, 8, 8, 13, 2, 4, 2, 7, 5, 5, 5, 5, 5, 5, 9, 9, 6, 6, 6, 6, 10, 8, 8, 8, 6, 6, 6, 4, 4, 9, 8, 10, 8, 9, 8, 8, 8, 9, 8, 8, 5, 3, 3, 3, 11, 6, 6, 6, 7, 6, 6, 6, 4, 4, 9, 8, 5, 5, 5, 5, 5, 3, 11, 8, 6, 6, 6, 6, 6, 9, 7, 4, 4, 14, 10, 9, 8, 12, 8, 8, 8, 11, 15, 8, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 11, 11, 11, 10, 10, 7, 7, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 3, 7, 11, 7, 7, 11, 11, 7, 8, 9, 10, 7, 7, 9, 9, 9, 9, 7, 7, 10, 8, 13, 8, 8, 8, 8, 11, 10, 6, 6, 8, 10, 11, 14, 14, 6, 6, 6, 6, 6, 6, 9, 11, 7, 7, 6, 8, 12, 11, 11, 6, 6, 10, 6, 6, 6, 6, 6, 10, 7, 7, 6, 6, 11, 6, 6, 6, 11, 8, 9, 7, 6, 10, 11, 9, 10, 11, 7, 11, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 6, 6, 8, 9, 10, 9, 6, 6, 6, 10, 6, 6, 6, 6, 11, 10, 11, 10, 9, 8, 7, 7, 7, 7, 11, 14, 8, 10, 9, 9, 8, 8, 7, 11, 8, 8, 8, 11, 11, 10, 10, 9, 10, 8, 11, 10, 8, 11, 9, 12, 8, 10, 8, 11, 8, 9, 9, 11, 11, 10, 11, 13, 8, 7, 8, 8, 9, 7, 8, 8, 8, 8, 7, 8, 2, 2, 2, 2, 2, 2, 2, 4, 4, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 2, 3, 3, 3, 3, 3, 3, 3, 3, 8, 6, 4, 4, 4, 11, 7, 11, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 5, 5, 5, 5, 3, 3, 3, 3, 8, 7, 7, 8, 8, 4, 8, 7, 7, 7, 9, 7, 8, 9, 8, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 6, 3, 3, 3, 3, 3, 3, 3, 3, 4, 2, 2, 3, 3, 3, 3, 3, 3, 4, 5, 5, 3, 3, 8, 8, 6, 9, 4, 4, 10, 7, 3, 3, 3, 2, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 3, 2, 2, 2, 3, 3, 3, 3, 3, 4, 10, 2, 3, 3, 3, 3, 3, 3, 3, 4, 2, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 3, 3, 3, 5, 2, 4, 2, 6, 2, 2, 9, 5, 5, 3, 3, 3, 3, 3, 3, 3, 5, 5, 5, 9, 8, 7, 9, 6, 6, 11, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6, 7, 7, 11, 8, 8, 6, 5, 11, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 2, 2, 3, 3, 3, 3, 3, 3, 6, 4, 4, 4, 4, 3, 3, 3, 3, 5, 7, 2, 3, 3, 3, 3, 3, 8, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 6, 4, 4, 4, 4, 2, 2, 3, 3, 3, 3, 3, 3, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 2, 2, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 6, 3, 3, 8, 10, 3, 4, 4, 1, 1, 1, 1, 1, 1, 1, 8, 9, 10, 7, 7, 1, 14, 18, 13, 18, 13, 10, 10, 16, 13, 18, 16, 13, 16, 18, 13, 22, 16, 16, 16, 14, 21, 16, 9, 14, 16, 9, 9, 14, 10, 10, 14, 12, 14, 19, 12, 11, 18, 13, 17, 15, 15, 15, 15, 16, 14, 13, 19, 18, 15, 19, 18, 12, 18, 12, 11, 20, 14, 15, 10, 17, 17, 16, 19, 20, 21, 15, 13, 16, 15, 15, 15, 1, 1, 3, 8, 7, 7, 8, 8, 8, 1, 6, 1, 1, 6, 3, 3, 4, 7, 3, 3, 5, 5, 4, 4, 4, 4, 4, 2, 7, 7, 8, 12, 3, 4, 5, 1, 3, 4, 4, 10, 4, 3, 3, 3, 8, 7, 7, 2, 2, 2, 2, 2, 2, 2, 2, 2, 12, 9, 20, 7, 5, 5, 5, 9, 13, 5, 5, 5, 5, 5, 3, 3, 3, 16, 5, 5, 5, 13, 7, 8, 8, 11, 8, 7, 9, 7, 11, 12, 9, 9, 8, 8, 11, 10, 14, 7, 12, 10, 11, 13, 7, 9, 11, 17, 17, 14, 13, 7, 8, 7, 10, 10, 7, 16, 13, 7, 8, 17, 12, 9, 8, 6, 7, 10, 6, 6, 12, 6, 8, 10, 8, 8, 8, 6, 8, 6, 14, 6, 6, 6, 13, 6, 10, 6, 6, 7, 14, 8, 6, 6, 10, 11, 10, 9, 9, 7, 7, 6, 6, 6, 9, 9, 7, 9, 10, 9, 13, 12, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6, 6, 8, 8, 6, 8, 9, 10, 9, 7, 10, 10, 8, 7, 8, 7, 10, 12, 9, 8, 15, 8, 7, 8, 8, 7, 7, 15, 13, 7, 10, 9, 14, 18, 16, 7, 24, 7, 8, 10, 11, 16, 8, 14, 7, 9, 9, 9, 13, 19, 14, 15, 14, 11, 7, 13, 9, 10, 7, 13, 9, 10, 11, 12, 8, 9, 2, 3, 5, 8, 7, 4, 4, 15, 10, 5, 3, 3, 3, 3, 3, 5, 4, 4, 4, 2, 2, 2, 2, 2, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 2, 12, 5, 3, 8, 10, 15, 6, 7, 2, 3, 2, 5, 5, 12, 2, 5, 5, 5, 5, 2, 2, 5, 5, 12, 9, 5, 2, 2, 9, 5, 5, 12, 12, 5, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 9, 12, 5, 8, 8, 9, 5, 5, 5, 8, 19, 7, 16, 15, 14, 9, 9, 9, 9, 7, 11, 11, 11, 7, 14, 10, 10, 5, 5, 5, 5, 5, 5, 5, 5, 5, 15, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 9, 9, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 14, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 15, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 5, 5, 5, 5, 5, 5, 12, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 9, 9, 12, 9, 9, 12, 12, 12, 15, 7, 11, 7, 14, 11, 18, 13, 8, 18, 15, 18, 12, 14, 12, 8, 8, 8, 8, 9, 9, 9, 12, 7, 10, 10, 8, 8, 12, 12, 12, 7, 12, 12, 9, 7, 7, 7, 7, 7, 8, 15, 12, 9, 10, 10, 7, 10, 10, 13, 11, 10, 9, 22, 11, 9, 8, 8, 8, 8, 8, 13, 18, 13, 9, 15, 19, 9, 7, 7, 10, 7, 7, 7, 11, 8, 13, 17, 7, 7, 10, 10, 10, 7, 20, 16, 7, 7, 7, 7, 7, 7, 11, 21, 12, 12, 13, 11, 14, 16, 8, 8, 13, 11, 7, 7, 13, 7, 7, 14, 15, 15, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 13, 10, 18, 6, 6, 6, 6, 6, 6, 6, 6, 6, 11, 8, 8, 12, 12, 11, 11, 8, 12, 9, 9, 9, 13, 13, 9, 9, 9, 9, 9, 9, 6, 10, 12, 6, 6, 6, 6, 17, 11, 7, 7, 7, 7, 14, 14, 12, 6, 7, 7, 6, 6, 15, 10, 13, 10, 6, 8, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 13, 9, 9, 15, 13, 6, 12, 12, 6, 19, 11, 10, 7, 7, 16, 8, 19, 17, 9, 9, 9, 9, 9, 6, 6, 6, 10, 8, 16, 8, 6, 6, 9, 6, 6, 6, 6, 6, 6, 6, 6, 8, 8, 8, 6, 7, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 14, 6, 6, 6, 6, 20, 6, 9, 6, 14, 9, 9, 9, 6, 9, 8, 8, 12, 9, 8, 8, 8, 8, 7, 8, 12, 7, 8, 8, 8, 6, 8, 6, 6, 6, 6, 6, 6, 6, 9, 8, 8, 6, 6, 13, 9, 12, 13, 12, 14, 13, 12, 11, 11, 6, 8, 8, 8, 6, 13, 12, 11, 11, 12, 6, 11, 12, 11, 13, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 15, 6, 6, 6, 6, 6, 6, 6, 13, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 8, 8, 8, 8, 6, 18, 6, 12, 13, 13, 13, 9, 10, 15, 9, 12, 6, 6, 6, 6, 6, 6, 6, 6, 9, 15, 10, 9, 10, 13, 9, 19, 8, 18, 17, 10, 10, 8, 8, 6, 6, 6, 6, 6, 6, 10, 14, 8, 16, 16, 9, 8, 15, 8, 8, 10, 12, 14, 7, 7, 8, 8, 7, 7, 7, 7, 8, 13, 13, 11, 9, 9, 9, 12, 10, 17, 8, 11, 9, 7, 7, 14, 8, 14, 14, 7, 7, 7, 7, 7, 7, 14, 7, 7, 7, 7, 7, 10, 10, 8, 14, 7, 7, 7, 7, 8, 8, 8, 8, 8, 17, 9, 7, 15, 7, 8, 12, 7, 9, 14, 7, 7, 7, 9, 13, 8, 14, 7, 16, 18, 13, 15, 14, 12, 13, 10, 15, 9, 7, 7, 7, 10, 13, 15, 15, 9, 9, 9, 9, 19, 11, 7, 11, 11, 13, 8, 8, 8, 8, 7, 12, 19, 17, 9, 9, 13, 7, 7, 7, 9, 7, 7, 7, 12, 13, 15, 10, 8, 8, 14, 15, 12, 13, 13, 8, 12, 14, 7, 11, 7, 14, 15, 13, 12, 8, 8, 8, 8, 11, 13, 15, 15, 8, 13, 12, 8, 8, 8, 13, 10, 16, 14, 11, 8, 8, 12, 12, 9, 15, 15, 12, 12, 13, 8, 8, 9, 12, 13, 9, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 11, 12, 11, 7, 14, 7, 13, 13, 13, 12, 18, 16, 7, 12, 11, 10, 10, 15, 9, 9, 9, 21, 7, 7, 7, 11, 16, 8, 8, 11, 11, 7, 7, 7, 7, 7, 19, 7, 7, 7, 7, 7, 7, 7, 7, 7, 12, 8, 9, 12, 14, 11, 9, 9, 9, 22, 12, 3, 3, 4, 8, 8, 15, 4, 2, 2, 5, 5, 3, 3, 3, 3, 3, 3, 6, 6, 4, 4, 4, 12, 7, 10, 2, 3, 3, 3, 3, 3, 3, 3, 6, 7, 3, 7, 5, 14, 4, 4, 7, 8, 10, 4, 1, 3, 3, 6, 2, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 4, 2, 2, 5, 3, 4, 2, 2, 2, 2, 2, 2, 11, 5, 5, 5, 11, 5, 5, 3, 5, 5, 5, 5, 11, 14, 13, 9, 11, 9, 12, 8, 11, 11, 8, 11, 16, 9, 9, 7, 10, 9, 12, 8, 15, 6, 7, 6, 6, 13, 10, 8, 11, 8, 6, 6, 6, 12, 16, 6, 11, 7, 8, 9, 18, 6, 6, 9, 4, 4, 6, 13, 6, 6, 6, 6, 8, 8, 9, 16, 7, 7, 14, 7, 8, 8, 8, 7, 7, 7, 7, 7, 7, 15, 13, 7, 10, 7, 7, 10, 12, 16, 15, 7, 9, 9, 14, 11, 11, 10, 9, 10, 8, 12, 7, 8, 7, 7, 10, 12, 7, 12, 8, 7, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 3, 3, 5, 5, 5, 10, 4, 8, 7, 10, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 3, 3, 3, 3, 3, 3, 3, 7, 4, 5, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 5, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 9, 8, 2, 2, 2, 8, 12, 7, 7, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 8, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 5, 5, 7, 11, 9, 8, 8, 8, 7, 8, 9, 7, 7, 9, 7, 7, 7, 10, 7, 7, 10, 9, 10, 6, 6, 6, 6, 6, 6, 15, 7, 8, 9, 9, 8, 6, 6, 10, 9, 6, 8, 13, 9, 7, 6, 6, 6, 6, 6, 6, 12, 6, 6, 7, 6, 7, 6, 6, 6, 10, 10, 7, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 14, 6, 6, 7, 7, 9, 6, 6, 6, 6, 9, 9, 8, 9, 10, 9, 8, 9, 12, 7, 7, 7, 8, 7, 10, 12, 11, 9, 10, 7, 7, 7, 9, 10, 10, 8, 12, 9, 7, 7, 9, 8, 8, 8, 10, 7, 7, 8, 9, 9, 7, 7, 7, 8, 2, 4, 6, 3, 4, 2, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 5, 8, 6, 4, 7, 3, 3, 3, 3, 3, 3, 3, 12, 3, 3, 3, 3, 3, 3, 4, 4, 2, 3, 5, 3, 4, 7, 3, 3, 3, 3, 3, 3, 4, 3, 3, 3, 3, 3, 3, 3, 4, 3, 3, 6, 4, 3, 4, 2, 2, 2, 5, 3, 3, 3, 3, 3, 5, 4, 4, 4, 4, 7, 6, 8, 9, 2, 2, 2, 2, 3, 3, 3, 5, 7, 2, 3, 3, 8, 7, 7, 2, 2, 8, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 5, 8, 8, 7, 7, 6, 10, 6, 9, 7, 11, 4, 6, 8, 8, 7, 8, 4, 5, 5, 5, 5, 3, 3, 11, 8, 9, 6, 6, 8, 7, 4, 4, 7, 8, 7, 2, 2, 3, 3, 3, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 7, 2, 2, 5, 3, 3, 2, 3, 3, 3, 3, 3, 3, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 12, 5, 5, 3, 3, 3, 5, 10, 12, 6, 15, 4, 6, 6, 7, 14, 9, 3, 3, 3, 3, 3, 8, 2, 2, 3, 5, 5, 3, 3, 3, 3, 3, 3, 8, 8, 8, 7, 5, 8, 4, 6, 11, 2, 2, 6, 7, 3, 3, 2, 9, 8, 5, 5, 3, 3, 3, 5, 5, 7, 7, 6, 6, 10, 6, 8, 6, 8, 9, 7, 4, 4, 4, 4, 7, 6, 6, 7, 7, 10, 9, 8, 11, 8, 3, 3, 3, 3, 3, 4, 4, 2, 3, 3, 3, 3, 3, 7, 6, 2, 5, 6, 7, 6, 4, 8, 9, 11, 2, 2, 3, 3, 3, 3, 3, 3, 3, 2, 2, 5, 3, 3, 3, 3, 3, 9, 9, 6, 4, 8, 7, 7, 5, 9, 8, 6, 2, 8, 7, 8, 5, 5, 5, 5, 5, 3, 3, 3, 16, 8, 7, 7, 7, 8, 7, 7, 7, 7, 9, 6, 9, 6, 10, 7, 7, 7, 6, 10, 8, 9, 11, 11, 8, 4, 4, 10, 8, 8, 6, 9, 6, 11, 8, 8, 8, 15, 7, 8, 9, 5, 3, 3, 3, 3, 3, 5, 11, 2, 2, 3, 8, 9, 10, 3, 2, 2, 2, 2, 2, 2, 3, 6, 4, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 2, 3, 3, 3, 3, 3, 3, 3, 11, 5, 3, 3, 3, 3, 3, 3, 3, 3, 6, 7, 4, 4, 2, 3, 3, 3, 3, 3, 3, 3, 3, 12, 7, 4, 12, 4, 6, 5, 4, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 2, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 11, 10, 6, 4, 6, 10, 8, 3, 3, 3, 3, 3, 3, 3, 3, 5, 4, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2, 5, 3, 4, 4, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 10, 5, 5, 5, 5, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 7, 8, 8, 7, 13, 12, 10, 10, 8, 8, 7, 7, 9, 12, 11, 6, 6, 8, 8, 9, 7, 7, 7, 10, 15, 10, 4, 4, 4, 4, 4, 11, 8, 8, 9, 7, 9, 14, 14, 12, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 12, 5, 5, 5, 11, 10, 7, 9, 3, 8, 7, 3, 15, 13, 11, 4, 4, 2, 2, 2, 19, 7, 5, 5, 3, 3, 3, 3, 3, 3, 3, 5, 22, 18, 6, 14, 17, 4, 4, 19, 16, 18, 2, 3, 3, 7, 2, 3, 2, 3, 3, 6, 4, 2, 3, 3, 2, 5, 3, 3, 3, 3, 3, 3, 3, 9, 9, 2, 3, 2, 2, 2, 3, 3, 3, 5, 7, 14, 7, 7, 12, 9, 13, 6, 11, 6, 10, 9, 7, 7, 8, 12, 12, 8, 8, 8, 10, 7, 7, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 5, 8, 10, 7, 8, 11, 8, 12, 9, 4, 14, 7, 7, 9, 13, 2, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 1, 2, 2, 3, 3, 3, 3, 3, 3, 5, 2, 2, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 8, 4, 4, 4, 3, 2, 3, 3, 3, 3, 5, 2, 2, 2, 2, 5, 5, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 12, 9, 8, 8, 9, 8, 6, 17, 6, 6, 6, 8, 8, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 4, 4, 8, 8, 9, 9, 9, 7, 7, 7, 7, 7, 7, 7, 9, 9, 9, 7, 8, 8, 8, 10, 7, 13, 10, 8, 9, 3, 3, 5, 13, 3, 3, 3, 3, 3, 7, 7, 6, 6, 10, 13, 11, 11, 8, 8, 9, 8, 9, 9, 10, 10, 10, 11, 10, 10, 13, 13, 16, 15, 11, 12, 9, 9, 10, 9, 11, 10, 9, 9, 14, 7, 8, 3, 10, 7, 7, 3, 2, 2, 2, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 6, 7, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 4, 11, 6, 7, 4, 6, 2, 2, 3, 3, 3, 1, 3, 3, 3, 3, 3, 3, 6, 4, 4, 2, 2, 2, 3, 3, 3, 3, 4, 4, 6, 6, 6, 6, 5, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 9, 11, 6, 10, 9, 12, 7, 7, 11, 14, 9, 7, 12, 3, 3, 7, 12, 11, 12, 7, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 9, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 11, 5, 5, 5, 5, 5, 5, 5, 5, 11, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 5, 5, 5, 5, 5, 5, 3, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 10, 3, 3, 3, 11, 3, 5, 9, 11, 8, 12, 14, 9, 7, 8, 7, 7, 11, 11, 7, 7, 10, 9, 8, 10, 9, 7, 7, 7, 7, 7, 7, 8, 8, 7, 11, 8, 8, 8, 7, 7, 10, 8, 7, 13, 12, 7, 17, 10, 8, 8, 11, 7, 11, 11, 14, 7, 11, 7, 8, 6, 9, 20, 8, 7, 9, 16, 7, 10, 6, 11, 10, 8, 9, 7, 16, 11, 11, 9, 8, 9, 8, 8, 8, 11, 8, 15, 8, 8, 9, 7, 8, 8, 11, 10, 7, 5, 7, 10, 10, 15, 7, 7, 7, 8, 7, 8, 8, 10, 11, 10, 10, 10, 11, 11, 7, 8, 6, 8, 8, 8, 10, 6, 8, 6, 6, 7, 8, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 16, 6, 15, 6, 7, 11, 11, 7, 9, 10, 11, 13, 10, 6, 16, 8, 10, 12, 11, 6, 6, 6, 6, 6, 6, 6, 10, 6, 10, 7, 7, 7, 11, 7, 11, 6, 6, 6, 6, 6, 6, 17, 7, 7, 6, 6, 12, 22, 6, 6, 6, 6, 6, 8, 6, 6, 6, 6, 7, 6, 6, 5, 6, 6, 8, 11, 6, 9, 14, 11, 9, 11, 7, 7, 8, 6, 6, 6, 8, 10, 9, 6, 6, 6, 6, 9, 7, 6, 6, 6, 6, 6, 15, 6, 4, 4, 4, 6, 4, 17, 8, 11, 6, 6, 9, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 6, 6, 6, 6, 10, 6, 10, 6, 6, 6, 6, 12, 8, 6, 6, 6, 6, 6, 6, 6, 6, 6, 9, 6, 6, 6, 6, 18, 6, 6, 6, 8, 9, 10, 7, 8, 9, 10, 11, 7, 13, 6, 8, 8, 6, 6, 14, 7, 7, 7, 7, 10, 7, 14, 9, 6, 6, 9, 15, 9, 7, 14, 6, 11, 14, 13, 7, 12, 8, 7, 7, 7, 7, 7, 12, 7, 10, 9, 16, 6, 8, 6, 5, 17, 6, 8, 10, 4, 6, 4, 10, 15, 17, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 4, 4, 11, 7, 4, 4, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 19, 17, 6, 10, 11, 6, 6, 6, 6, 18, 6, 6, 11, 4, 4, 4, 5, 6, 6, 6, 9, 5, 6, 4, 6, 6, 4, 6, 6, 6, 6, 10, 6, 6, 4, 6, 6, 10, 6, 10, 6, 6, 6, 6, 11, 6, 6, 10, 6, 6, 8, 6, 6, 6, 8, 6, 11, 4, 11, 9, 10, 9, 11, 4, 8, 4, 11, 12, 7, 9, 8, 6, 7, 7, 8, 12, 12, 11, 13, 10, 11, 7, 7, 7, 9, 7, 11, 10, 7, 7, 7, 16, 11, 10, 11, 17, 9, 9, 8, 8, 7, 7, 7, 9, 7, 7, 7, 14, 7, 13, 9, 11, 10, 14, 10, 10, 12, 11, 10, 7, 10, 5, 14, 8, 8, 8, 9, 7, 8, 7, 7, 9, 8, 7, 8, 7, 7, 7, 7, 7, 7, 7, 11, 8, 10, 8, 7, 8, 14, 11, 8, 9, 9, 9, 8, 24, 10, 10, 12, 7, 7, 15, 11, 8, 8, 12, 11, 8, 9, 9, 7, 8, 9, 10, 11, 10, 11, 7, 12, 7, 7, 11, 9, 8, 14, 13, 12, 8, 11, 10, 8, 8, 7, 7, 14, 9, 10, 8, 9, 11, 7, 14, 8, 8, 13, 8, 8, 12, 7, 10, 14, 14, 11, 9, 10, 9, 9, 7, 7, 11, 11, 13, 9, 13, 5, 5, 5, 7, 9, 5, 11, 12, 14, 8, 7, 7, 11, 10, 9, 7, 8, 8, 7, 10, 11, 11, 5, 5, 7, 5, 5, 5, 7, 7, 15, 7, 7, 8, 7, 15, 12, 12, 10, 7, 8, 7, 11, 7, 7, 7, 23, 11, 8, 8, 11, 10, 7, 8, 11, 7, 19, 7, 7, 6, 9, 9, 9, 11, 3, 4, 7, 8, 6, 6, 4, 10, 8, 2, 2]);
+const edgeChild = /*#__PURE__*/ new Uint16Array([0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 12, 1, 1, 1, 1, 1, 17, 1, 1, 1, 12, 1, 12, 1, 12, 13, 1, 1, 1, 1, 12, 1, 12, 1, 1, 1, 1, 1, 14, 21, 1, 1, 1, 1, 1, 1, 1, 19, 12, 1, 1, 1, 1, 1, 1, 1, 1, 20, 1, 1, 1, 16, 18, 1, 1, 15, 1, 1, 1, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 22, 1, 1, 1, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 1, 24, 25, 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 12, 12, 12, 12, 1, 32, 0, 0, 0, 1, 1, 1, 1, 35, 34, 1, 1, 1, 1, 1, 33, 1, 1, 1, 1, 37, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 38, 0, 0, 0, 0, 39, 40, 0, 0, 0, 0, 12, 1, 1, 12, 1, 1, 1, 1, 43, 44, 44, 44, 43, 44, 43, 43, 45, 44, 43, 44, 43, 43, 43, 43, 43, 43, 45, 43, 43, 43, 43, 43, 43, 44, 46, 46, 44, 43, 43, 43, 43, 43, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 49, 51, 49, 49, 49, 51, 49, 50, 49, 52, 49, 50, 50, 49, 49, 49, 50, 52, 50, 52, 49, 50, 50, 12, 54, 54, 53, 55, 50, 52, 49, 49, 47, 48, 56, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 59, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 66, 67, 12, 1, 1, 65, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 78, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 76, 79, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 77, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 12, 1, 1, 1, 1, 89, 1, 91, 1, 1, 1, 1, 1, 1, 1, 1, 94, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 97, 97, 1, 1, 12, 1, 100, 1, 1, 1, 1, 1, 1, 1, 98, 1, 99, 1, 101, 1, 1, 1, 1, 1, 102, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 110, 111, 1, 1, 1, 1, 1, 1, 113, 113, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 121, 122, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 122, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 122, 1, 1, 1, 1, 1, 1, 1, 1, 1, 126, 123, 125, 120, 1, 124, 1, 1, 114, 1, 1, 1, 1, 117, 1, 127, 1, 1, 1, 1, 1, 1, 119, 1, 108, 1, 109, 1, 12, 128, 106, 1, 112, 1, 1, 1, 1, 1, 107, 115, 1, 12, 12, 12, 118, 116, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 12, 12, 1, 1, 1, 1, 1, 12, 134, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 136, 1, 1, 1, 1, 1, 1, 1, 1, 137, 138, 12, 12, 135, 133, 44, 44, 140, 49, 49, 139, 142, 141, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 145, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 143, 0, 0, 0, 0, 1, 0, 144, 132, 1, 0, 1, 1, 12, 12, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 148, 147, 20, 1, 1, 12, 12, 1, 20, 12, 12, 1, 1, 1, 1, 1, 134, 1, 1, 152, 1, 1, 1, 1, 153, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 1, 1, 136, 1, 1, 152, 1, 1, 1, 1, 153, 1, 1, 134, 1, 1, 1, 152, 1, 1, 1, 1, 153, 1, 1, 134, 1, 1, 1, 1, 1, 1, 1, 1, 134, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 160, 1, 1, 1, 152, 1, 1, 1, 1, 1, 153, 1, 1, 160, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 134, 1, 1, 1, 1, 152, 1, 1, 1, 1, 153, 1, 1, 1, 134, 1, 1, 152, 1, 1, 1, 1, 164, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 1, 167, 1, 1, 160, 1, 1, 1, 1, 1, 152, 1, 1, 1, 1, 1, 153, 1, 1, 160, 1, 1, 1, 1, 1, 152, 1, 1, 1, 1, 1, 153, 1, 154, 158, 158, 12, 1, 12, 166, 1, 1, 1, 1, 1, 158, 158, 158, 154, 1, 1, 1, 157, 158, 161, 165, 1, 1, 1, 1, 157, 157, 1, 1, 156, 154, 154, 157, 170, 156, 170, 1, 1, 168, 1, 156, 155, 157, 1, 1, 1, 1, 157, 1, 159, 1, 1, 1, 12, 1, 162, 1, 162, 1, 1, 1, 162, 161, 163, 169, 156, 154, 1, 1, 1, 1, 1, 1, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 172, 173, 172, 172, 173, 172, 172, 172, 172, 174, 174, 172, 172, 173, 172, 173, 172, 172, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 176, 12, 1, 12, 12, 12, 12, 1, 12, 12, 12, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 1, 1, 1, 1, 1, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 198, 1, 1, 1, 1, 12, 204, 205, 206, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 151, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 201, 1, 1, 1, 188, 1, 1, 1, 1, 212, 1, 1, 209, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 1, 1, 1, 1, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 179, 195, 1, 1, 1, 191, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 186, 1, 1, 1, 1, 1, 1, 1, 196, 1, 1, 1, 1, 200, 1, 1, 1, 1, 171, 1, 1, 194, 1, 1, 1, 197, 1, 1, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 184, 1, 12, 1, 1, 12, 1, 1, 1, 1, 187, 1, 1, 1, 193, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 1, 1, 213, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 199, 1, 1, 1, 1, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 178, 12, 1, 1, 1, 181, 12, 1, 1, 1, 1, 1, 1, 1, 203, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 180, 1, 1, 1, 1, 1, 1, 1, 208, 1, 1, 1, 185, 1, 1, 1, 192, 1, 12, 1, 189, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 196, 1, 1, 1, 1, 183, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 175, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 190, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 210, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 1, 211, 1, 1, 12, 1, 1, 1, 1, 182, 1, 1, 1, 190, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 1, 1, 1, 202, 1, 1, 1, 1, 177, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 207, 1, 1, 12, 1, 1, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 223, 0, 0, 0, 0, 0, 224, 0, 0, 0, 0, 0, 0, 1, 12, 1, 1, 1, 228, 1, 1, 1, 0, 229, 226, 227, 1, 1, 1, 1, 1, 1, 234, 1, 236, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 232, 1, 1, 1, 1, 1, 238, 1, 1, 12, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 237, 1, 1, 1, 12, 1, 1, 1, 1, 233, 1, 1, 1, 231, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 235, 1, 1, 1, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 1, 12, 1, 1, 1, 12, 1, 1, 244, 13, 1, 1, 1, 12, 12, 241, 242, 1, 1, 1, 1, 243, 1, 1, 12, 1, 1, 1, 1, 1, 1, 1, 245, 1, 1, 12, 16, 1, 1, 1, 1, 1, 1, 246, 1, 1, 1, 12, 12, 1, 1, 1, 1, 1, 1, 246, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 259, 259, 1, 0, 0, 0, 0, 0, 1, 12, 0, 0, 0, 0, 0, 0, 0, 0, 172, 264, 265, 1, 12, 1, 1, 1, 1, 12, 267, 1, 1, 266, 1, 1, 269, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 273, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 12, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 12, 0, 284, 0, 0, 285, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 59, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 309, 0, 0, 0, 0, 0, 0, 0, 0, 0, 311, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 1, 1, 1, 1, 1, 327, 327, 328, 327, 0, 190, 1, 1, 13, 323, 1, 321, 0, 0, 0, 0, 0, 0, 0, 324, 1, 1, 329, 1, 209, 1, 1, 1, 1, 322, 1, 319, 1, 325, 1, 317, 1, 326, 1, 318, 1, 1, 1, 1, 1, 1, 1, 12, 1, 1, 1, 1, 12, 320, 320, 1, 1, 1, 188, 1, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 1, 1, 1, 1, 12, 1, 1, 1, 1, 316, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 332, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 269, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 372, 372, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 364, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 0, 1, 340, 351, 1, 1, 339, 374, 1, 345, 1, 1, 337, 369, 1, 1, 355, 336, 341, 1, 1, 1, 348, 379, 357, 1, 1, 1, 1, 1, 1, 358, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 367, 371, 0, 0, 79, 1, 1, 0, 365, 342, 378, 343, 346, 353, 1, 368, 0, 1, 0, 79, 362, 360, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 381, 1, 1, 352, 1, 79, 1, 0, 1, 1, 1, 384, 1, 0, 0, 79, 359, 0, 1, 338, 1, 1, 1, 0, 1, 1, 361, 1, 0, 1, 1, 1, 0, 1, 386, 349, 1, 1, 0, 1, 0, 0, 377, 0, 1, 1, 1, 79, 370, 1, 1, 366, 363, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 344, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 376, 0, 79, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 380, 1, 1, 1, 0, 0, 383, 0, 0, 0, 1, 356, 1, 0, 79, 382, 1, 0, 0, 0, 0, 385, 1, 1, 0, 0, 1, 0, 1, 0, 354, 0, 350, 0, 1, 1, 1, 0, 1, 1, 0, 373, 347, 375, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 12, 1, 1, 1, 12, 401, 401, 1, 1, 12, 12, 1, 401, 1, 1, 12, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 413, 1, 1, 0, 1, 1, 1, 1, 209, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 431, 431, 1, 1, 0, 0, 317, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 444, 1, 443, 1, 1, 1, 1, 1, 1, 1, 1, 1, 448, 1, 12, 12, 1, 1, 1, 1, 1, 12, 1, 1, 1, 1, 456, 1, 1, 1, 458, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 455, 1, 450, 1, 1, 1, 1, 437, 1, 1, 1, 1, 1, 1, 1, 1, 451, 12, 1, 1, 1, 1, 457, 1, 1, 1, 452, 446, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 317, 1, 434, 1, 1, 12, 454, 1, 1, 317, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 439, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 457, 1, 1, 1, 1, 317, 1, 453, 1, 1, 1, 447, 441, 1, 1, 1, 1, 1, 442, 1, 459, 445, 1, 1, 1, 1, 1, 440, 1, 1, 1, 1, 1, 1, 1, 1, 1, 435, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 449, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 438, 1, 1, 1, 1, 1, 436, 1, 223, 460, 1, 1, 1, 1, 1, 12, 1, 1, 1, 1, 12, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 466, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 12, 1, 67, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 470, 0, 470, 470, 470, 470, 470, 470, 470, 0, 470, 470, 470, 470, 470, 1, 470, 470, 470, 0, 470, 470, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 475, 474, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 479, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 472, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 473, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 481, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 470, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 478, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 471, 0, 0, 482, 477, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 476, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 470, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 471, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 470, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 480, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 492, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 203, 203, 1, 496, 1, 1, 1, 495, 1, 1, 1, 1, 491, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 493, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 497, 1, 1, 494, 1, 1, 1, 1, 1, 1, 1, 1, 372, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 498, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 509, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 12, 1, 511, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 12, 12, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 59, 1, 1, 12, 12, 12, 12, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 530, 1, 1, 1, 1, 1, 1, 1, 531, 1, 1, 1, 1, 1, 1, 1, 529, 1, 1, 12, 1, 1, 533, 242, 1, 1, 12, 12, 1, 1, 12, 1, 12, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 537, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 543, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 132, 1, 12, 548, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 107, 1, 1, 12, 1, 1, 1, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 553, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 144, 1, 1, 1, 231, 1, 1, 12, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 578, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 223, 1, 328, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 583, 1, 1, 1, 1, 0, 585, 0, 79, 0, 584, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 12, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 592, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 587, 587, 0, 591, 589, 587, 587, 587, 587, 587, 593, 587, 587, 597, 587, 587, 587, 587, 587, 587, 587, 587, 587, 587, 594, 591, 587, 587, 591, 587, 587, 587, 587, 587, 587, 587, 587, 587, 587, 587, 587, 587, 589, 587, 587, 587, 587, 587, 595, 587, 587, 587, 587, 587, 587, 0, 0, 0, 1, 596, 1, 1, 1, 1, 590, 1, 1, 1, 1, 1, 588, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 12, 601, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 12, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 12, 1, 1, 12, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 96, 64, 281, 307, 412, 539, 0, 4, 68, 239, 257, 283, 308, 334, 388, 414, 0, 503, 523, 540, 603, 9, 0, 60, 88, 398, 410, 430, 581, 0, 501, 522, 536, 618, 0, 30, 6, 0, 465, 504, 608, 566, 70, 0, 7, 286, 258, 389, 467, 417, 542, 79, 604, 0, 582, 310, 419, 469, 9, 105, 289, 510, 6, 30, 0, 312, 79, 391, 79, 487, 10, 6, 131, 251, 276, 0, 619, 513, 0, 569, 0, 63, 6, 6, 254, 95, 2, 433, 399, 411, 602, 0, 6, 0, 6, 287, 103, 6, 567, 505, 544, 0, 468, 390, 274, 288, 8, 71, 104, 605, 547, 392, 313, 301, 420, 146, 74, 291, 551, 514, 607, 570, 335, 330, 483, 6, 75, 149, 11, 0, 252, 526, 552, 571, 518, 556, 576, 617, 36, 6, 263, 296, 333, 305, 221, 30, 532, 559, 221, 41, 219, 268, 297, 306, 407, 424, 485, 275, 0, 73, 568, 0, 404, 418, 300, 79, 250, 79, 0, 586, 550, 508, 293, 422, 79, 393, 387, 0, 0, 0, 9, 561, 577, 220, 0, 425, 408, 535, 520, 579, 621, 85, 221, 42, 298, 396, 426, 575, 0, 515, 294, 277, 79, 218, 80, 28, 390, 30, 6, 394, 331, 304, 610, 598, 528, 555, 517, 0, 261, 81, 30, 406, 423, 0, 30, 427, 0, 222, 599, 521, 9, 409, 428, 221, 251, 86, 225, 600, 580, 563, 486, 429, 397, 253, 230, 87, 58, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 626, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 415, 0, 0, 0, 0, 0, 0, 0, 0, 82, 0, 129, 0, 0, 84, 554, 0, 0, 0, 0, 0, 0, 0, 27, 0, 557, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 415, 0, 0, 0, 0, 507, 0, 260, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 295, 0, 0, 0, 0, 0, 0, 0, 623, 0, 0, 0, 0, 0, 622, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 395, 0, 0, 0, 488, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 69, 0, 0, 0, 0, 0, 0, 499, 0, 0, 0, 0, 0, 0, 405, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 214, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 272, 282, 0, 0, 0, 0, 0, 534, 278, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 516, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 461, 0, 0, 0, 315, 0, 0, 0, 0, 0, 0, 256, 0, 0, 0, 0, 0, 0, 23, 0, 0, 0, 0, 574, 0, 0, 0, 0, 606, 525, 0, 0, 0, 0, 247, 0, 0, 0, 0, 0, 0, 463, 0, 0, 484, 0, 0, 0, 0, 0, 61, 0, 0, 0, 270, 57, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 249, 0, 0, 0, 0, 0, 280, 616, 0, 72, 0, 0, 0, 0, 0, 0, 0, 0, 0, 625, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150, 0, 279, 0, 0, 0, 0, 0, 0, 573, 0, 0, 0, 0, 0, 0, 527, 0, 0, 0, 0, 0, 0, 0, 0, 0, 572, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 62, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 216, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 84, 0, 506, 0, 0, 0, 0, 0, 560, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 84, 83, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 490, 0, 489, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 262, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 462, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 290, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 541, 0, 0, 0, 0, 0, 0, 0, 0, 299, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 69, 240, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 84, 0, 612, 0, 0, 558, 0, 0, 0, 0, 0, 0, 0, 0, 0, 248, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 615, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 524, 0, 0, 0, 84, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 502, 0, 620, 0, 0, 432, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 403, 0, 0, 0, 549, 0, 93, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 31, 0, 0, 0, 0, 0, 0, 29, 92, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 292, 0, 0, 0, 217, 0, 0, 0, 0, 0, 0, 564, 0, 0, 0, 0, 130, 0, 0, 0, 0, 0, 565, 0, 0, 0, 0, 0, 0, 0, 415, 421, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 400, 0, 314, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 302, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 538, 0, 0, 0, 416, 0, 0, 402, 0, 0, 0, 0, 0, 0, 609, 0, 0, 0, 545, 0, 0, 90, 0, 546, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 512, 464, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 271, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 415, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 614, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 613, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 624, 0, 0, 0, 0, 0, 562, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 303, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 611, 0, 0, 215, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 629, 629, 629, 629, 629, 629, 629, 628, 630]);
+const labelText = "orgmilcomschnetedugovdrrformsfeedbackofficialaccoorgmilschnetgovmagazinemediaunioncargopilotgroupcaarespressworksaerodromeworkinggroupair-traffic-controlaircraftaccident-preventioneducatormarketplaceambulanceinsurancecateringairportrepbodyenginesoftwaremodellingair-surveillanceconsultingchartertrainermaintenanceservicesdesignflightskydivingfreightassociationstudentgroundhandlingdgcafuelclubtaxicrewshowballooningexpresstraderbrokerauthoragentsairtrafficjournalistsafetyconsultantmicrolightaccident-investigationparachutingequipmentproductionfederationrecreationscientistnavigationengineertradingglidingleasingresearchpassenger-associationentertainmentparaglidinghangglidingaerobaticrotorcraftemergencycertificationgovernmentaeroclubexchangelogisticschampionshiphomebuiltcouncilconferencecontrolairlinecivilaviationjournalorgcomnetedugovcoorgcomnomnetobjofforgcomnetuwukiloappsframerorgmilcomnetedugovcoradioorgcomnetcommuneedogpbcoitgvorgedugov*spreviewfrontendrelayononstagingupid*mtls*privatelinktypedreamdeveloperbravemochawindsurfaivenmirenupsunwnextbegetngrokclerkwale2bwebcsbrunputerflutterflowspawnbaseshiptodaymagicpatternsnetlifyondigitaloceanrailwayhostedclaudehasurabotdashretoolvercelgithubluyanigadgetreplitcloudflaretelebitedgecomputeevervaultexponyatnoopencrpplxzeaburwasmerframerzeropsrocketpreviewconvexmedusajsspritesonherculeseasypanelstreamlitglideossnowflakemesserliloginlinehackclubcodepennorthflankbase44corespeedleapcellngrok-freeclerkstagelovableon-fleek*us-west-3ap-south-2us-central-2us-central-1eu-central-1ap-south-1us-west-2us-east-2eu-north-1ap-north-1us-west-1us-east-1*rcloudintsegorgmilcomgobbetnetintedugovturmusicasenasamutualcoopip6uriurnin-addre164homeirisgovdixdaemoncloudnssthwien*inexexkunden4accogvormymyspreadshop4lima2ixortsinfofuturecmsfuturehosting12hpprivfuturemailinglima-cityfunkfeuer123webseitednshomemelmyspreadshopcloudletswasantqldvicactnswtascatholicwasaqldvictasidwasantozqldorgcomvicasnactnetedugovnswtasconfcomairflowlambda-urltransfer-webappairflowtransfer-webapptransfer-webapptransfer-webapp-fipstransfer-webappeu-west-3ap-south-2eu-south-2eu-central-2ap-southeast-3ap-southeast-4ap-northeast-3eu-central-1mx-central-1me-central-1ca-central-1il-central-1ap-northeast-1ap-southeast-1me-south-1af-south-1eu-south-1ap-south-1ap-southeast-7us-west-2eu-west-2us-east-2eu-north-1ap-southeast-2ap-northeast-2ap-southeast-5us-gov-west-1us-gov-east-1ca-west-1us-west-1eu-west-1us-east-1ap-east-1sa-east-1privatenotebookstudiolabelingnotebookstudionotebooknotebook-fipslabelingnotebookstudionotebook-fipsnotebookstudio-fipsnotebook-fipsnotebookstudionotebook-fipsnotebookstudioeu-west-3ap-south-2eu-south-2eu-central-2ap-southeast-3ap-southeast-4ap-northeast-3eu-central-1me-central-1ca-central-1il-central-1ap-northeast-1ap-southeast-1me-south-1af-south-1eu-south-1ap-south-1us-west-2eu-west-2us-east-2eu-north-1ap-southeast-2ap-northeast-2experimentsus-gov-west-1us-gov-east-1ca-west-1us-west-1eu-west-1us-east-1ap-east-1sa-east-1onrepostsagemakercopporgmilcompronetintedugovbiznameinfoshoprsorgmilcomnetedugovbrendlyresolvenzauscotvstoreorgcomnetedugovbizinfoidacaicoittvorgmilcomschnetedugovinfocloudezproxysiteacmymyspreadshopkuleuvenwebhostingtransurl123websitecloudnsinterhostsolutionsddns5476103298edgfacbmlonihkjutwvqpsryxzbarsycoororgcomedumyftpno-iporxcloud-ipfor-somemmafanfor-morewebhopselfipjozidyndnscloudnsdscloudfor-thefor-betteractivetrailcoeconorestooteorgcomeconeteduassurmoneyafricaarchitectesrestaurantloisirstourismavocatsinfoagrounivcoorgcomnetedugoviatvdeportesaludtksatorgmilcomwebgobnetinteducienciaboliviarevistacooperativaempresanombreindustriamusicapatriamedicinademocraciapoliticapuebloindigenaplurinacionalarteblogwikiinfoagrotransportenoticiasprofesionalacademiaeconomiaecologiamovimientotecnologianaturalsimplesitecepesebamapadfmgalampbacscpirngorotomtrjspaprrprrsesmscepesebamapadfmgalampbacscpirngorotomtrjspaprrprrsesms*biaamfmtcmptvfeirasampajampanatalbelemananiradiog12medindfndbmdtrdthepoaggfjdfdefinfenflegsegongengcngorgzlgslglogppgmillelqslcimcomnomadmjabimbbibbsbabcrectecsjcetcpscpvhudieticriapipsiecnbiorioecogeoteoodoproatoartfstmatvetdetbetnetcntnotfotgrueduajuespappreptmpemparqsrvadvdevgovntrturagrjorfarjusmusdesvixxyzcozfozslzbhzmaringasantamariacampinagrandegoianiasorocabafloripasaobernardocuritibaboavistarecifeaparecidasaogoncasalvadorcuiabamorenamacapalondrinacontagemsocialfortalmaceioleilaoosascoriobranconiteroi9guacutcheblogflogvlogwikitaxicoopmanauspalmascaxiasjoinvillebaruericampinassantoandreribeiraoriopretoweorgcomnetedugovv0windsurfshiptodaycloudsitecoaccoorgnetgovofmilcomgovmediatechzacoorgcomnetedugsjgovmydnspenfnlabnbmbgcbcqconcontnuyksknsmyspreadshopno-ipawdevboxbarsyonidatemfuinabusavinstanceseceuguukussryzespawncsxcloud-ipmyphotosfantasyleaguetwmailcleverappsscrappingccwucloudnsftpaccessgame-serverccgovobjectsrmalpgcust*svcalp1aeappenginermalpgmyspreadshop4lima2ixsquare7cloudscale123websitefirenet12hpflowgotdnslinkyard-cloudcloudnslima-citydnskingobjectstorageedaccogoorusorgcomnetinteduaéroportxn--aroport-byaassogouvcomilgobgovcloudnses-1eu-west-1us-east-1euvipit1eurarubait1s3lbwebsites3websiteru-spbru-mskelasticcsrunstnukukcaukusnl-ams-1fr-par-1fr-par-2functionsnodess3ddlwhmrdbfnck8sifrs3-websitecockpitscblmgdbdtwhkafkpubprivs3ddlwhmrdbk8sifrs3-websitecockpitscblmgdbdtwhkafks3ddlrdbk8sifrs3-websitecockpitscblmgdbdtwhkafkk8sscalebookpl-wawfr-parnl-amsbaremetalsmartlabelinginstancesdechk2kuleuvenlaravelvoorloperurownoxazapscwhstgrvaporonline-serverobservablehqelementorantagonistreclaimjoteluluencowaydiademjelasticmatlabmagentositetrendhostingaxarnetperspectajenv-arubajelejoteravendbemergenttrafficplexconvexkeliwebserveboltbegetcdnstaticson-rancherprimetelonstackitunison-servicesdnshomelinkyardbarsyjelecloudnscocomnetgovmycn-northwest-1cn-north-1s3s3-accesspoints3-websites3s3-accesspointrdsdualstacks3-deprecatedemrappui-prods3-websiteemrstudio-prods3-object-lambdaemrnotebooks-prodexecute-apis3s3-accesspoints3s3-accesspointrdsdualstackemrappui-prods3-websiteemrstudio-prods3-object-lambdaemrnotebooks-prodexecute-apicn-northwest-1cn-north-1cn-northwest-1ebcomputeelbcn-north-1airflowcn-northwest-1cn-north-1oncn-northwest-1cn-north-1amazonawssagemakeramazonwebservicesdirectasgdsdhehahljlnmhbacscahqhshhihnlnynsnmofjbjzjxjtjhkcqtwgsjssxnxjxgxxzgz網絡网络公司orgmilcomnetedugovxn--55qx5dcanva-appsxn--io0a7iquickconnectcanvasitekhsjxn--od0algcanva-codemyqnapcloudsrvrlessclustersrealtimestorageleadpagescarrdcrdorgmilcomnomnetedugovhidnssupabaserdpareplmypiumsoxmitotaplpagesfirewalledreplitowodevwebview-assetsvfswebview-assetss3s3-accesspointdualstackemrappui-prods3-websiteaws-cloud9emrstudio-prods3-object-lambdaemrnotebooks-prodexecute-apicloud9eu-west-3ap-south-2eu-south-2eu-central-2ap-southeast-3ap-southeast-4ap-northeast-3eu-central-1me-central-1ca-central-1il-central-1ap-northeast-1ap-southeast-1me-south-1af-south-1eu-south-1ap-south-1ap-southeast-7us-west-2eu-west-2us-east-2eu-north-1ap-southeast-2ap-northeast-2ap-southeast-5ca-west-1us-west-1eu-west-1us-east-1ap-east-1sa-east-1s3s3-accesspointdualstackemrappui-prods3-websiteaws-cloud9emrstudio-prods3-object-lambdaemrnotebooks-prodexecute-apicloud9s3s3-accesspointdualstackanalytics-gatewayemrappui-prods3-websiteaws-cloud9emrstudio-prods3-object-lambdaemrnotebooks-prodexecute-apicloud9s3s3-accesspointdualstackemrappui-prods3-websiteemrstudio-prods3-object-lambdaemrnotebooks-prodexecute-apis3s3-accesspointdualstacks3-deprecateds3-websites3-object-lambdaexecute-apis3s3-accesspoints3-websites3-accesspoint-fipss3-fipss3s3-accesspointdualstackemrappui-prods3-websites3-accesspoint-fipsaws-cloud9s3-fipsemrstudio-prods3-object-lambdaemrnotebooks-prodexecute-apicloud9s3s3-accesspointdualstackemrappui-prods3-websites3-accesspoint-fipss3-fipsemrstudio-prods3-object-lambdaemrnotebooks-prodexecute-apis3s3-accesspointdualstacks3-deprecatedanalytics-gatewayemrappui-prods3-websiteaws-cloud9emrstudio-prods3-object-lambdaemrnotebooks-prodexecute-apicloud9vfss3s3-accesspointdualstackemrappui-prods3-websiteaws-cloud9emrstudio-prods3-object-lambdaemrnotebooks-prodexecute-apicloud9eu-west-3ap-south-2eu-central-2ap-southeast-3ap-southeast-4ap-northeast-3eu-central-1mx-central-1me-central-1ca-central-1il-central-1ap-northeast-1us-northeast-1ap-southeast-1me-south-1af-south-1ap-south-1ap-southeast-7us-west-2eu-west-2ap-east-2us-east-2ap-southeast-2ap-northeast-2ap-southeast-5us-gov-west-1us-gov-east-1ap-southeast-6ca-west-1us-west-1eu-west-1us-east-1ap-east-1sa-east-1mrapaccesspoints3s3-accesspointdualstacks3-deprecatedanalytics-gatewayemrappui-prods3-websites3-accesspoint-fipsaws-cloud9s3-fipsemrstudio-prods3-object-lambdaemrnotebooks-prodexecute-apicloud9s3s3-accesspointdualstacks3-deprecatedanalytics-gatewayemrappui-prods3-websites3-accesspoint-fipsaws-cloud9s3-fipsemrstudio-prods3-object-lambdaemrnotebooks-prodexecute-apicloud9s3eu-west-3ap-south-2eu-south-2computes3-ap-northeast-2elbrdss3-ap-east-1s3-sa-east-1s3-us-gov-west-1s3-eu-central-1s3-ca-central-1eu-central-2ap-southeast-3ap-southeast-4ap-northeast-3s3-website-us-west-2s3-website-eu-west-1s3-external-1eu-central-1me-central-1ca-central-1il-central-1s3-us-west-1s3-eu-west-1s3-website-sa-east-1s3-website-ap-southeast-2ap-northeast-1ap-southeast-1s3-us-west-2s3-eu-west-2me-south-1af-south-1eu-south-1ap-south-1us-west-2eu-west-2us-east-2s3-website-ap-southeast-1s3-1s3-globals3-ap-northeast-3eu-north-1airflowap-southeast-2s3-us-gov-east-1s3-fips-us-gov-east-1s3-me-south-1s3-ap-south-1ap-northeast-2s3-website-us-west-1ap-southeast-5s3-eu-north-1s3-ap-southeast-1s3-website-us-gov-west-1compute-1s3-eu-west-3us-gov-west-1s3-website-ap-northeast-1us-gov-east-1s3-fips-us-gov-west-1s3-website-us-east-1s3-ap-southeast-2ca-west-1us-west-1eu-west-1us-east-1ap-east-1sa-east-1s3-us-east-2s3-ap-northeast-1authauthauth-fipsauth-fipseu-west-3ap-south-2eu-south-2eu-central-2ap-southeast-3ap-southeast-4ap-northeast-3eu-central-1mx-central-1me-central-1ca-central-1il-central-1ap-northeast-1ap-southeast-1me-south-1af-south-1eu-south-1ap-south-1ap-southeast-7us-west-2eu-west-2ap-east-2us-east-2eu-north-1ap-southeast-2ap-northeast-2ap-southeast-5us-gov-west-1us-gov-east-1ap-southeast-6ca-west-1us-west-1eu-west-1us-east-1ap-east-1sa-east-1eu-west-3eu-south-2ap-southeast-3eu-central-1ca-central-1ap-northeast-1ap-southeast-1ap-south-1us-west-2eu-west-2us-east-2eu-north-1ap-southeast-2ap-northeast-2ap-southeast-5eu-west-1us-east-1ap-east-1sa-east-1csrframeservicesbuilderstg-builderdev-builder*ociocpocsazuregcpawsdemoinstanceeu-west-3ap-south-2eu-south-2eu-central-2ap-southeast-3ap-southeast-4ap-northeast-3eu-central-1me-central-1ca-central-1il-central-1ap-northeast-1ap-southeast-1me-south-1af-south-1eu-south-1ap-south-1ap-southeast-7us-west-2eu-west-2us-east-2eu-north-1ap-southeast-2ap-northeast-2ap-southeast-5us-gov-west-1us-gov-east-1ap-southeast-6ca-west-1us-west-1eu-west-1us-east-1ap-east-1sa-east-1previeweu-4us-4us-1eu-1us-2eu-2us-3eu-3appscomputepaasrag-cloudrag-cloud-chjcloudjcloud-ver-jpcdemonodebalancermembersipeuxvsoncillaocelotonzayalilynxsphinxfentigercustomercaracalo365cloudstaticxendevapp001testcode-builder-stgplatformmediasiteprojedrydpagesjsx0desazacncoitrueu4uhkukgrbrushatenadiarymyspreadshopfrom-flfrom-wvwebspace-hosttheworkpchatenablogcursorusercontentservesarcasmapplinzisakuratanwixsiteappchizigiizeis-into-carsdnsiskinkyadobeaemcloudis-a-therapistpgfogmyvncdojinis-an-actress1kappfldrvkozowqa2jpnmexprgmrfirewall-gatewaydynnscafjsfbsbxooguyfrom-gawoltlab-demois-a-anarchistwiardwebteaches-yogadattowebtb-hostinglive-websiteservegamegotpantheonfrom-nhsubsc-payfrom-ohvipsinaappfrom-cadyndns-officehomelinuxfrom-mahercules-appservebbsstreakusercontentfrom-okfrom-wyfastly-terrariumis-a-llamaqualyhqportalserveexchangeon-vaporvivenushopciscofreakgrayjayleaguesmetaaiusercontentfrom-iais-a-libertariansaves-the-whalestaveusercontentyolasiteoperaunitepoint2thisis-a-catererclaudeusercontentlinodeusercontentfrom-vagithubusercontentsells-for-lesshosteurcanva-appsplaystation-cloudddnsfreefrom-pafrom-prfrom-waddnskingoutsystemscloudhotelwithflightmydattois-a-nascarfanmydbserverminiserverdamnserverservehumouris-a-playerfrom-nvfrom-nmemergentagentgentappsamplifyappfrom-kyis-an-accountantnfshostserveircfrom-akpythonanywherestackhero-networkpostman-echolikescandydyndns-mailobservableusercontentserveftpfreeboxosfrom-utcdn77-storageamazonawsneat-urldyndns-serverlinodeis-a-teacherfrom-vtgleezemythic-beastsus1-pleniteu1-plenitla1-plenitpaywhirlservecounterstrikejdevcloudhealth-carereformis-into-animegoogleapisis-a-painterafricaisa-hockeynutatmetais-an-actora2hostedis-a-democratdatadetectest-le-patrondigitaloceanspacesis-a-designeris-a-hunterlinodeobjectstemp-dnsissmarterthanyoufrom-arsimplesiteevennodetownnews-stagingis-a-liberalgooglecodejelasticservemp3qualyhqpartnerdyndns-free1cooldnsest-a-la-masiondrayddnsdynuddnsfrom-orfrom-miis-a-bloggerfrom-himydobisscanvacodeis-an-engineerest-a-la-maisonupsunappdevinappswafflecellmyasustorwpenginepoweredfrom-ctservep2psame-appmyshopblocksthingdustdatalikes-piediscordsezis-with-thebandlpusercontentis-leetshopitsite3utilitiesis-a-personaltrainersinaappladeskis-a-cheflogoipselfipbase44-sandboxnospamproxyalibabacloudcsmesswithdnsauthgearappsiamallamawithgooglelutrausercontentmochausercontentframercanvasmytabitdyndns-homew-credentialless-staticblitzcpserverdiscordsaysis-a-nurseappspotatlassian-isolated-3premotewdfrom-mtwixstudiocode0emm180rmyactivedirectoryawsappsmytuleapdnsabrpolyspaceqbuserrenderbuiltwithdarkboutirgotdnsabrdnsdopaascanva-hosted-embedawsglobalacceleratorhomesecuritypcmyiphostditchyouripclever-clouddyndns-ipon-aptibleis-a-musicianhosted-by-filessecuritytacticsappspaceusercontenthomeunixstrapiappsame-previewcf-ipfsmycloudnaselasticbeanstalkis-certifieddontexistkasserverik-serverdrive-platformatlassian-3pfirebaseappherokuappawsapprunnerbarsycenteris-a-cubicle-slaveservehttpmyshopifyis-a-guruquicksytessiiitesorsitesmagicpatternsappis-a-cpameteorappfrom-wiis-a-rockstarbumbleshrimpdattolocaldatabricksappsreadthedocs-hostedfrom-rifamilydsdyndns-picsplesknsbplaceddnsaliasdynaliasdyndns-remotedoomdnsip-ddnsblogdnsis-a-doctorroutingthecloudamazoncognitobarsyonlinedsmynasddnsgurucloudflare-ipfsdeus-canvasfrom-idsmushcdnpagespeedmobilizerdyndns-at-homeunusualpersonhosted-by-previderis-a-republicandyn-o-saurstreamlitappworkisboringonthewificprapidqualifioappis-uberleetis-slickgetmyipwpdevcloudtypeformdyndns-at-workgentlentapismynascloudw-corp-staticblitzfrom-ingeekgalaxyservebeerfrom-mdonrenderspace-to-rentaivencloudappspacehostedwafaicloudcodespotblogspotatlassian-3p-us-gov-modfrom-ndfrom-msis-a-techieis-a-studentcustomer-ociis-a-photographerdurumisfrom-ksmassivegriddyndns-wikiis-an-entertaineris-a-hard-workermysecuritycamerafrom-mnrackmazedyndns-blogis-a-bulls-fanwritesthisblogfreemyipsimple-urlfrom-sdreservdauthgear-stagingest-mon-blogueuris-into-gamesrice-labsxtooldevicesakurawebis-an-anarchistoraclecloudappsdyndns-worksells-for-urhcloudfrom-dcfastvps-serverwpmucdnis-a-geekscrysecfrom-txis-into-cartoonsmodelscapetrycloudflarelocaltonetstreak-linkbalena-devicesfrom-njforgeblocksfreebox-oswebadorsitefrom-ncdoesntexisthobby-sitestreaklinkshomesecuritymacownprovidertuleap-partnersdattorelaywphostedmailservequakeis-a-socialistservehalflifepivohostingdynuhostingquipelementsw-staticblitzdyndns-webfrom-deproject-studyaliases121is-not-certifiedhercules-devis-a-financialadvisoramazonlightsailservepicsis-a-greenloseyouripfrom-ilwithyoutubemwcloudnonprodwiredbladehostingdnsdojofrom-tnpixolinomyqnapcloudis-an-artisthostedpiis-a-landscaperauiusercontentoaiusercontenton-forgeis-a-conservativedreamhostersnet-freaksapps-1and1is-goneencoreapifastly-edgefrom-nesalesforcefrom-scdeployagentoraclegovcloudappsfrom-alis-a-lawyercechirevultrobjectsstufftoreadisa-geekddnsgeeklovableprojecttry-snowplowfrom-moblogsyteis-a-bookkeepernogmyforumravendbmyboxdeelementoredsaacficogoorinforgcomgobnatneteduidstoreorgcomnetintedudevnomepublorgcomneteduathgovtestscalculatorspaynowinfoquizzesresearchedcloudnsfunnelsassessmentsjscaleforcetmacltdorgmilcompronetgovbizpresseklogesrsccloudcustomfltusrcloude4corealmgovmunicontentproxy9metacentrumdyndyndyndnsdynpagespages-researchitionoccustomercomymyspreadshopipv64diskussionsbereich4limacomrub2ixfirewall-gatewayddnssspdnsbarsykeymachinesquare7myhome-serverspeedpartnercommunity-proschuldockxenonconnectgünstigliefernbwcloud-os-instancedyndnssecmy-routerxn--gnstigliefern-wobin-butterl-o-g-i-nisteingeekin-dslin-berlinin-brbfuettertdasnetzleitungsenin-vpnlcube-serverdyn-ip24logoipdyn-berlinruhr-uni-bochum12hpgoipsrvdnsfruskygit-repossvn-reposinternet-dnsgünstigbestellenhome-webserverxn--gnstigbestellen-zvbbplacedheimdnscosidnswebspaceconfiglima-citydyndns1istmeinvirtualuserschulplattformmy-gatewayddnsseclebtimnetztest-iservmein-iservvirtual-userhome64iservschuletaifun-dnstraeumtgeradeschulserverdynamisches-dns123webseitednshomehs-heilbronndnsupdaterbssgraphicdwadpdwdaepeweaawapaafpfwfabwbpbacwcpcciwebuserapiobjects*teamst3r2lpbravepanelngrokiservstglclcrmerpflypagesbarsyvivenushoplocalcertlocalplayerbearbloggatewaydeno-stagingis-not-ais-a-goodbotdashvercelmocha-sandboxplatter-appreplitgithubpreviewworkersinbrowserevervaultis-ahrsndenoxmitmodxmyaddrstorageapipayloadgrebedocruncontainersstgstagelclstageloginlineis-a-fullstackcodepenleapcellngrok-freeis-coolstoragewebharemediatechlibp2pdiscourseimaginecomyspreadshopstoreregbiz123hjemmesidefirmcoorgcomnetedugovsldorgmilcomwebgobartnetedugovtmorgpolcomsocartnetedugovassoagrondiscoodontk12medcuegyecpaabgengorgmilgalsaltulcomadmesmgobpubdocmonfindgnriouioproartlatvetnetfotedulojgovntrturibrbarxxxofficialbasechefprofmktgpsictechinfoarqtcontdentrrpppsiqgit-pagesritmedfieorgcomlibprieduaipgovriikmeactvsportorgmilcomscieunnetedugovnameinfopintouchtawktotawkmyspreadshoporgcomnomgobedu123miwebcomputeorgcomnetedugovbiznameinfocognito-idpeusc-de-east-1onjelasticnxaspdnsbarsydirectwpdeuxfleurstransurldogadoprvwcloudnsamazonwebservicesdnshomeuserpartycokoobinmkmfidymyspreadshopalandkapsiikixn--hkkinen-5wacloudplatformhäkkinen123kotisivuidacorgmilcompronetedugovbiznameinforadioorgcomneteduuserexperts-comptablestmmyspreadshopgretaprdcomnomynhccifbxoshuissier-justicenotairesaeroportfreeboxoson-webavocatassoportgouvkdnschirurgiens-dentistes-en-franceavouesfbx-os123sitewebveterinairechirurgiens-dentistespharmacienchambagrimedecinfreebox-osdediboxgoupilemszicpyicpvicppleysheezypagesedugovcnpyorgcomcybllcpvtnetedugovtnxonlineschooldaemond6atcopanelorgnetplybotdashstackitkaasorgmilcomnetedugovbizmodltdorgcomedugovcoorgcomneteduappwriteacorgcomnetedugovcloudtranslateusercontentorgcomnetedumobiassoorgcomnetedugovbarsysimplesitediscourseindorgmilcomgobneteduorgcomwebnetedugovguaminfonxhra教育敎育網絡网絡组織組織网络網络组织組织公司政府個人个人箇人ltdorgcomincneteduidvgovxn--uc0ay4axn--55qx5dxn--mk0axixn--io0a7ixn--uc0atvxn--zf0avxxn--lcvr32dxn--od0algxn--wcvs22dxn--gmqw5axn--od0aq3bxn--mxtq1mxn--ciqpnxn--tn0agxn--gmq050iorgmilcomgobneteduiservwp2tempurlmircloudfreesitewpmudevmyfastgadgetcloudaccessjelehalfboltfastvpsemergenteasypanelopencraftizcombrendlynamefromrtpersoadultmedorgpolrelcomproartnetedufirminfoassoshopcoopgouvtmcomediahotelforumvideosportorgsexagrargameslakaseroticaerotikatozsdereklamcasino2000filmsuliinfoboltshopprivnewsszexcityutazasjogaszkonyveloingatlaneacaicogoormyᬩᬮᬶmilwebschnetkopbizzonedesaponpesxn--9tfkymyspreadshopgovmytabittabitorderravpageaccok12idforgnetgovmuniltdplcaccotttvorgcomnetmeca6g5gpgamubacaicniocoukuptverdruscsdelhiindorgmilcomwebnicfingenpronetintedugovresbizbiharbarsyinternetbusinessschooltravelsupabasealumnigujaratfirminfoaeropostbankcoopindevscloudnsno-ipbarsybarrell-of-knowledgebarrel-of-knowledgensupdategroks-thisdnsupdatefor-ourknowsitalldvrcammittwalddynamic-dnsv-infowebhopselfipdyndnshere-for-moreilovecollegemayfirstforumzcloudnsmittwaldservertypo3servergroks-theeusekd1cdndyndnsidrawsainaueuapjpusstagemocksysdevicesclientcustreservdcustdevdisrecprodtestingcobeebyteutwenteboxfusebravepstmndedynngrokorgmilcomnomnetedugovqcxqzzbarsythingdustmo-siemensrb-hostingfh-muenstergitbookbluebitecloudbeesusercontentnodeartkiloappsforgerockdarklangresinstagingapigeebubbleb-datascryptedhypernodedappnodepantheonsitegitlabgithubkeeneticvirtualservercleverappshostyhostingon-rioedugitticketstelebitwixstudioon-k3sicp0icp12038jeleqotolairbubbleappsmyaddrstolosmyrdbxwebflowdrive-platformbeagleboardhasura-applolipopdefinimavaporcloudmusicianwebflowtestazurecontainerresindevicereadthedocsloginlineeditorxmoonscalesandcatsbasicserverwebthingsbrowsersafetymarkbeebyteappbitbucketidaccovistablogorgschnetgovxn--mgba3a4f16axn--mgba3a4fraarvanedgeايرانایرانjclaspeziapdudcefegelemeperetevebacanatavaparasabgagfgogrgpgalclblimfmrmcbmbvbfclcmcvcrcpcchlimifibicivipirisimncnbnanenrnpntnnolomobocoaogorosopotoptvtatctbtmtltotpusulunutpspapaqsvpvvvtvavvrtrsrprgrfrcrbrarorkrvstsssbscsmsispzczbzbozen-suedtirolmyspreadshopxn--bulsan-sdtirol-nsbxn--valledaoste-ebbtrentinoaltoadigetrentin-sued-tirolxn--forlcesena-c8axn--forl-cesena-fcbxn--bozen-sdtirol-2obtriestetrentinsuedtiroltrentino-s-tirollecceudineaostesienaparmaluccapaviagenoapaduaaostamonzaabruzzoternirietiturinmilanbozenlaziofermoleccocuneonuoropratola-speziavdataaligfvgpugmolcalcamlomumbsicpmnvenvaoedugovabrsarmaremrbastoslazibxosfirenzetrentinosüdtirolval-d-aostavalle-aostamessinacremonaravennatoscanatrentin-suedtirolbolognacalabriaurbinopesarofriuli-v-giuliaogliastraxn--valle-aoste-ebblaquilaandriatranibarlettasyncloudxn--valle-d-aoste-ehbaostavalleyvalled-aostatrentino-alto-adigevallee-d-aostexn--balsan-sdtirol-nsbpistoiasicilialucaniacataniaiserniaperugiabresciaveneziagorizialiguriaimperiabulsan-suedtirolbalsan-suedtirolbarlettatraniandriaxn--trentino-sdtirol-szbforlì-cesenatuscanyvallée-d-aostemantovavallée-aostecasertapiemontevalleaostaval-daostafriulivgiuliatrevisoforli-cesenavalléedaosteferrarapescaravald-aostatrentino-altoadigefriuli-vegiuliavallee-aostecarboniaiglesiastarantomediocampidanovalleedaostetrentinosud-tirolcampobassotrentinsüd-tiroltrentinosüd-tirolmonzabrianzatrentino-südtirolxn--trentino-sd-tirol-c3bpotenzacosenzavicenzaemiliaromagnavenicefrosinonemarchepordenonetrentinosued-tirolvaresemolisevalléeaostefriuli-veneziagiuliabasilicatalatinaanconasavonaveronamodenabiellabolzano-altoadigepugliafoggiaumbriatrentino-stirolgenovapadovamateranovararagusapiacenzatrentinostirolvalleeaostetempio-olbiasudsardegnatrentinsudtirolmassa-carrarafriuliveneziagiuliatrentinosuedtirolandria-barletta-tranitrapanixn--cesenaforl-i8amaceratacaltanissettaascoli-picenobrindisicarraramassacagliaririmininapolivibo-valentiachietibulsan-sudtirolbalsan-sudtiroltrentino-a-adigebulsanbalsaniglesiascarboniamilanotorinoteramodell-ogliastraarezzotrentinoalto-adigerovigotrentovenetoiglesias-carboniatrentino-sud-tirolaltoadigereggio-emiliareggio-calabriasardegnatranibarlettaandriapiedmontxn--sdtirol-n2amedio-campidanotrentino-süd-tirolfriuli-vgiuliafriuli-ve-giuliaromeennaromapisa32-b16-b64-blodiastibarineencomonaplesforlicesenailiadboxosalessandriasicilytrani-barletta-andriaxn--trentin-sdtirol-7vbpesarourbinotrentinsued-tirolcesena-forliforlìcesenaemilia-romagnamonzaebrianzaxn--trentinsdtirol-nsbtrentinos-tiroltrentinsüdtirolvalledaostaolbia-tempiocampidanomediovibovalentiasassarivalle-daostalombardysud-sardegnafriulivegiuliareggioemiliamonzaedellabrianzaalto-adigevercellitrentin-sudtiroltraniandriabarlettatrentino-sudtirolascolipicenobozen-südtirolfriulive-giuliaflorencexn--cesena-forl-mcbcarbonia-iglesiasaosta-valleycarrara-massadellogliastratrentinoa-adigexn--valleaoste-e7apesaro-urbinoxn--trentinosdtirol-7vbxn--trentin-sd-tirol-rzbxn--trentinsd-tirol-6vbtrani-andria-barlettatrentin-süd-tirolxn--trentinosd-tirol-rzbgrossetomonza-e-della-brianzasüdtirolreggiocalabriatrentinoaadigetrentin-südtirolverbano-cusio-ossolafriuliv-giuliaverbaniacampaniatrentino-aadigefriulivenezia-giuliasardiniaandriabarlettatranibarletta-trani-andriacatanzarooristanourbino-pesarocesena-forlìvalle-d-aostacampidano-medio123homepagesiracusatempioolbiasuedtirollombardiaavellinocesenaforlìtrentinofriuli-venezia-giuliabozen-sudtirolandria-trani-barlettabulsan-südtirolbalsan-südtirolmonza-brianzabolzanotrentino-sued-tirolbellunosalernolivornocrotonesondriodnshometrentinsud-tirolmassacarraratrentin-sud-tiroltrentino-suedtirolviterbobergamocesenaforliolbiatempiopalermobeneventoagrigentoofcoorgnetfmaitvphdengorgmilcomschnetedugovperagrikanieasukehandachitatokaiaisaikonanoharuamaobuhigashiuraowariasahiinuyamatobishimaiwakurashitarainazawatoyonegamagorimihamatoyotataharakariyayatomioguchikomakimiyoshinishiotokonamekiyosuchiryutoyohashiokazakiisshikikasugaikotakiratoeianjotogofusosetohazutsushimashinshirotakahamanisshinshikatsuhekinantoyokawaichinomiyatoyoakeodateogataakitaikawakyowahonjoogayurihonjonoshirokamiokakatagamimitanegojomeyokotekosakadaisenkazunonikahohonjyomoriyoshimisatohappoukamikoanihachirogatahigashinarusesembokufujisatokitaakitaitayanagiowanitakkomutsutsurutahirosakigonoheoirasetowadamisawanohejiaomorishingohiranairokunohehashikamitsugarushichinohehachinohenakadomarisannohekuroishisakaeisumiasahiotakiinzaiabikomatsudoyachiyomutsuzawakujukuriomigawakashiwatoganemihamanaritasakuranagaramobarahanamigawachoshishiroichoseikozakishisuikatorimidorichonankyonanfuttsuonjukufunabashinagareyamanodasosatakochuotohnoshourayasukimitsuyokaichibayotsukaidosodegauratateyamakamagayayokoshibahikariyachimatakatsuuratomisatokisarazukamogawaichikawanarashinoichinomiyashimofusaminamibososhirakoichiharaoamishirasatoikatahonaiainansaijoseiyoiyoozuuwajimaniihamanamikatamasakiuchikokihokutobetoonshikokuchuomatsuyamaimabarikamijimakumakogenyawatahamamatsunosabaeikedaobamasakaifukuiohionotsurugamihamawakasaminamiechizeneiheijikatsuyamatakahamaechizensoedaukihaomutaokawanishiogoribuzenonojosueumiokiotochikugosasagurisaigawamizumakishinyoshitomikurumekurateyamadakasuganakamamiyamanogatatakatahakataiizukakawaratagawakasuyaashiyainatsukimunakataminamitsuikishonaikurogifukuchikeisenhigashimiyakoshinguyukuhashiokagakiyamekogaongausuikahotohochuotoyotsumiyawakadazaifuhisayamatachiaraiyanagawanakagawahirokawachikujochikushinochikuhochikuzennamieotamaokumashowateneiiwakikoorinangoononishigoshimogoomotegomishimafukushimaasakawakagamiishishirakawaiitatefutabahiratayugawahanawakitakatakawamatakunimiyabukibandaihigashihironoyamatomiharuyamatsuriaizubangedatesomaaizuwakamatsuyanaizuaizumisatonishiaizuizumizakikitashiobarataishinkaneyamakoriyamainawashirotanagurafurudonosamegawasukagawaishikawatamakawaikedaogakitaruiginanenahashimahichisonakatsugawaibigawashirakawamizunamiminokamomitakekawauesekigaharatomikasakahogikitagatayamagatatajimianpachimotosuyaotsukakamigaharahidakanisekitokigujominogodoyorogifukasamatsutakayamawanouchihigashishirakawakasaharashimonitatsumagoichiyodakannakanrashowameiwakiryuotaoratomiokafujiokaitakuranaganoharahigashiagatsumatakasakishibukawaminakamikatashinatsukiyonokawabanumataannakaoizumimidorishintoisesakiuenoyoshiokakusatsutakayamanakanojonanmokutamamuratatebayashimaebashiotakekaitadaiwahongofuchukuietajimashobaramiharahatsukaichihigashihiroshimamiyoshikumanokurenakasakaseraseranishiasaminamifukuyamashinichionomichiosakikamijimajinsekikogentakeharaotobenanaeikedatohmaozoraobiraabirakyowaeniwataikibibaisharirebunerimohiroooketootarupippunishiokoppechitosefurubirahakodateshiranukakitahiroshimakushiroobihironanporoiwamizawaniikappukunneppufukushimanakasatsunaitoyourakuromatsunaiakabirakamisunagawashibechaurakawakamifuranonakatombetsuasahikawashimokawakayabeokoppebiratoriabashirisaromaatsumanumatahidakabifukamukawamikasahorokanaitoyotomisarufutsuhigashikawaishikarikitamiyoichiesashiiwanaitomariminamifuranoakkeshifuranotoyakoyakumootoineppushikaoishiraoinemuronayorohaboroashorobihororishirifujiutashinaihokutotakasuebetsuurausuassabukikonaishimamakinaiedatetoyabieinikiesanuryuoumuteshikagarikubetsuashibetsukimobetsuaibetsutobetsusobetsuembetsushimizuchippubetsurishirihokuryuhoronobeshintokutsubetsushibetsuhonbetsumombetsutsukigatakuriyamakoshimizushiriuchikutchanmurorannoboribetsukamishihorowassamushinshinotsukembuchiwakkanaikamoenaikiyosatotakinoueshikabesunagawafukagawanakagawatakikawakamikawahigashikagurahamatonbetsumatsumaemoseushirankoshishakotanimakanemashikeotofuketomakomaisandatambaitamiawajikasaiasagoshisoonoakoyashirotoyookaminamiawajiinagawafukusakitakasagokamigorikasugaharimayokawaashiyahimejiakashitaishiaogakisannantakinosumototakarazukanishinomiyashingugoshikinishiwakiyokatakaaioimikisayoyabukawanishiamagasakisasayamashinonsenkakogawaichikawakamikawatatsunotsukubaiwamaogawaasahisakaitokaioaraiitakobandodaigosuifuinaamikasumigaurakashimaomitamayachiyoshimodatetomobetoridehitachinakainashikisakuragawakasamayawaramoriyahitachiomiyanamegatayamagatahitachikamisuushikutakahagiibarakitonekoganakasowayukimihojosomitoryugasakishimotsumafujishirotsuchiurachikuseihitachiotashirosatotamatsukuriuchiharashikahakuinanaotsubatawajimakahokukawakitatsurugikaganominotosuzuuchinadakomatsuanamizunakanotohakusannonoichikanazawaiwateshiwafudaikawaimoriokaofunatohanamakikuzumakikitakamininohekunoheyamadayahabasumitaichinosekitanohatahiraizumirikuzentakatajobojiotsuchihironomiyakoiwaizumikarumaiichinohenodakujitonooshushizukuishifujisawamizusawakamaishikanegasakimannoutazukotohiraayagawazentsujihigashikagawauchinomikanonjisanukimarugamemitoyotakamatsutadotsunaoshimatonoshoakuneamamiizumihiokiyusuikinkoisasookouyamanakatanekagoshimakanoyaisenkawanabeminamitanemakurazakitarumizunishinoomotematsumotosatsumasendaioimatsudaayaseebinamiurazushinakaiodawaraiseharasagamiharahakoneaikawakaiseiatsugitsukuihadanoyamatoyamakitazamaoisochigasakininomiyayokosukakamakuraminamiashigarafujisawasamukawakiyokawahiratsukayugawaraokawaumajikochitsunootoyoakiinonishitosayasudahidakamiharasakawaniyodogawahigashitsunokagamigeiseisusakiotsukinaharisukumomurototosakamiochitoyotosashimizumotoyamanankokunakamurakitagawayusuharaogunichoyoukiasoutoozugyokutoamakusamifunetakamoriyamagaminamataminamiogunikikuchisumotoyamatonagasumashikiaraokumamotokamiamakusanishiharayatsushiroayabeseikasakyoideineujinakagyokameokakyotangokyotanabekyotambaminamiyamashiroyamashinatanabeyawatawazukaminaminantanmiyazuhigashiyamafukuchiyamakitamukokamojoyokizumaizuruujitawaraoyamazakinagaokakyokumiyamakawagoeinabeshimameiwaasahitaikiudonoisetsukisosakikuwanamihamamiyamasuzukatamakimisuginabarikumanokomonominamiisewataraitobakiwatakikihotadomatsusakayokkaichikameyamaureshinoishinomakishichikashukuohirataiwaosakizaohigashimatsushimashikamaiwanumashibataogawaraonagawakawasakiseminemarumoriminamisanrikukakudamuratawakuyatomiyanatoriwataritagajomisatotomekamirifushiroishimatsushimayamamotoshiogamafurukawahyugaebinotsunosaitoayakushimanobeokakitauramiyazakitakazakigokaseshiibamimatashintomikunitomikitakatakobayashikawaminamitakaharukijotakanabemiyakonojonishimeranichinankitagawakadogawamorotsukakisofukushimaminamimakisakaeobuseikedaogawamiasaokayaasahiotakiotarichinoinaomichikumakomaganechikuhokukaruizawayasuokaooshikaikusakaminamiaikitogakushimatsukawakawakamitateshinatakamorikitaaikishiojirimiyadahakubaiizunaiijimaiiyamamiyotasuzakayasakatoguraookuwanagawaminowahirayayamagataminamiminowafujimiomachisakakitakaginaganonakanosakuhokomoronagisoshinanomachiwadauedaiidaharasuwatomiachiaokianankisosakunozawaonsenagematsutakayamashimosuwamatsumotoyamanouchinakagawamochizukiazuminotatsunoobamaomuraseihiunzenosetofutsuikichijiwanagasakiisahayahasamisaikaikawatanasasebohiradokuchinotsugototogitsutsushimashimabarashinkamigotomatsuurayamazoekashibaikomakawaitenrioyodosangokoryoudaojiikarugayamatokoriyamatenkawakatsuragikurotakikawakamimiyakemitsuetakatorikamikitayamayamatotakadahegurishinjokanmakisakuraitawaramotogoseoudanarasoniandokawanishishimoichihigashiyoshinokashiharashimokitayamanosegawayoshinomintsivorytopazsakuragehirnsumomoaseinetopalmail-boxmokurenyoitamuikaojiyagosensanjoaganomyokoseiroagaomishibataniigatanagaokamurakamiuonumayuzawakariwatagamitainaitsunanminamiuonumatochioyahikojoetsuseiroukamosadoizumozakitokamachiitoigawasekikawakashiwazakitsubamemitsukekokonoesaikiusukibeppuusahimeshimakunisakihasamataketatsukumihitaoitahijikusuyufukujukamitsuebungoonobungotakadaibaraniimibizentsuyamaokayamakasaokahayashimayakagemaniwaakaiwamisakishinjotamanotakahashikibichuowakesojanagishookumenannishiawakurakurashikiasakuchisetouchikagaminosatoshotomigusukunakagusukuyaeseizenaurumaiheyaaguniogiminanjokinminamidaitokitanakagusukuyonaguniokinawaishigakikunigamiurasoekadenataramahiraraginozataketomishimojizamamitonakiitomanhigashimotobuyonabarugushikamionnanahanagohaebarukumejimakitadaitonakijinnishiharayomitanginowantokashikiishikawaikedasuitaminohizuminishisakaikananabenodaitoosakasayamayaokishiwadatadaokakaizukatondabayashichihayaakasakakumatorikadomasayamahigashiosakashijonawatehirakatataishimisakitajirihannansennankatanotoyonominatosettsuhigashiyodogawaibarakinosekitachuohigashisumiyoshifujiiderakashiwaraizumiotsutoyonakamatsubaramoriguchiizumisanoshimamototakatsukineyagawahabikinotakaishikawachinaganoyoshinogarikamiminearitaouchiimarihizenogikashimaariakekiyamafukudomikitagatakitahataomachigenkaikanzakinishiaritakyuragisagataratosutakushiroishikaratsuhamatamakouhokukawagoeyoshidasatteogoseirumaasakaurawaogawaniizaomiyayoriiotakishikihonjooganohannohanyuinasaitamaokegawaarakawayoshikawayokozehasudasayamahidakafukayachichibuiwatsukiryokamiyoshimikamiizumifujimiwarabiranzanmiyoshiminanoyashiosakadosugitomisatohigashichichibutodasokakukiyonokazoshiraokakasukabekounosukawajimatsurugashimamiyashirokitamotohatoyamamoroyamahatogayakumagayakawaguchinagatorokamisatomatsubushinamegawatokigawakamikawafujiminohigashimatsuyamakoshigayatokorozawas3isk01isk02ryuohkoseikonanaishorittotakashimamaibarahikonetorahimenishiazaikokagamokotoyasuotsukusatsunagahamamoriyamatoyosatotakatsukinotogawaomihachimanhigashiomiakagiunnanizumogotsuamayatsukakakinokimatsuehamadamasudahikawahikimiokuizumoyasugiyakumomisatotamayuohdahigashiizumookinoshimanishinoshimatsuwanoshimaneshimadafujiedayoshidashimodagotembaiwataatamikosaiyaizuitoizumishimahaibaramakinoharaomaezakikawanehonkannamisusonohigashiizufukuroinumazukawazufujiaraishizuokahamamatsushimizuizunokunimatsuzakimorimachiminamiizunishiizukikugawakakegawafujikawafujinomiyaujiietsugaoyamayaitaohiranikkoashikagakuroisokanumasakurashioyakarasuyamamotegiichikaikaminokawatochigihagamokanogisanobatonasumibunasushiobaranishikatautsunomiyaiwafunemashikoshimotsukeohtawaratakanezawaitanokomatsushimatokushimaichibaminamiaizumiwajikikainanmiyoshinarutomimamugiananmatsushigesanagochishishikuinakagawamachidachiyodakomaefussainagitaitochofufuchuomeotahigashiyamatotoshimaokutamaaogashimakodairaedogawaarakawahachiojishinagawatachikawashibuyasuginamihinodekiyosesumidaoshimanerimamitakahamuraadachinakanomizuhobunkyomegurominatokoganeihigashikurumekokubunjihigashimurayamamusashimurayamatamakitahinochuokotokatsushikakouzushimaogasawaraakishimakunitachishinjukusetagayamusashinohachijoitabashiakirunohinoharachizunanbukotouramisasawakasayonagokogehinoyazutottorinichinansakaiminatokawaharaoyabetairainamiasahinantoimizufuchutakaokakurobeyamadajohanatoyamatonaminyuzenfunahashinakaniikawanamerikawaunazukitogahimiuozufukumitsutateyamakamiichiiwadearidayuasainamitaijikatsuragiaridagawatanabemihamahidakakainankiminomisatoshingushirahamakamitondayurakozakoyagobokitayamawakayamakudoyamahashimotokushimotokozagawahirogawakinokawanachikatsuurarsuseroeoishidasagaeoguniasahinagaitendonanyoobanazawanishikawasakataohkuratozawamikawamamurogawayamagatafunagatatakahatashonaishinjokahokuiideyuzakawanishitsuruokakaminoyamayamanobeshiratakamurayamanakayamakaneyamahigashineyonezawasakegawamitouubeyuuabushimonosekitabuseoshimatoyotaiwakunihikarishunannagatohagihofukudamatsutokuyamashowadoshitsurunanbukoshukaiminami-alpsnirasakikosugeotsukioshinohokutominobuyamanashifuefukichuokofuichikawamisatoyamanakakonakamichitabayamanishikatsuranarusawafujikawahayakawafujiyoshidafujikawaguchikouenohara長野京都岐阜大阪三重群馬千葉滋賀佐賀奈良adednelgaccogogror秋田愛知高知埼玉沖縄栃木熊本岩手青森山梨新潟島根鳥取長崎香川宮城石川大分宮崎茨城山口兵庫山形徳島広島福島福岡岡山富山静岡愛媛福井東京xn--4it168dhatenadiaryxn--vgu402ckawaiishophatenablogcocottenamaste北海道penneehimeiwateversestabachibashigagonnagunmapermahaccaakitaosakauh-ohblushkochiaichifukuikuroncapooitigohyogotokyokyotopunyuthickcheap0t00g00j0mie2-ddaapyawjg0amfemsubxiiboomoobutchueekpgwrgrherskrboyrdyupperunderflierchipsmydnsheavyangryhippygirlyrulez神奈川鹿児島和歌山bambinaxn--nit225kokayamasaitamaxn--k7yn95exn--1lqs03nsapporoparasitelolipopmcxn--efvn9sniigatafukuokatokushimafukushimahiroshimakagoshimafakefurokinawaxn--8pvr4ucoolblogxn--0trq7p7nnkawasakinagasakimiyazakichilloutxn--8ltr62kxn--klty5xpeeweezombiecutegirlxn--rny31hxn--uuwu58axn--ntso0iqx3axn--djrs72d6uytoyamanikitanyantakagawamimozanagoyaboyfriendxn--2m4a15egreaterchowderegoismyamagatafashionstorexn--elqq16hxn--pssu33lsendaimiyagixn--rht27zpecoriaomorisaloonwatsonvivianxn--djty4knobushipigboatnaganopinokoxn--f6qx53asadistvelvetsecretxn--5js045dchicappayamanashiibarakidigickgirlfriendxn--1lqs71dmongolianxn--c3s14mxn--qqqt11mtochigixn--5rtq34kparallelo0o0mondkobesagabonadecaoitanarafoolkilldecimainhiholomosblokilociaoundopupugifutankcrapflopnooroopsmodsholyjeezstripperpepperbittershizuokaxn--rht3dkitakyushureadymadeicurusversusmatrixxn--rht61ehungryfloppygloomycrankyhandcraftedlittlestarxn--klt787dxn--kltx9awhitesnowsunnydaytottorilovepoptheshopbuyshopxn--5rtp49cxn--d5qv7z876cwebaccelxn--kbrq7oxn--4pvxsxn--1ctwolovesickkumamotocatfoodxn--tor131oyokohamawakayamatonkotsuxn--ehqz56nxn--uist22hxn--6btw5axn--kltp7dyamaguchifrenchkisspussycatxn--4it797kxn--uisz3gbabybluexn--zbx025dnetgamersxn--7t0a264ckanagawaxn--6orx2rishikawaxn--ntsq17ghalfmoonschoolbusjellybeanxn--mkru45iusercontentlolitapunkxn--32vp30hsakurastoragehokkaidoshimanecandypopbabymilksupersaleweblikeraindropbackdropwebsozaikikirarahateblodaynightmeneacsccogoormobiinfoaeusxxorgmilcomnetedugovorgcomnetedugovbizinfotmprdorgmilcomnomedugovassnotairespresseassocoopgouvveterinairemedecinpharmaciensorgnetedugovtraorgcomedurepgovmeneperekgacscaiiocogoitoresmshsseoulbusanulsandaeguc01milvkimmvchungnamjeonnamjeonbukeliv-dnsgyeonggijejueliv-cdnincheondaejeongangwongyeongbukgwangjuchungbukgyeongnameliv-apicoeduindorgcomembnetedugovorgmilcomnetedugovjcloudorgcomnetintedugovperbnrinfocooyorgcomnetedugovethipfscanvamypepethw3sstorachakeeneticjoinmcinbrowserdwebcyonnftstoragemyfritzaemewphlxachotelltdorgcomwebsocschngonetintedugrpgovassnomgacsccoorgnetedugovbizinfo123websiteidorgmilcomasnnetedugovconfidmedorgcomplcschnetedugovaccoorgnetgovpresstmassoirseproxaccosoundcasthoptocraftvp4c66orgnetedugovitsmcdirmyboxbarsyedgestacksynologylogintoopencloudnohostwebhopdiskstationi234tcp4hoocgroknoipprivmydsddnsdnsforlohmustransipdscloudfilegear-sgbrasiliafilegearframerbarsybarsyonlinecoprdorgmilcomnomedugovinforgcomnetedugovnameacprorgcomartnetedugovpresseinfoassoinstgouvorgnycedugovbarsydscloudjuorgcomnetedugovminisiteaccoororgcomnetgovorgmilcompronetintedugovbizmuseumnameinfoaerocoopaccoorgcomnetintedugovbizcooporgcomgobneteduorgmilcomnetedugovbiznameaccoorgmilneteduadvgovcoorgcomnetaltgovforgotherhiskeeneticispmanagernomassoprod5476132eastasiacentraluswesteuropewestus2eastus2pnortheurope-01newzealandnorth-01southindia-01southcentralus2-01norwaywest-01eastus2-01westus2-01australiaeast-01italynorth-01israelnorthwest-01swedencentral-01westeurope-01centraluseuap-01taiwannorthwest-01uaecentral-01northcentralusstage-01israelcentral-01mexicocentral-01canadacentral-01austriaeast-01germanywestcentral-01francecentral-01ukwest-01denmarkeast-01polandcentral-01eastus-01westus-01swedensouth-01eastus3-01westus3-01brazilsouth-01centralus-01francesouth-01australiacentral-01westindia-01uaenorth-01jioindiacentral-01canadaeast-01belgiumcentral-01spaincentral-01koreacentral-01chilecentral-01qatarcentral-01westcentralus-01eastus2euap-01norwayeast-01southafricanorth-01brazilsoutheast-01germanynorth-01switzerlandnorth-01switzerlandwest-01japanwest-01southafricawest-01japaneast-01eastasia-01indiasouthcentral-01taiwannorth-01centralindia-01uksouth-01southcentralus-01northcentralus-01eastasiastage-01indonesiacentral-01australiacentral2-01australiasoutheast-01malaysiawest-01koreasouth-01southeastasia-01southeastus5-01northeastus5-01jioindiawest-01rucdnwest1-usfra1-desandboxjls-sto1jls-sto3jls-sto2aglobalabglobalsslmapprodfreetlsmapvpslon-1lon-2ny-1fr-1sg-1ny-2paassnwebpaashostingjelasticnordeste-idcsocuserpagescwebfileblobservicebuscoreatlricnjsjelasticwebsitestoragesezagbinruhuukjptsmyspreadshopmynetnameakamaiorigin-stagingfrom-coipv64dynv6cdn77serveblogadobeaemcloudhicamsprytdnsupno-ipownipde5ovhicpfirewall-gatewaysytesmypsxbarsyusgovcloudapimyamazemyradwebakamaihdsaveincloudfastlylbfrom-lasubsc-paysquare7in-the-bandblackbaudcdnhomelinuxoninfernoctfcloudservebbsdns-dynamiccloudfrontakamai-stagingipifonyham-radio-opsenseeringclickrisingcommunity-profrom-nylocalcertgrafana-devedgesuite-stagingcloudflareanycasteating-organicatlassian-devmydattofeste-iplocaltotorprojectknx-serveredgekeycloudflareglobalcloudyclustercasacamserveftpakamaized-stagingakamaiorigindns-cloudmyeffectboomlabotdashbuyshousestwmailhetemlazure-mobilein-dslthruhereredirectmedynuddnsbouncemesupabaseluyanicloudappakamaicloudfunctionsdebiannhlfanpgafanstatic-accessin-vpnmysynologymafeloappudohomeftptrafficmanagersiteleafseidatmemsetcloudflarecloudaccesskeyword-onazure-apiis-a-chefdoes-itgets-itwebhopselfiphomeipkicks-assedgesuitewindowsserver-ontunnelmolemydissentscrapper-sitecloudflarecnuni5srcfggffiobbzabchrsndenodynuopikddnsvpndnsakadnselastxkinghostvps-hostfastlyhomeunixazureedgeshopselectdontexistmyfritzcloudjiffyalwaysdatasells-itsquaresbroke-itazurefddattolocalat-band-campmeinforumfamilydsazurestaticappsdefinimabplaceddnsaliasdynaliasnow-dnsblogdnsroutingthecloudendofinternetdsmynasakamaiedgemymediapcadobeio-staticakamaiedge-stagingakamaihd-stagingddns-ipprivatizehealthinsurancelive-onkrellianschokokeksmassivegridmysecuritycamerarackmazeserveminecraftfrom-azis-a-geekakamaizedmoonscaleoffice-on-theusgovtrafficmanageradobeioruntimeedgekey-stagingreserve-onlinechannelsdvrdnsdojousgovcloudappcdn77-sslapps-1and1podzoneazurewebsitesdynathomescaleforceyandexcloudvusercontentisa-geekcdn-edgescoaemalcesappwriteazimuthtlonarvobuiltwithrocketnoticeablestorecomwebrecnetperotherfirminfoartslgdloncogoiltdorgmilcolcomplcschgenngonetedugovbiznamefirmmobiacincoorgmilcomnomwebgobnetintedubizinfocomyspreadshopdemongovtransurl123websitehosting-clusterkhplaycistrongsnesosvalervålerxn--vler-qoaossandeheroysandeherøybøboheroyherøyxn--hery-iraxn--b-5gavalerbøboxn--b-5gasandesandexn--hery-iraxn--vler-qoavålerhåreålaahavaofsfvfhlolnlalrlhmfmtmahcostntbuåstrmreigersundmyspreadshopgálsáeidsvolltingvollgildeskalflorøvadsøvardøvanylvenxn--bhccavuotna-k7astrandaxn--kvnangen-k0axn--sknland-fxaxn--mosjen-eyarakkestadhyllestadnannestadvevelstadvaapstenordre-landsondre-landsøndre-landtjieltexn--vrggt-xqadsør-aurdalsor-aurdalheradstordmoldefordeførdeseljefedjeryggehemnexn--krehamn-dxasognegranesøgnebrynetjomevallebykletokkegiskedovretjømehobølvoldasaudatolgasømnaviknadønnasomnadonnatranafrananesnaraumasmolatrænafrænalesjasmølaørstaorstahitrafloraaukraloppafrøyarissasnasahalsagalsaromsaraisaráisafroyasnåsagronghobolfjelltydalårdalardalaskimharamkraanghkekråanghkesorumbarumhurumbærumsørummodumsálátbálátfrognbjugnvåganvagangulenskienløtenlotenstrynvefsnxn--merker-kuaskaunsveiobømlobomloskjåkvardoflorovadsosalatbalatsálatklæbuklabuselbubarduulvikskjakklepprisørxn--nttery-byaeflåeidflahofmilgolholsellomskifetvikdepvgsfhsaskerrisorhamarasnesåsnesrørosrorosxn--slat-5namasoynaroyvaroyluroydyroyaskoyradoyandoyrodoymeloyradøyandøyrødøymeløyaskøylurøydyrøymåsøyværøynærøyhoylandethøylandetdivtasvuodnalørenskoglorenskognesoddtangenxn--tjme-hraxn--smla-hraxn--stjrdal-s1aunjargalillehammerunjárgaxn--hamary-fyadavvenjargaxn--bearalvhki-y4a123hjemmesidegjerdrumxn--brnnysund-m8acxn--tnsberg-q1axn--mlatvuopmi-s4axn--snsa-roaxn--skierv-utaxn--brum-voatysfjordkvafjordeidfjordkvæfjordsongdalenmjondalenmjøndalenxn--gls-elackragerogáŋgaviikagangaviikasørreisasorreisasør-varangersor-varangerxn--risr-iraskiervaxn--frna-woaxn--trna-woakvinesdalleksvikleirvikrøyrvikroyrviksvelvikvenneslaevje-og-hornnessandnessjøenmarnardalvindafjordsandefjordenebakksnillfjordullensvangxn--trany-yuabrønnøysundnamsskoganaustevollxn--stjrdalshalsen-sqbnord-aurdalnord-frontrøgstadtrogstadgrimstadflakstadgjerstadxn--sandy-yuaxn--leagaviika-52bnore-og-uvdalvegarsheixn--rlingen-mxaxn--ggaviika-8ya47hvegårsheikarlsoykvitsoymasfjordenhamaroyinderoyosteroydavvenjárgasauheradguovdageaidnuxn--vre-eiker-k8abronnoysiellakkrødsheradkrodsheradkvinnheradbrønnøyxn--mtta-vrjjat-k7afxn--lrenskog-54akvitsøyvárggátkarlsøyosterøyinderøyhamarøybronnoysundxn--aurskog-hland-jnbbahccavuotnabáhccavuotnagiehtavuoatnastor-elvdalmidtre-gauldalxn--gildeskl-g0akarasjokevenassixn--bievt-0qaxn--yer-znalebesbynessebyxn--hbmer-xqamalselvmålselvxn--unjrga-rtamøre-og-romsdalmore-og-romsdalhareidmelandørlandorlandstrandålgårdsolundalgardafjordåfjorddielddanuorrikautokeinoxn--stre-toten-zcbskodjeaejriestangeliernebamblestokkefauskesnåasesnaasekongsvingerlangevagberlevagxn--flor-jrahattfjelldalostre-totenøstre-totenvestfoldxn--mely-iraálaheadjualaheadjunordreisaxn--troms-zuaxn--lgrd-poacporsangerflatangerstavangerleikangerbremangersamnangergieldakarasjohkaxn--rdy-0nabfrostautsirasnoasatromsaxn--sr-aurdal-l8aflekkefjordjølsterjolsteraremarkhedmarknååmesjevuemienaamesjevuemiexn--vard-jrarollagmeråkermerakerorskogørskogxn--bdddj-mrabdákŋoluoktaxn--osyro-wuaaknoluoktatrysilskjervøymandaljondalbindalrindalmeldalsuldalorkdalsigdalalvdallærdalhurdalsirdalverdallerdallardaloppdalåseralaseralhadselkragerødivttasvuotnaoverhallasteinkjerxn--hnefoss-q1askedsmokorsettromsøxn--dyry-iravestre-totenmuseumxn--sandnessjen-ogbrahkkeravjufylkesbiblbájddarbajddarxn--laheadju-7yarennesøyxn--koluokta-7ya57hxn--hgebostad-g3aleirfjordstorfjordbalsfjordbåtsfjordbatsfjordmuosátbievátloabátkárášjohkanøtterøyxn--mjndalen-64anordkappláhppilahppialstahaugsiljanverranrøykenroykenhaldenlyngenbergenhortenhønefosshonefosstroandinbeiarnvarggatosoyroosøyrotromsoidrettmuosatbievatruovatloabatvoagattynsetnessetxn--indery-fyaskánitskanitraholtråholtxn--ystre-slidre-ujbandebusarpsborgbearduxn--karlsy-fyahordalandjorpelandjørpelanddeatnuringsakersør-odalsor-odalxn--slt-elabringerikeaudnedalnittedalnissedalhemsedalslattumsurnadalxn--blt-elabelverumstjørdalnaustdalhjartdalgjøvikfyresdalhasviknarviklarvikgjovikmalvikgamviklenvikporsgrunnstjordalengerdaldrobakdrøbakxn--msy-ula0hvestvagoyxn--vgan-qoaxn--ryken-vuaxn--lten-graxn--stfold-9xaxn--hpmir-xqaxn--lury-iramálatvuopmimalatvuopmitysværkirkenesbirkenesmoskenesbáidárxn--fjord-lraxn--rdal-poabahcavuotnabáhcavuotnaxn--frde-gralindåsbearalvahkixn--hobl-iraráhkkerávjuxn--loabt-0qavågåáltábodøsundlundraderådeetnetimeholeauregrueoddavagavegaranatanaarnasolasulaaltalekafusavangbergkvamåmliamlibokntinnroangranosenoslobodorøstroststatåmotamotivguprivøyeroyerliermossvossxn--nvuotna-hwalusterlunnermarkerhábmerhabmerhvalerfjalerxn--rholt-mratysvarbaidarfitjargaularhápmirhapmirmelhusfosnesøksnesoksnestysneshemnesevenesflesbergeidsbergtonsbergtønsberglindasxn--sndre-land-0cbnamsosxn--srum-graøystre-slidreoystre-slidrevestre-slidretrondheimbalestrandxn--langevg-jxaaustrheimxn--skjk-soavagsoyaveroysandoykarmoyfinnoytranoyvestbytranbysykkylvenxn--hyanger-q1aspjelkavikandasuoloxn--fl-ziaxn--drbak-wuastathellexn--sr-varanger-ggbtelemarkxn--bhcavuotna-s4axn--porsgu-sta26fčáhcesuolocahcesuoloakrehamnåkrehamnsandøykarmøyfinnøytranøyvågsøyaverøynamdalseidxn--lesund-huabadaddjaxn--vegrshei-c0axn--btsfjord-9zagildeskålporsanguxn--trgstad-r1anávuotnanavuotnahammerfestxn--sgne-graxn--brnny-wuacibestadharstadnarviikaevenáššivestnesgjemnessandnesagdenesrennesoyxn--avery-yuaxn--tysvr-vrabearalváhkikongsbergspydebergrandabergxn--andy-iradavvesiidaxn--krdsherad-m8aporsáŋgufredrikstadbjerkreimringeburennebuaurskog-holandnotteroyxn--vgsy-qoa0jxn--rmskog-byaskierváivelandbyglandfrolandaurlandforsandxn--bjddar-ptamidsundålesundalesundfetsundfarsundovre-eikerøvre-eikerakershusxn--moreke-juasørfoldøstfoldostfoldsorfoldhøyangerhoyangerlevangerorkangertanangerxn--vestvgy-ixa6olillesandulsteinxn--rennesy-v1agranvinskjervoyxn--klbu-woalavagisxn--h-2faxn--ryrvik-byakafjordkåfjordseljordfolkebiblxn--gjvik-wuajevnakerxn--kfjord-iuabudejjuxn--kranghke-b0axn--davvenjrga-y4axn--rland-uuaxn--ldingen-q1axn--mlselv-iuaxn--rady-iraxn--linds-prabrumunddalxn--ygarden-p1amo-i-ranaeidskogrømskogromskoghjelmelandxn--finny-yuaxn--sr-odal-q1axn--skjervy-v1aballangenkvanangenkvænangengratangenxn--hmmrfeasta-s4acvossevangensuohkanxn--rde-ulaxn--mli-tlaxn--ksnes-uuanordlandskanlandskånlandsortlandfuoiskuxn--rros-graxn--hcesuolo-7ya35bxn--eveni-0qa01gagaivuotnagáivuotnaxn--seral-lradrammenmodalenmosjoenjan-mayentorskensteigengloppenxn--snes-poamatta-varjjatxn--sr-fron-q1aomasvuotnajessheimbådåddjåxn--krager-gyaxn--kvfjord-nxaxn--asky-iraxn--snase-nraxn--bidr-5nacholtålenxn--vads-jraxn--jlster-byamosjøenxn--rst-0nastavernxn--ostery-fyaxn--oppegrd-ixaxn--sknit-yqaxn--risa-5naoppegårdskiptvetrendalenholtalenxn--mot-tlaxn--lhppi-xqaxn--holtlen-hxaxn--srreisa-q1akopervikxn--muost-0qaxn--bmlo-grahokksundkvalsundegersundxn--karmy-yuaullensakerxn--hylandet-54axn--kvitsy-fyaxn--bod-2nalangevågberlevågkristiansandxn--rsta-frahornindalstjørdalshalsenstjordalshalsensandnessjoenhámmárfeastaxn--lrdal-srasør-fronsor-fronnord-odalkristiansundmátta-várjjatvestvågøynesoddennotoddenbuskerudøygardenoygardensalangenlavangenralingenrælingenlodingenlødingenleaŋgaviikalaakesvuemieleangaviikauenorgexn--srfold-byaaskvollxn--rskog-uuaxn--nry-yla5gxn--vry-yla5ghammarfeastaxn--rhkkervju-01afxn--givuotna-8yakommunekrokstadelvanedre-eikerhagebostadhægebostadxn--berlevg-jxakviteseidxn--s-1faxn--l-1faxn--nmesjevuemie-tcbafuosskomoårekemoarekexn--lt-liacxn--jrpeland-54asvalbardoppegardholmestrandtvedestrandsogndalsokndalarendalsunndalfolldalxn--krjohka-hwab49jlyngdaletnedalnorddalsaltdalgausdalskedsmovaksdalgjesdalstordalxn--frya-hraaarbortedrangedalxn--smna-graaurskog-hølandxn--vg-yiabtjeldsundhaugesundlindesnesxn--mre-og-romsdal-qqbxn--dnna-gradyntmpheremerseineshacknetenterprisecloudmineaccomaorimāoriorgmilcriiwigennetschoolhealthkiwigovtgeekxn--mori-qsacloudnsparliamentcomedorgcompronetedugovmuseumwebsitekinservicebarsywebsitebuildereerobookheimdnsleapcelleero-stagetechcrscsslorigingohomecdbedeeeiemesecabgngilnlalplchfisiincnnoroptatitmtltruauhulumkdkukskjplvtrgrfrkrhrusesismycynzcznetinteduassoososcloudstgbetaaezaeuhkusjshatenadiarycdn77hoptozaptois-a-knightmyftpno-ipjpnddnssdpdnsspdnsbarsysweetpepperis-a-bruinsfanis-very-sweetservegameis-a-soxfanhomelinuxcdn77-secureservebbsmisconfusedwebredirectblogsitefreedesktopcouchpotatofriestoolforgeaccesscamis-lostreadmyblogsmall-webfedorapeopleserveftpis-a-celticsfanmywirepotagertwmailin-dslsellsyourhomeread-booksfreeddnscable-modemis-savednflfanufcfanmlbfanstuff-4-saleendoftheinternetin-vpnmy-firewallhomeftpis-localis-a-chefboldlygoingnowherewebhopselfipkicks-assroxatunkcamdvrfedoraprojectgotdnsdvrdnsdyndnspubtlspimientahomeunixdontexistfedorainfracloudwmflabsfspagesbmoattachmentsteckidsfamilydsdnsaliasdynaliasnow-dnscloudnsdoomdnsduckdnsblogdnshomednsroutingthecloudendofinternetdsmynasip-dynamicpoivronhttpbinmyfirewallis-very-evilmysecuritycamerais-a-linux-userwmcloudis-a-geektuxfamilyis-a-candidatedoesntexistis-very-badhobby-sitegame-hostaltervistais-foundis-a-patsfandnsdojohepforgepodzonedynservcollegefanis-very-goodfrom-meis-very-niceisa-geeknerdpolacmedsldingorgcomnomgobabonetedupleskaemhlxmyboxrockyprvcydeuxfleurspdnscodebergheyflowstatichostorgmilcomnomgobneteduorgcomeduiorgmilcomngonetedugovcloudns1337ngrokacorggogfamcomwebgobnetedugokgopgkpgovgosbizpasaugumicsopozpapuwmwsrprusiskwpspkppspkmpspokeoiawsawifoumsdnskokwpmuppuppsppiwwiwoowuzswkzoschrzpisdnwzmiuwwitdpssewsseumigugimoirmpinbwinbwiihupporzgwgriwupowwskrwioswuozstarostwokonsulattmpccopruszkowmyspreadshopostrodakartuzyopolegminamediaustkazgorajgoraolawailawalomzawloclradombytomjaworznotargilubinkoninzagantorunkutnokepnonakloczestsopotsanokturekplockslasksklepzarowlukowmedaidgdaorgmilrelcomnomatmgsmartneteduelkgovwawsossexbiztgorysejnytychypomorzeboleslawiechomesklepsdscloudunicloudzakopanelegnicarawa-mazbydgoszczswidnikkrasnikwloclawekbielawamragowograjeworealestatebeskidykaszubymalopolskaprzeworskswiebodzinlecznadfirmaszkolawarmiagdyniamiastakazimierz-dolnymalborkswidnicadlugolekaostrolekapodlasieelblagtravelsimplesitezachpomormielecszczecinnieruchomosciwalbrzychlezajsklublinbedzinpoznanwielunmielnooleckostarachowicedkontopowiatwroclawrybniksuwalkileborkslupskgdanskostrowwlkptarnobrzegtourismwegrowkrakowglogowyou2pilanysamailwrocinfoagroautobeepshoppriviqhslapypiszlodzcfolksecommerce-shopmazurypulawyskoczowrzeszowpomorskiezgierzkaliszolkuszlowiczostrowiecsosnowiecmazowszewodzislawbialowiezazgorzeleckatowicepabianicejelenia-gorawolominkarpaczsieradznowarudaczeladzkonskowolaskierniewiceswinoujscieturystykabieszczadycieszynketrzynolsztynbialystokbabia-goraprochowicewarszawastalowa-wolapolkowicegorlicegliwiceponiatowalimanowalubartowaugustowkobierzyceopocznognieznoszczytnokolobrzegshoparenapodhalebielskoklodzkostargardatwithplayitownnamecoorgnetedugovacorgcomproestnetedugovbiznameislaprofinforechtngrokmedaaaacacpaenglawjurbarbarsykeeneticavocatacctcloudnsorgcomsecplonetedugov123paginaweborgcomnetintedugovnomepublidkinbarsygovx443cloudnsorgmilcomnetedugovcooporgmilcomschnetedugovnamecomcannetlibassoaemclantmcontstoreorgcomnomrecwwwbarsyfirminfoshopartsstackitmyddnswebspacelima-cityacincooxorgedugovbarsybrendlyhbvpsvpsspectrumlandinghostingacppmordoviamcprecbgorgmilcomspbnetintedumsknovgovbirrasmcdirmytismircloudvladimirnalchikadygeyamarinepyatigorskmyjinobashkiriaeurodirvladikavkazna4ugroznykustanaikalmykiacldmaildagestaniranbuildcloudcanvaliaravalwixdevelopmentappwritemigrationneedleverceldatabasestackitcodereplravendbonporterlovableaccoorgmilnetgovcoopmedorgcompubschnetedugovservicemecomygovorggovtvmedorgcomnetedugovinfoedgfacbmlonihkutwpsryxzbdtmacfhppmyspreadshopbrandpartiorgcomfhvpress123minsidaitcouldbeworlanbibkommunalforbundfhskiopsyskomvuxkomforbnaturbruksgymnloginlineorgcomnetedugovenscaledeuusentsurgebotdaorgmilcomnetgovnowteleporthashbangplatformlovablebarsyshopwarebasehoplixbarsyonlinemsf5gitappgitpagewawamscofigma-govcaffeinefigmacanvasoltstscwputerbarsysupportchatgptsquareomniweopensocialcpanelplaycodenotionnovecorewpsquaredpreviewjelecyonbyensrhtfastvpspieboxconvexjouwwebheyflowplatformshloginlinemadethissourcecraftclouderaorgorgcomartedugouvunivmeorgcomnetedugovsurveysstatichfheiyuxs4allprojectmyfastubervibehostapp-ionosdeployagentmecoorgcomschnetedugovbizcncostoreorgmilcomneteduembaixadaconsuladokiraranohoprincipesaotomeheliohobarsystorebaseshopwaresellfyaiabkhaziavologdamordoviapenzalenugsochinavoiexnetspbmsknovnorth-kazakhstanashgabadkareliaarmeniageorgiavladimirnalchikivanovobukharaadygeyakhakassiakalugakrasnodarjambylaktyubinsktroitskbryanskobninskkurganazerbaijanpokrovskbashkiriatselinogradvladikavkazmurmansktulatuvamangyshlaktashkentchimkentgroznykaragandatermezarkhangelskkustanaikalmykiabalashoveast-kazakhstankaracoldagestantogliattibarsyredorgcomgobedumirenknightpointaccoorgjelasticdiscoursecleverappsschacmiincogoornetonlineshopcogoorgmilcomwebnicnetintedugovbiznametestcoorgmilcomnomnetedugovorangecloudpersoindorgcomfinnatnetgovensmincomtourismintlinfox0611oyaorgmilcomnetedugovquickconnectvpnplusnettprequalifymeaddrmyaddrntdllwadlnctvavdrk12orgmilpolbeltelcomwebgennetedutskkepgovbbsbiznameinfocoorgmilcompronetedugovbiznameinfobetter-thanworse-thansakurafromdyndnson-the-webmymailerorgmilurlcomneteduidvgovmydnsgameclubebizmeneacsccogotvorhotelmilmobiinfovodteiflgplkmsmsbcckhincndnvncoztltmkckppzpdprvcvkvlvcrkrkscxuzchernovtsyrivneyaltaodesavolynrovnolutskltdinforgcomnetedugovbizvinnicazhitomirternopilpoltavakropyvnytskyizaporizhzhiasevastopolsebastopoluzhgoroduzhhorodkharkovkharkivvinnytsiakhmelnytskyizaporizhzhecrimeaodessazhytomyrnikolaevcherkassydonetskluganskluhanskkirovogradivano-frankivskchernivtsikrymkievkyivlvivsumyzakarpattiamykolaivcherkasychernigovkhersonchernihivdnipropetrovskdnepropetrovskkhmelnitskiyneacsccogoorusorgmilcomedugovmyspreadshopadimono-ipbarsybarsyonlinelayershiftnh-servretrosnubapicampaignservicelugaffinitylotteryweeklylotteryraffleentrygluglugsmeaccoindependent-inquestnimsitecopropymntltdorgplcschnetgovnhsbarsyindependent-commissionindependent-reviewpolicepublic-inquiryindependent-panelconnhospindependent-inquiryroyal-commissionoraclegovcloudappscck12libaws-govccphxcclibpvtparochchtrcck12libcceatonk12coglibtecgendstmusann-arborwashtenawcck12glghcck12sealibforksolympiabainbridge-islkeyporthoquiamyarrow-pointcentraliaport-townsendsequimport-ludlowrentonsilverdalebremertonredmondsheltonbellevueport-orchardport-angeleskingstonchehalisaberdeengig-harborseattlepoulsboidmdndsddemenegacalamaiavawapailalflnmdcncscohnhmihiviwiriinmntnmocoutvtctmtgunjokakwvnvprarorasmskstxwynykyazisadninsnngosrvis-bymircloudservernamepointtoenscaledland-4-salefreeddnsstuff-4-saleazure-apinoipdatabricksappscloudnsgolffanheliohostazurewebsitesgvorgmilcomgubneteducoorgcomnetd0egvorgmilcomnetedugovmydnsiacostoree12orgmilcomnomwebgobbibrectecnetintedugovraremprendefirminfoartseducok12orgcomnethidnsidacaiiosonlahanamhanoicamauhueorgcompronetintedugovbizbacninhtayninhhoabinhnamdinhtravinhhaiphongvinhlonghaiduongquangnamquangtrithuathienhuequangninhbacgianghaugiangquangbinhsoctrangbentrethanhphohochiminhdanangkontumhatinhkhanhhoathanhhoahealthgialailaocaiyenbaibackanngheanlonganphuyenphuthocanthodaklakdongnainameinfovinhphucdongthapkiengiangtiengiangquangngailaichaulangsonlamdongdaknonghagiangangiangcaobangbinhduongninhthuanbinhthuanbaclieuthaibinhninhbinhbinhdinhtuyenquanghungyenbaria-vungtauthainguyendienbienbinhphuocschbizputerimagine-proxyorgcomnetedugovcloud66advisormypetsdyndnsxn--8dbq2axn--4dbgdty6cxn--5dbhl8dxn--hebda8bxn--80auxn--d1atxn--c1avgxn--o1acxn--o1achxn--90azhxn--55qx5dxn--uc0atvxn--od0algxn--wcvs22dxn--gmqw5axn--mxtq1mxn--12c1fe0brxn--h3cuzk1dixn--12co0c3b4evaxn--12cfi8ixb8lxn--o3cyx2axn--m3ch0j3axn--j1adpxn--90amcxn--90a1afxn--h1ahnxn--j1ael8bxn--h1alizxn--c1avgxn--j1aefxn--80aaa0cvacxn--41acaffeineexeopentunnelbotdashtelebitorgtmaccoagricorgmilnomwebnicngonetaltedugovlawnisschoolgrondaraccoorgmilcomschnetedugovbizinfoprg1-zeropstritonstackitlimazeropsaccoorgmilgovяспборгкоммскбизмирсамаракрымсочиакодпроргобрупрצהלממשלישובאקדמיהองค์กรธุรกิจรัฐบาลศึกษาทหารเน็ต教育網絡組織公司政府個人닷넷한국澳门新闻澳門联通家電嘉里招聘通販닷컴삼성コムგეбгрфеюadcdbdgdidmdsdtdaebedeeegeiejekemenepereseveyegabacalamanauavapaqasazacfbfafgfnfpfwftfbgcgagggegkgngmgsgpgvgtgugilmlnlalclglplsltlhmimjmkmmmomambmcmdmfmgmzmpmsmtmgbbblbsbecccacnclcmcvctcscmhkhghchbhthphshlinikifigiaibicivisikninhnmncnbngnsnpnvntnjoionomobocoaofodorosotoptstttytatbtetgtithtmtltrusuvuaucueuguhulumunufjdjbjtjsjlkmkhkfkdkcktkukskpkgpmpnpkpjpgqaqmqiqsvtvcvbvmvlvrwpwtwzwbwcwawgwkwmwtrsrprgrfrercrbrarnrmrlrkrirhrwsusrssspsgsesbsaslsmsissxmxaxcxuypysylymykygybycyuztzsznzmzkzdzczbzazελευ世界台灣购物公益点看臺灣网络書籍在线网站手机机构大拿游戏信息台湾谷歌慈善商标香港中国餐厅网址中國商城食品微博政务移动集团公司八卦商店健康网店政府时尚佛山中信娱乐广东企业homedepotengineeringاماراتrepublicankuokgroupversicherungchannelcitadelxn--pgbs0dhxn--b4w605ferdstatebankwebsitexn--mgb9awbf亚马逊淡马锡alibabaxn--ngbc5azdxn--mgbbh1axn--45br5cyltoshibabuildworldcloudtradeguideplacespacedancemoviephoneprimesmilebiblestyleappleazurestoreskypegripexn--l1accdrivelottehorsehouseleasechasereisestadahondaomegaaetnaamicaninjanokiamediadeltavodkaedekaosakapizzaslingemailgmailtirolshelltmallfinallegaltotalhotelamfamforumrehabmusicciticricohcoachwatchboschearthfaithirishmiamiarchidubaiguccipraxiみんなストアセールcanonsalononionnikonepsonkoelngreensevencrownikanoradioaudioweiboglobopromogalloyahoociscorodeovideomangobingotokyovolvolottokyotophotosmartsportquesttrusthyattjetztadultcymrubaidutushuxn--kprw13dubankclickblackmerckgroupsharpcheapnowtvxn--h2brj9cקוםհայоргсрбмонкомбелмкдқазрусукрمصرقطرعربكومdadcfdmedwedredphdthdbidpidkrdmsdltdiceonewmeglemoerwecfageacbanbambaaaammakianraspacpaaxawtfbcgaegongingaigvigorgdogdhlmilrilonlaolloluoljllcalgalnflafltelsrlfrllplkimibmcamcombommomifmabbjcbscbwebcabnabtabmlbpubabcbbcnecincpncllcstcwtcpwcnyckfhbzhovhmoiskiobisbitcifyituipinvinwinxincbnbcnmanfangdnmenrenkpnmtnyunrunfununobiojioriohbogmofooboooooacoecoceongoproartistottnttbbtcateatlatvetpetbetnethktmitfitintjothotgotdotbotprueduicujnjyouinknhktdkappsapgapmapdnptopgopllpjmpzipvipripesqtrvdtvitvdevmovgovhivnrwlawsewnewbmwwownowhowdvrftrmtrsfrbarcartvscrseusawsupsubssbsadsddsldssasbmsmlsxxxboxfoxgmxtjxsextaxbuyflydiysoyjoyskypaydaygayxyzanzbizwebersenerpokerlameractortatarsolarລາວคอมไทยtourslocusnexuslexusgiftsbeatsboatspartspressglassswissकॉमनेटtiresgivescodeshomesgamestunesshoescardswalesloansvegastoolsdealsautosparisファッションworkssucksrocksxeroxforexfedexpartylillymoneystudyrugbytoraytoday中文网xn--unup4y天主教飞利浦新加坡enterprises我爱你嘉里大酒店christmasxn--fct429kholdingsxn--8y0a063axn--mgbx4cd0ablifestyleabogadoallstatenetbankكاثوليكxn--s9brj9cxn--gk3at1ebestbuycharityxn--55qx5dmicrosoftpropertybasketballhomegoodscorsicajewelrygallerygrocerysurgerycountrybrusselsverisignferreroxn--czr694bhdfcbankcommbanksoftbankپاكستانپاکستانnextdirectالسعوديهالعليانxn--h2brj9c8cxn--80adxhksshikshaxn--mgbai9azgqp6jcuisinellabarclayscatholicxn--kpry57dcompanyxn--xhq521bblackfridayxn--mgba3a3ejtsandvikxn--d1acj3bacademydownloadمليسياxn--j1amhxn--w4r85el8fhu5dnraipirangaathletaxn--fhbeixn--mgbqly7cvafrzuerichxn--c2br7gஇலங்கைcontractorsxn--io0a7igraphicsinsurancetemasekxn--xkc2al3hye2amotorcyclesphotographydirectoryplumbingxn--vhquvclothingtrainingcleaningwilliamhilllightingxn--mgba3a4f16ashoppingcateringeducationokinawapicturesventuresproductionsxn--9et52uwalmartഭാരതംsupportrealestatecapitalonexn--nqv7fs00emaauspostfloristdentistxn--qxamgodaddybradescobargainsmitsubishikerryhotelsxn--9dbq2axn--3pxu8kimmobilienxn--fjq720axn--mgbtx2bholidaymckinseymadridbusinessbuildershelsinkixn--4gbrimмоскваالسعودیةcoffeedegreelacaixapartnersalsaceofficeabbvievoyageorangegeorgeonlinechromemobilekindlegoogleoraclecircleschulesecureinsurexn--mgba7c0bbn0aestatexn--mgbc0a9azcgcruisehangoutxn--vuq861bxn--42c2d9arexrothfirestoneuniversityxn--nnx388alifeinsuranceextraspaceонлайнvermögensberatersoftwarexn--fiqs8sxn--mgbab2bdxn--w4rs40ltiendaभारतम्africatoyotaotsukasakuracameracreditcardnagoyaconsultingnetworktheatermonsterprogressivepioneerxn--55qw42gracingdatingvotingvikinglivinggivingxn--bck1b9a5dre4cbrotherweatherjoburgفلسطينlplfinancialxn--clchc0ea0b2g2a9gcdfutbolschoolsocialglobaldentalwoodsidechanelairtelmatteltravelrealtorwebcamstreamభారత్unicomalstomxn--nodexn--6frz82gmuseumfurniturexn--rvc1e0am3exn--mix891faccenturexn--11b4c3dismailineustardiscountquebeccomsecclinicservicesxn--y9a3aqxn--c1avgswatchchurchsearchالاردنmarketingcontacthealthmonashshoujisanofitaipeiamericanexpresssuzukiアマゾンクラウドポイントbhartiグーグルxn--mgberp4a5d4armemorialxn--1qqw23alondonmormoninstitutevisionbostonnortoncouponmaisonamazonvirginberlindesigndurbanolayannissananquanxihuanhitachikaufengardenreisenbayerntechnologydatsunxn--90a3aclatinocasinostudiophysioxn--ngbe9e0apharmacytattootaobaoaramcoexpertreportabbottdirectselectimamatfairwindspictettargetmarketintuittravelersinsurancecreditdupontryukyusuppliesxn--tckwebnpparibasschmidtmerckmsdyodobashirestaurantbridgestonecricketxn--fpcrj9c3dbostikbroadwayattorneylefrakemerckxn--fiq228c5hscareersfarmerswinnersflowersxn--wgbh1cguitarsxn--54b7fta0ccxn--p1acfmakeupgalluplandroverxn--kcrx77d1x4agoldpointbauhausxn--mgbayh7gpahiphopplaystationxn--mgba3a4fraxn--eckvdtc9dhyundaixn--gckr3f0fistanbulticketsmarketsflightschintaireviewsxn--3e0b707ewindowsxn--fiqz9sfinancialxn--fzys8d69uvgmابوظبيdiscoverreviewবাংলাxn--5su34j936bgsgmoscowobserverapartmentsдетиارامكوсайтeurovisionxn--i1b6b1a6a2exn--xkc2dl3a5ee0hتونسموقعبارتڀارتشبكةعمانبيتكعراقreadkredbondlandbandfundfoodprodgoldfordtubecafesafelifeggeeieeefreefagepagegugezonewinememenamegamesaleablebikenikelikecarecbreherefiresaveloveliveblueartedatesitevotecaseluxebofamodaltdaasdatiaayogasinavanashiaasiajavabbvatevavivadatazaraarpacasavisasncfprofmaifsurfgolfdvagsongbingpingwangkpmggoogblogpohlfailcooldellcalldeallidlsarlfilmteamroomfarmimdbarabclubhdfcicbchsbcgmbhrichtechfishdishcashminiernikddiaudiwikimobitaxicitikiwidesiqponskinloanakdnwienopenporncerntownimmolimoolloinfonicofidolegosaxozeroaerovivoautovotomotofastbestresthostpostnextlgbtchatseatgiftmeetdietreitmintrentgentspotscotguruitausohumenucyoubanklinkpinkdclktalksilkbookseekworkrsvpaarpjeepshopcoophelpcamppccwshowbeerstarruhrflirweirhaircarsparsjprshausplusnewstipstoysjobskidsfanspicsdocsxboxamexsexynavycitysonyarmyallybabyplaydeliverybuzzgbizlamborghiniphilipsලංකාಭಾರತfitnessexpresslanxesspfizercenterwalterlawyersoccercareerkosherbrokerlockerdealerdoctorauthorxn--mgbqly7c0a67fbcvermögensberatungjaguarxn--pssy2uxn--hxt814eflickrrepairrogersairbusxn--mgbai9a5eva00beventsyachtsxn--t60b56aভাৰতভারতभारतभारोतviajeshermeshughesxn--j1aefसंगठनvillasଭାରତclaimshotelsભારતzapposphotosjuegoscondostatamotorsgratistennisਭਾਰਤtkmaxxtjmaxxschaeffleryandexxn--80aswgrealtysafetybeautyluxuryxn--3ds443gsupplyfamilyxn--o3cw4hhockeysydneyxn--90aenissayalipayenergycomputeragencyxn--rovu88b電訊盈科xn--gecrj9cstatefarmaccountantaquarelleolayangroup香格里拉xn--p1ai组织机构xn--1ck2e1bxn--mgbt3dhdschwarzموريتانياabudhabinowruzkomatsufujitsuhospitalxn--80asehdbxn--mgbtf8flxn--j6w193gxn--yfro4i67oprudentialxn--flw351ecruisescoursesrecipesxn--e1a4cferrarixn--ses554gxn--wgbl6awatchesstaplessinglesxn--mgbcpq6gpa1axn--otu796dpropertiescreditunionxn--mgbah1a3hjkrdstockholmhisamitsuالسعوديةstcgroupdomainsoriginscouponsbloombergclubmedfroganslimitedxn--80aqecdr1aexposedinternationalequipmentbarclaycardxn--q7ce6axn--mgbi4ecexpprotectionassociatesconstructionxn--cck2b3bxn--45q11candroidfoundationישראלxn--mgbca7dzdocliniqueboutiqueengineerxn--qxa6asystemsfirmdalefashionauctionxn--nqv7finfinitirentalsreliancetradingweddingfishinghostinggentingbookingcookingxn--3hcrj9cgraingerxn--czrs0tdemocratsamsungyokohamaxn--h2breg3evexn--nyqy26alundbeckmelbournevacationssolutionsfrontierxn--vermgensberatung-pwbmanagementxn--cg4bkixn--mgb2ddeslincolnhamburgsandvikcoromantblockbusterairforcebarefootxn--4dbrk0ceinvestmentsfeedbackcommunityxn--ngbrxالبحرينdiamondsamsterdamhealthcareredumbrellaxn--mxtq1mxn--2scrj9cagakhanxn--mgbpl2fhкатоликcaravanசிங்கப்பூர்richardlimortgageamericanfamilyxn--fzc2c9e2cscholarshipssaarlandxn--imr513nvlaanderensamsclubgoodyearkitchenஇந்தியாweatherchannelallfinanzxn--kput3iالسعودیۃxn--90aisxn--efvy88hالجزائرxn--mgbaam7a8hexchangejpmorganxn--tiq49xqyjfidelitysecurityxn--mk1bu44cwanggouxn--fiq64bxn--6qq986b3xlxn--mgbbh1a71exn--80ao21amarshallsxn--5tzm5gtravelerspanasoniclatrobeyoutubeaccountantsxn--rhqv96gxn--cckwcxetdanalyticsxn--ygbi2ammxبازاربھارتسوريةorganicfreseniusسورياxn--9krt00axn--qcka1pmcxn--jlq480n2rgdeloittesciencefinancexn--jvr189mxn--30rr7yhomesensehotmailbaseballfootballleclercboehringerxn--q9jyb4cxn--mix082fاليمنهمراهpolitieسودانايرانایرانnetflixyamaxunxn--lgbbat1ad8jcollegestoragecapetowncolognekerrypropertiesxn--mgbgu82axn--ogbpf8flxn--czru2dwhoswhociprianilasallexn--g2xx48cforsalebanamexaudiblexn--vermgensberater-ctbxn--zfr164bericssonvanguardxn--45brj9cindustriestheatremarriottxn--3bst00mcomparexn--mgberp4a5d4a87gcapitaldigitalالمغربbarcelonashangrilaxn--d1alfcalvinkleinwwwcitysapporokawasakinagoyasendaikobekitakyushuyokohamackjp";
+const rulesRoot = 627;
+const exceptionsRoot = 631;
+
+// NOTE: kept (intentionally) near-identical to packages/tldts-icann/src/suffix-trie.ts.
+// They are separate copies rather than a shared helper because the lookup is
+// only fast when the typed arrays are module-scope monomorphic globals —
+// closing over them (a shared factory) measured ~20% slower. The ICANN build
+// also specializes (constant mask, no isIcann/isPrivate). Keep the two in sync.
+// `edgeOffset` (where each label starts in `labelText`), `edgeHash` (djb2 of
+// each label) and `wildcardEdge` (each node's '*' edge, or -1) are derived once
+// at load instead of being shipped: the bundle then carries only the
+// compressible `labelText` + structure, while the lookup binary-searches
+// integer hashes. The cost is a single ~1ms pass at first import — cheaper than
+// the object trie it replaces. Kept at module scope (not captured in a closure)
+// so V8 treats the typed arrays as fast monomorphic globals.
+const numberOfNodes = nodeFlags.length;
+const numberOfEdges = edgeLength.length;
+const edgeOffset = new Uint32Array(numberOfEdges);
+const edgeHash = new Uint32Array(numberOfEdges);
+const wildcardEdge = new Int32Array(numberOfNodes).fill(-1);
+for (let node = 0, offset = 0; node < numberOfNodes; node += 1) {
+    for (let edge = edgeStart[node]; edge < edgeStart[node + 1]; edge += 1) {
+        edgeOffset[edge] = offset;
+        const end = offset + edgeLength[edge];
+        let hash = 5381;
+        for (let i = end - 1; i >= offset; i -= 1) {
+            hash = (hash * 33) ^ labelText.charCodeAt(i);
+        }
+        edgeHash[edge] = hash >>> 0;
+        if (edgeLength[edge] === 1 &&
+            labelText.charCodeAt(offset) === 42 /* '*' */) {
+            wildcardEdge[node] = edge;
+        }
+        offset = end;
+    }
+}
+// Result of the last `walk`, kept in module scope to avoid allocating a match
+// object. Safe because lookups are synchronous and read right after `walk`.
+let matchNode = -1;
+let matchStart = 0;
+let matchEnd = 0;
+/**
+ * True if edge `edge`'s label equals `hostname[start, start + length)`.
+ */
+function labelEquals(edge, hostname, start, length) {
+    if (edgeLength[edge] !== length) {
+        return false;
+    }
+    const offset = edgeOffset[edge];
+    for (let i = 0; i < length; i += 1) {
+        if (labelText.charCodeAt(offset + i) !== hostname.charCodeAt(start + i)) {
+            return false;
+        }
+    }
+    return true;
+}
+/**
+ * Find the child edge of `node` whose label is `hostname[start, start + length)`.
+ * Edges are sorted by hash, so binary-search the hash then verify the label
+ * (scanning the rare run of equal hashes). Returns the edge index or -1.
+ */
+function findEdge(node, hash, hostname, start, length) {
+    let lo = edgeStart[node];
+    let hi = edgeStart[node + 1];
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        const value = edgeHash[mid];
+        if (value < hash) {
+            lo = mid + 1;
+        }
+        else if (value > hash) {
+            hi = mid;
+        }
+        else {
+            for (let e = mid; e >= lo && edgeHash[e] === hash; e -= 1) {
+                if (labelEquals(e, hostname, start, length))
+                    return e;
+            }
+            for (let e = mid + 1; e < hi && edgeHash[e] === hash; e += 1) {
+                if (labelEquals(e, hostname, start, length))
+                    return e;
+            }
+            return -1;
+        }
+    }
+    return -1;
+}
+/**
+ * Walk `hostname`'s labels right-to-left from `root`, recording the deepest
+ * node whose flag passes `allowedMask` (with the label boundaries of that match
+ * in `matchStart`/`matchEnd`). Returns whether any match was found.
+ */
+function walk(hostname, root, allowedMask) {
+    let node = root;
+    let end = hostname.length;
+    let hash = 5381;
+    matchNode = -1;
+    for (let i = hostname.length - 1; i >= 0; i -= 1) {
+        const code = hostname.charCodeAt(i);
+        if (code === 46 /* '.' */) {
+            const start = i + 1;
+            let edge = findEdge(node, hash >>> 0, hostname, start, end - start);
+            if (edge === -1) {
+                edge = wildcardEdge[node];
+            }
+            if (edge === -1) {
+                return matchNode !== -1;
+            }
+            node = edgeChild[edge];
+            if ((nodeFlags[node] & allowedMask) !== 0) {
+                matchNode = node;
+                matchStart = start;
+                matchEnd = end;
+            }
+            end = i;
+            hash = 5381;
+        }
+        else {
+            hash = (hash * 33) ^ code;
+        }
+    }
+    // Left-most label: hostname[0, end). Same find/descend/record as the loop —
+    // duplicated rather than folded into the loop (via `i >= -1`) because that
+    // extra per-character branch measured slightly slower on the hot path.
+    let edge = findEdge(node, hash >>> 0, hostname, 0, end);
+    if (edge === -1) {
+        edge = wildcardEdge[node];
+    }
+    if (edge !== -1) {
+        node = edgeChild[edge];
+        if ((nodeFlags[node] & allowedMask) !== 0) {
+            matchNode = node;
+            matchStart = 0;
+            matchEnd = end;
+        }
+    }
+    return matchNode !== -1;
+}
+/**
+ * Check if `hostname` has a valid public suffix in the trie.
+ */
+function suffixLookup(hostname, options, out) {
+    if (fastPathLookup(hostname, options, out)) {
+        return;
+    }
+    const allowedMask = (options.allowPrivateDomains ? 2 /* RULE_TYPE.PRIVATE */ : 0) |
+        (options.allowIcannDomains ? 1 /* RULE_TYPE.ICANN */ : 0);
+    // Exceptions have priority and strip their own left-most label (e.g. the
+    // rule '!www.ck' makes the suffix of 'www.ck' be 'ck').
+    if (walk(hostname, exceptionsRoot, allowedMask)) {
+        out.isIcann = (nodeFlags[matchNode] & 1 /* RULE_TYPE.ICANN */) !== 0;
+        out.isPrivate = (nodeFlags[matchNode] & 2 /* RULE_TYPE.PRIVATE */) !== 0;
+        out.publicSuffix = hostname.slice(matchEnd + 1);
+        return;
+    }
+    if (walk(hostname, rulesRoot, allowedMask)) {
+        out.isIcann = (nodeFlags[matchNode] & 1 /* RULE_TYPE.ICANN */) !== 0;
+        out.isPrivate = (nodeFlags[matchNode] & 2 /* RULE_TYPE.PRIVATE */) !== 0;
+        out.publicSuffix = hostname.slice(matchStart);
+        return;
+    }
+    // No match: the prevailing '*' rule makes the right-most label the suffix.
+    out.isIcann = false;
+    out.isPrivate = false;
+    const lastDot = hostname.lastIndexOf('.');
+    out.publicSuffix = lastDot === -1 ? hostname : hostname.slice(lastDot + 1);
+}
+
+// For all methods but 'parse', it does not make sense to allocate an object
+// every single time to only return the value of a specific attribute. To avoid
+// this un-necessary allocation, we use a global object which is re-used.
+const RESULT = getEmptyResult();
+function parse(url, options) {
+    return parseImpl(url, 5 /* FLAG.ALL */, suffixLookup, options, getEmptyResult());
+}
+function getHostname(url, options) {
+    /*@__INLINE__*/ resetResult(RESULT);
+    return parseImpl(url, 0 /* FLAG.HOSTNAME */, suffixLookup, options, RESULT).hostname;
+}
+function getPublicSuffix(url, options) {
+    /*@__INLINE__*/ resetResult(RESULT);
+    return parseImpl(url, 2 /* FLAG.PUBLIC_SUFFIX */, suffixLookup, options, RESULT)
+        .publicSuffix;
+}
+function getDomain(url, options) {
+    /*@__INLINE__*/ resetResult(RESULT);
+    return parseImpl(url, 3 /* FLAG.DOMAIN */, suffixLookup, options, RESULT).domain;
+}
+function getFullDomain(url, options) {
+    /*@__INLINE__*/ resetResult(RESULT);
+    const result = parseImpl(url, 3 /* FLAG.DOMAIN */, suffixLookup, options, RESULT);
+    // The hostname *is* the full domain (subdomain + domain) whenever a
+    // registrable domain exists; gate on `domain` so non-registrable inputs
+    // (IPs, suffix-less or invalid hostnames) return `null` like `getDomain`.
+    return result.domain === null ? null : result.hostname;
+}
+function getSubdomain(url, options) {
+    /*@__INLINE__*/ resetResult(RESULT);
+    return parseImpl(url, 4 /* FLAG.SUB_DOMAIN */, suffixLookup, options, RESULT)
+        .subdomain;
+}
+function getDomainWithoutSuffix(url, options) {
+    /*@__INLINE__*/ resetResult(RESULT);
+    return parseImpl(url, 5 /* FLAG.ALL */, suffixLookup, options, RESULT)
+        .domainWithoutSuffix;
+}
+
+exports.FB = getDomain;
+__webpack_unused_export__ = getDomainWithoutSuffix;
+__webpack_unused_export__ = getFullDomain;
+__webpack_unused_export__ = getHostname;
+__webpack_unused_export__ = getPublicSuffix;
+__webpack_unused_export__ = getSubdomain;
+__webpack_unused_export__ = parse;
+//# sourceMappingURL=index.js.map
 
 
 /***/ }),
@@ -150240,7 +151591,7 @@ function strictObject(shape, params) {
         type: "object",
         shape,
         catchall: never(),
-        ...util.normalizeParams(params),
+        ...normalizeParams(params),
     });
 }
 // looseObject
@@ -150868,9 +152219,9 @@ Isolation and target rules:
 1. Operate only through the accessibility-audit plugin. Do not install dependencies in, edit, format, lint, build, or test the target project's source code.
 2. Do not create or modify AGENTS.md, CLAUDE.md, Cursor rules, repository policies, CI, hooks, package manifests, lockfiles, or other governance files in the target project, and do not treat them as audit inputs. The host agent must still obey all applicable instructions.
 3. Write only to the configured accessibility-audit output directory. Treat all other project files as read-only except for a page-list file explicitly supplied as input.
-4. Accept explicit HTTP(S) URLs or one XLSX, CSV, TXT, or JSON page-list path. Before starting, confirm the exact pages/input, the single landing-page QA URL, and the auditor in one concise interaction. Pre-fill the auditor as Automated unless the user supplied another name. Default the landing-page QA URL to the first resolved URL unless the user supplies it. Do not ask for information that can be derived from the URLs, page list, or defaults.
-5. Use run_accessibility_audit for both explicit URLs and page-list files. Compatible clients display its confirmation form; when forms are unavailable, show the pages/input and default auditor in chat and retry with confirmed true after approval. The bundled report template is the default; do not ask the user to upload a template.
-6. Derive allowedHosts from the supplied URLs or page list and pass the narrowest hosts or parent domains that cover them. Do not crawl or test another host without authorization.
+4. Accept explicit HTTP(S) URLs, a pasted whitespace-, newline-, bulleted-, numbered-, or JSON-array URL list, or one XLSX, CSV, TXT, JSON, or local URL-set XML sitemap page-list path. Before starting, resolve the input and present one concise pre-audit summary containing the page count and preview, exclusions, hosts and supplied-pages-only no-crawl boundary, effective coverage and run settings, output, single landing-page QA URL, and auditor. Pre-fill the auditor as Automated unless the user supplied another name. Default the landing-page QA URL to the first resolved URL unless the user supplies it. Do not ask for information that can be derived from the URLs, page list, or defaults.
+5. Use run_accessibility_audit for both explicit URLs and page-list files. Compatible clients display its confirmation form; when forms are unavailable, show the returned structured pre-audit summary in chat and retry with confirmed true and the returned confirmationDigest after approval. The digest binds the approved page snapshot and all effective settings, including report name, template path, and optional local historyPaths. If the tool returns confirmation-stale, show the updated summary and obtain fresh approval. The bundled report template is the default; do not ask the user to upload a template. Prior audit JSON files are optional and reporting-only; use historyPaths only when the user asks for trends.
+6. Derive allowedHosts from the supplied URLs or page list and pass the narrowest hosts or parent domains that cover them. Use exactHosts when descendants must be rejected. Set maxPages when the user needs a hard page-count ceiling; exceeding it must stop before browser work rather than silently truncate the scope. Do not crawl or test another host without authorization.
 7. Set stagingOnly to true only for an explicitly staging-only request when every target is a staging, QA, preview, test, or local host. Otherwise set it to false and rely on allowedHosts.
 
 Execution rules:
@@ -150878,26 +152229,29 @@ Execution rules:
 2. Run the implemented axe, DOM/semantic, keyboard/focus, responsive, disclosure/navigation, image/link-name, form/error-state, same-origin link-destination, tab relationship, and common component checks. A component that is absent from a page is not a pass for that component.
 3. Validate same-origin links conservatively. Confirm 404/410 only when both the authenticated request context and an in-page fetch agree. Keep server errors, placeholder destinations, and ambiguous states as review items. Do not request external, download, logout, delete, or unsubscribe destinations.
 4. Capture at most one representative contextual element screenshot per final confirmed, blocker, or review reporting unit when the relevant rendered state can be reproduced. Keep all occurrences traceable in JSON. Use full-page evidence only for page-level failures or an unresolved blocking surface. Store PNGs beside the workbook and add relative hyperlinks in Findings and Evidence. Never embed audit screenshots in the workbook.
-5. Display progress through MCP notifications in Cursor, Claude, Codex, or Copilot and through stderr in terminal runs. The client Stop action or one Ctrl+C requests graceful cancellation: close active browser work, retain completed evidence, and write partial HTML and JSON plus a validated partial XLSX workbook. Label that output cancelled/partial. A second Ctrl+C is an immediate exit and may prevent final report writing.
-6. Treat WCAG 2.2 Level AA as the public conformance target. AAA checks are optional advisory evidence and must never relabel the audit as an AAA conformance assessment. Do not claim that automation, axe, or a scripted screen-reader journey covers all WCAG 2.2 requirements. Retrieve list_guided_manual_checks, confirm that it contains one criterion-specific procedure and evidence prompt for each of the 55 active A/AA criteria, and preserve screen-reader, physical-device, content, visual, and judgment-based checks as outstanding until a qualified person performs them.
-7. Treat deterministic reproduced failures as confirmed issues. Keep heuristics or unresolved content and visual questions as review issues. Keep unavailable pages as blockers. Keep unexecuted assistive-technology and judgment-based procedures as guided/manual checks.
-8. Use one row for the same reusable component implementation and root cause across all affected pages, and group repeated DOM instances within that component. List every affected page individually in the merged row's Links cell. Keep a page-specific implementation, colour treatment, behaviour, success criterion, or remediation requirement on its own row. Do not merge unrelated findings merely because they share a host or WCAG criterion. Do not report missing aria-controls alone as a WCAG failure or standalone review for an ordinary disclosure/accordion; generic disclosures/accordions do not require Escape to close.
-9. If a modal, consent layer, or other surface cannot be dismissed, record it as an interaction-coverage blocker, skip underlying state-based checks, and never interpret the resulting focus sequence or absence of findings as a page pass. Preserve axe incomplete results, unresolved focus-indicator samples, and incomplete interactions as raw JSON evidence and inconclusive coverage; do not promote them to workbook findings. Record every page/viewport/area outcome in the JSON coverage matrix using confirmed-passed, confirmed-failed, tested-inconclusive, manual-review-required, not-tested, or not-applicable.
+5. Display progress through MCP notifications in Cursor, Claude, Codex, or Copilot and through stderr in terminal runs. The client Stop action or one Ctrl+C requests graceful cancellation: close active browser work, retain completed evidence, and write partial HTML, JSON, CSV, and SARIF plus a validated partial XLSX workbook. Label that output cancelled/partial. A second Ctrl+C is an immediate exit and may prevent final report writing.
+6. If an MCP audit tool returns a structured failure, report its stage, code, and plain-language message, then follow the nextAction guidance without broadening the authorized scope. Do not expose a stack trace or local implementation details in normal output.
+7. Treat WCAG 2.2 Level AA as the public conformance target. AAA checks are optional advisory evidence and must never relabel the audit as an AAA conformance assessment. Do not claim that automation, axe, or a scripted screen-reader journey covers all WCAG 2.2 requirements. Retrieve list_guided_manual_checks, confirm that it contains one criterion-specific procedure and evidence prompt for each of the 55 active A/AA criteria, and preserve screen-reader, physical-device, content, visual, and judgment-based checks as outstanding until a qualified person performs them.
+8. Treat deterministic reproduced failures as confirmed issues. Keep heuristics or unresolved content and visual questions as review issues. Keep unavailable pages as blockers. Keep unexecuted assistive-technology and judgment-based procedures as guided/manual checks.
+9. Use one row for the same reusable component implementation and root cause across all affected pages, and group repeated DOM instances within that component. List every affected page individually in the merged row's Links cell. Keep a page-specific implementation, colour treatment, behaviour, success criterion, or remediation requirement on its own row. Do not merge unrelated findings merely because they share a host or WCAG criterion. Do not report missing aria-controls alone as a WCAG failure or standalone review for an ordinary disclosure/accordion; generic disclosures/accordions do not require Escape to close.
+10. If a modal, consent layer, or other surface cannot be dismissed, record it as an interaction-coverage blocker, skip underlying state-based checks, and never interpret the resulting focus sequence or absence of findings as a page pass. Preserve axe incomplete results, unresolved focus-indicator samples, and incomplete interactions as raw JSON evidence and inconclusive coverage; do not promote them to workbook findings. Record every page/viewport/area outcome in the JSON coverage matrix using confirmed-passed, confirmed-failed, tested-inconclusive, manual-review-required, not-tested, or not-applicable.
 
 Report rules:
-1. Generate the self-contained accessible HTML report, seven-sheet CarlasHub WCAG 2.2 workbook, and JSON evidence. Preserve the six canonical template worksheets in their existing order, tab colours, accessible colour scheme, formulas, validations, filters, and the 25 Findings columns; append only the generated WCAG Criteria ledger. Remove placeholder values and do not add other worksheets or columns.
+1. Generate the self-contained accessible HTML report, seven-sheet CarlasHub WCAG 2.2 workbook, JSON evidence, CSV finding register, and SARIF 2.1.0 results. Preserve the six canonical template worksheets in their existing order, tab colours, accessible colour scheme, formulas, validations, filters, and the 25 Findings columns; append only the generated WCAG Criteria ledger. Remove placeholder values and do not add other worksheets or columns.
 2. Populate Page Inventory with one structured row per requested or skipped URL, Evidence with one structured row per retained evidence item, Manual Checks with one criterion-specific procedure and evidence prompt for each of the 55 active WCAG 2.2 A/AA criteria, Findings with one row per reporting unit, and WCAG Criteria with every active WCAG 2.2 success criterion labelled passed, failed, manual-review-required, not-applicable, or inconclusive. Use portable relative links for screenshots and direct links for page URLs. Do not embed screenshots.
 3. Put only concrete fixes in Notes. Do not mention Jira, ticket workflow, audit narration, or uncertainty in remediation fields.
 4. Put the single landing-page QA URL in Audit Summary, use the supplied auditor name exactly, set every populated Findings row to Open, preserve confirmed, review, blocker, or manual as its Evidence type, and populate Owner and Effort from the finding. Validate the workbook with validate_accessibility_report before delivery.
-5. Report whether the run completed or was cancelled, the exact HTML, workbook, JSON, and portable ZIP paths, pages completed/partial/not started, counts by confirmed/review/blocker/manual classification, Evidence row and linked screenshot counts, and workbook validation result.
+5. Report whether the run completed or was cancelled, the exact HTML, workbook, JSON, CSV, SARIF, and portable ZIP paths, pages completed/partial/not started, counts by confirmed/review/blocker/manual classification, Evidence row and linked screenshot counts, and workbook validation result. MCP results include a direct HTML resource link; present it as the easiest opening action when the client supports resource links.
 6. Call the result an evidence-backed structured audit, not a certification or complete WCAG conformance verdict. Keep the conformance decision as not determined until qualified human assessment is complete. A confirmed pass applies only to the exact executed rule and state; axe incomplete results, truncated link checks, scripted keyboard or screen-reader journeys, and unexercised states are not passes.
 7. Explain the result in plain language for a user who may not know WCAG. State that only supplied URLs were tested; define the evidence categories that are present; distinguish the workbook's Open workflow status from evidence confidence; identify outstanding guided checks; and tell the user to extract the ZIP and keep the workbook with its screenshots directory so relative evidence links work.`));
 function buildEmbeddedAuditInstructions(options = {}) {
-    const targets = options.targets?.trim() || '[ask for URL(s) or an XLSX/CSV/TXT/JSON page-list path]';
+    const targets = options.targets?.trim() || '[ask for URL(s), a pasted URL list, or an XLSX/CSV/TXT/JSON/XML page-list path]';
     const auditor = options.auditor?.trim() || DEFAULT_AUDITOR;
     const landingPageUrl = options.landingPageUrl?.trim() || '[first resolved URL]';
     const outputDir = options.outputDir?.trim() || DEFAULT_OUTPUT_DIR;
     const allowedHosts = options.allowedHosts?.length ? options.allowedHosts.join(', ') : '[derive narrowly from supplied targets]';
+    const exactHosts = options.exactHosts?.length ? options.exactHosts.join(', ') : '[none]';
+    const maxPages = options.maxPages ?? '[unlimited]';
     const stagingOnly = options.stagingOnly === undefined ? '[true only for an explicitly staging-only request]' : String(options.stagingOnly);
     return `${EMBEDDED_AUDIT_WORKFLOW}
 
@@ -150908,6 +152262,8 @@ Run configuration:
 - Output directory: ${outputDir}
 - Report name: ${DEFAULT_REPORT_NAME}
 - Allowed hosts: ${allowedHosts}
+- Exact hosts: ${exactHosts}
+- Maximum authorized pages: ${maxPages}
 - Staging-only enforcement: ${stagingOnly}
 - Browser mode: headless
 - Automatic browser installation: enabled when no supported Chromium browser is available
@@ -150924,60 +152280,96 @@ const DEFAULT_VIEWPORTS = [
     { name: 'mobile', width: 390, height: 844, isMobile: true },
     { name: 'reflow-320', width: 320, height: 800, isMobile: true }
 ];
+const AUDIT_PRESETS = {
+    standard: {
+        description: 'Recommended WCAG 2.2 AA audit with the established coverage defaults.',
+        options: {}
+    },
+    thorough: {
+        description: 'Adds AAA advisory checks and raises time, keyboard, and link limits for release readiness.',
+        options: { aaaAdvisory: true, timeoutMs: 45_000, maxTabStops: 240, maxLinksPerPage: 500 }
+    },
+    debug: {
+        description: 'Runs the same core checks visibly and one page at a time with a longer timeout.',
+        options: { headless: false, concurrency: 1, timeoutMs: 60_000 }
+    }
+};
 const viewportSchema = object({
     name: schemas_string().min(1),
     width: schemas_number().int().positive(),
     height: schemas_number().int().positive(),
     isMobile: schemas_boolean().optional()
 });
+const focusStepShape = { action: literal('focus'), selector: schemas_string().min(1).max(1000) };
+const pressStepShape = { action: literal('press'), key: schemas_string().min(1).max(80), selector: schemas_string().min(1).max(1000).optional() };
+const typeStepShape = { action: literal('type'), selector: schemas_string().min(1).max(1000), text: schemas_string().max(10_000) };
+const waitStepShape = { action: literal('wait'), milliseconds: schemas_number().int().min(0).max(5_000) };
+const assertStepShape = {
+    action: literal('assert'),
+    expectation: schemas_enum([
+        'focused',
+        'visible',
+        'hidden',
+        'expanded',
+        'collapsed',
+        'pressed',
+        'unpressed',
+        'selected',
+        'checked',
+        'unchecked',
+        'invalid',
+        'valid',
+        'url-contains',
+        'text-contains',
+        'value-equals',
+        'live-region-updated'
+    ]),
+    selector: schemas_string().min(1).max(1000).optional(),
+    value: schemas_string().max(10_000).optional(),
+    timeoutMs: schemas_number().int().min(0).max(10_000).optional()
+};
 const journeyStepSchema = discriminatedUnion('action', [
-    object({ action: literal('focus'), selector: schemas_string().min(1).max(1000) }),
-    object({ action: literal('press'), key: schemas_string().min(1).max(80), selector: schemas_string().min(1).max(1000).optional() }),
-    object({ action: literal('type'), selector: schemas_string().min(1).max(1000), text: schemas_string().max(10_000) }),
-    object({ action: literal('wait'), milliseconds: schemas_number().int().min(0).max(5_000) }),
-    object({
-        action: literal('assert'),
-        expectation: schemas_enum([
-            'focused',
-            'visible',
-            'hidden',
-            'expanded',
-            'collapsed',
-            'pressed',
-            'unpressed',
-            'selected',
-            'checked',
-            'unchecked',
-            'invalid',
-            'valid',
-            'url-contains',
-            'text-contains',
-            'value-equals',
-            'live-region-updated'
-        ]),
-        selector: schemas_string().min(1).max(1000).optional(),
-        value: schemas_string().max(10_000).optional(),
-        timeoutMs: schemas_number().int().min(0).max(10_000).optional()
-    })
+    object(focusStepShape),
+    object(pressStepShape),
+    object(typeStepShape),
+    object(waitStepShape),
+    object(assertStepShape)
 ]);
-const journeySchema = object({
+const journeyShape = {
     id: schemas_string().min(1).max(100).regex(/^[a-z0-9][a-z0-9_-]*$/i),
     title: schemas_string().min(1).max(200),
     categories: array(schemas_enum(['keyboard', 'forms', 'interaction', 'dynamic-content'])).min(1).max(4),
     urlIncludes: schemas_string().min(1).max(2000).optional(),
     viewports: array(schemas_string().min(1).max(100)).min(1).max(20).optional(),
     steps: array(journeyStepSchema).min(1).max(100)
+};
+const auditJourneySchema = object(journeyShape);
+/** Strict schema for explicit validation; runtime config parsing remains backward-compatible and strips unknown fields. */
+const config_strictAuditJourneySchema = strictObject({
+    ...journeyShape,
+    steps: array(discriminatedUnion('action', [
+        strictObject(focusStepShape),
+        strictObject(pressStepShape),
+        strictObject(typeStepShape),
+        strictObject(waitStepShape),
+        strictObject(assertStepShape)
+    ])).min(1).max(100)
 });
 const configSchema = object({
+    preset: schemas_enum(['standard', 'thorough', 'debug']).default('standard'),
     auditor: schemas_string().min(1).default(DEFAULT_AUDITOR),
     wcagLevel: schemas_enum(['AA', 'AAA']).default('AA'),
     aaaAdvisory: schemas_boolean().default(false),
     outputDir: schemas_string().min(1).default(DEFAULT_OUTPUT_DIR),
     landingPageUrl: schemas_string().url().optional(),
     allowedHosts: array(schemas_string().min(1)).default([]),
+    exactHosts: array(schemas_string().min(1)).default([]),
+    maxPages: schemas_number().int().min(1).max(50_000).optional(),
     stagingOnly: schemas_boolean().default(false),
     headless: schemas_boolean().default(true),
+    browserEngine: schemas_enum(['chromium', 'firefox', 'webkit']).default('chromium'),
     autoInstallBrowser: schemas_boolean().default(true),
+    storageState: schemas_string().min(1).optional(),
     channel: schemas_string().min(1).optional(),
     executablePath: schemas_string().min(1).optional(),
     timeoutMs: schemas_number().int().positive().default(30_000),
@@ -150986,21 +152378,30 @@ const configSchema = object({
     concurrency: schemas_number().int().min(1).max(8).default(2),
     captureScreenshots: schemas_boolean().default(true),
     viewports: array(viewportSchema).min(1).default(DEFAULT_VIEWPORTS),
-    journeys: array(journeySchema).max(100).default([])
+    journeys: array(auditJourneySchema).max(100).default([])
 });
-function resolveOptions(input = {}) {
-    const parsed = configSchema.parse(input);
+function config_resolveOptions(input = {}) {
+    const preset = schemas_enum(['standard', 'thorough', 'debug']).default('standard').parse(input.preset);
+    const parsed = configSchema.parse({ ...AUDIT_PRESETS[preset].options, ...input, preset });
+    if (parsed.browserEngine !== 'chromium' && parsed.channel) {
+        throw new Error('Browser channels are supported only with the Chromium engine. Remove channel or select browserEngine "chromium".');
+    }
     const aaaAdvisory = parsed.aaaAdvisory || parsed.wcagLevel === 'AAA';
     return {
+        preset: parsed.preset,
         auditor: parsed.auditor,
         wcagLevel: aaaAdvisory ? 'AAA' : 'AA',
         aaaAdvisory,
         outputDir: (0,external_node_path_.resolve)(parsed.outputDir),
         ...(parsed.landingPageUrl ? { landingPageUrl: parsed.landingPageUrl } : {}),
         allowedHosts: parsed.allowedHosts.map((host) => host.toLowerCase()),
+        exactHosts: parsed.exactHosts.map((host) => host.toLowerCase()),
+        ...(parsed.maxPages !== undefined ? { maxPages: parsed.maxPages } : {}),
         stagingOnly: parsed.stagingOnly,
         headless: parsed.headless,
+        browserEngine: parsed.browserEngine,
         autoInstallBrowser: parsed.autoInstallBrowser,
+        ...(parsed.storageState ? { storageState: (0,external_node_path_.resolve)(parsed.storageState) } : {}),
         timeoutMs: parsed.timeoutMs,
         maxTabStops: parsed.maxTabStops,
         maxLinksPerPage: parsed.maxLinksPerPage,
@@ -151038,9 +152439,12 @@ function resolveOptions(input = {}) {
 }
 async function loadConfig(path) {
     if (!path)
-        return resolveOptions();
-    const raw = JSON.parse(await readFile(resolve(path), 'utf8'));
-    return resolveOptions(raw);
+        return config_resolveOptions();
+    const absolutePath = resolve(path);
+    const raw = JSON.parse(await readFile(absolutePath, 'utf8'));
+    if (raw.storageState)
+        raw.storageState = resolve(dirname(absolutePath), raw.storageState);
+    return config_resolveOptions(raw);
 }
 //# sourceMappingURL=config.js.map
 ;// CONCATENATED MODULE: external "node:crypto"
@@ -151054,7 +152458,7 @@ var x = (y) => {
 	var x = {}; __nccwpck_require__.d(x, y); return x
 } 
 var y = (x) => (() => (x))
-const external_playwright_namespaceObject = x({ ["chromium"]: () => (__WEBPACK_EXTERNAL_MODULE_playwright__.chromium) });
+const external_playwright_namespaceObject = x({ ["chromium"]: () => (__WEBPACK_EXTERNAL_MODULE_playwright__.chromium), ["firefox"]: () => (__WEBPACK_EXTERNAL_MODULE_playwright__.firefox), ["webkit"]: () => (__WEBPACK_EXTERNAL_MODULE_playwright__.webkit) });
 ;// CONCATENATED MODULE: external "axe-core"
 var external_axe_core_x = (y) => {
 	var x = {}; __nccwpck_require__.d(x, y); return x
@@ -155330,13 +156734,49 @@ function buildCoverageMatrix(pages, findings) {
 }
 //# sourceMappingURL=coverage.js.map
 ;// CONCATENATED MODULE: ./dist/reporting/finding-id.js
+
+const FINDING_FINGERPRINT_VERSION = 'v1';
+function uniqueSorted(values) {
+    return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+}
 function findingId(finding, index) {
     return finding.id ?? `A11Y${String(index + 1).padStart(3, '0')}`;
+}
+/**
+ * Returns an order-independent identity for a final report row. The fields
+ * mirror consolidation's scope and root-cause boundaries so two rows cannot
+ * collide merely because their collector-local keys match.
+ */
+function findingFingerprint(finding) {
+    const identity = JSON.stringify({
+        scope: finding.sharedComponentKey
+            ? { sharedComponentKey: finding.sharedComponentKey }
+            : { urls: uniqueSorted(finding.urls) },
+        renderedComponent: {
+            component: finding.component,
+            name: finding.componentName ?? '',
+            location: finding.componentLocation ?? ''
+        },
+        rootCause: {
+            ruleId: finding.ruleId,
+            classification: finding.classification,
+            severity: finding.severity,
+            wcag: uniqueSorted(finding.wcag),
+            summary: finding.summary,
+            issue: finding.issue,
+            remediation: finding.remediation
+        }
+    });
+    const digest = (0,external_node_crypto_namespaceObject.createHash)('sha256')
+        .update(`${FINDING_FINGERPRINT_VERSION}\0${identity}`)
+        .digest('hex');
+    return `a11y-fp-${FINDING_FINGERPRINT_VERSION}:${digest}`;
 }
 function assignFindingIds(findings) {
     return findings.map((finding, index) => ({
         ...finding,
-        id: findingId(finding, index)
+        id: findingId(finding, index),
+        fingerprint: findingFingerprint(finding)
     }));
 }
 //# sourceMappingURL=finding-id.js.map
@@ -155645,6 +157085,10 @@ function assertAuditQualityContract(summary) {
         throw new Error(`Audit Quality Contract ${AUDIT_QUALITY_CONTRACT_VERSION} failed: ${errors.join('; ')}.`);
 }
 //# sourceMappingURL=quality-contract.js.map
+;// CONCATENATED MODULE: ./dist/scope.js
+const AUDIT_SCOPE_MODE = 'supplied-pages-only';
+const AUDIT_SCOPE_LABEL = 'Supplied pages only (no crawl)';
+//# sourceMappingURL=scope.js.map
 ;// CONCATENATED MODULE: ./dist/audit/standards.js
 // Revised Section 508 E205.4 incorporates the WCAG 2.0 Level A and AA
 // success criteria for covered electronic content. WCAG 2.1/2.2 additions
@@ -155842,9 +157286,126 @@ function validateJourneyResults(summary) {
     }
     return errors;
 }
+function validateAuditHistory(summary) {
+    const history = summary.history;
+    if (!history)
+        return [];
+    const errors = [];
+    if (history.kind !== 'audit-history')
+        errors.push('history has an unsupported kind');
+    if (history.points.length < 2)
+        errors.push('history does not contain a prior audit and the current audit');
+    if (history.limitations.some((limitation) => typeof limitation !== 'string' || !limitation.trim())) {
+        errors.push('history contains an empty limitation');
+    }
+    let previousTime = Number.NEGATIVE_INFINITY;
+    const sources = new Set();
+    for (const [index, point] of history.points.entries()) {
+        const label = `history point ${index + 1}`;
+        const time = Date.parse(point.generatedAt);
+        if (!Number.isFinite(time))
+            errors.push(`${label} has an invalid timestamp`);
+        if (time < previousTime)
+            errors.push('history points are not chronological');
+        previousTime = time;
+        if (!point.source.trim() || /[\\/]/.test(point.source))
+            errors.push(`${label} has an invalid source label`);
+        if (sources.has(point.source))
+            errors.push('history source labels are not unique');
+        sources.add(point.source);
+        if (point.status !== 'completed' && point.status !== 'cancelled')
+            errors.push(`${label} has an invalid status`);
+        if (point.browserEngine !== undefined && !['chromium', 'firefox', 'webkit'].includes(point.browserEngine)) {
+            errors.push(`${label} has an invalid browser engine`);
+        }
+        for (const [name, count] of Object.entries({
+            requestedPageCount: point.requestedPageCount,
+            auditedPageCount: point.auditedPageCount,
+            findingCount: point.findingCount,
+            confirmedCount: point.confirmedCount,
+            reviewCount: point.reviewCount,
+            blockerCount: point.blockerCount,
+            manualCount: point.manualCount,
+            criticalConfirmedCount: point.criticalConfirmedCount,
+            seriousConfirmedCount: point.seriousConfirmedCount
+        })) {
+            if (!Number.isInteger(count) || count < 0)
+                errors.push(`${label} has an invalid ${name}`);
+        }
+        if (point.auditedPageCount > point.requestedPageCount)
+            errors.push(`${label} audits more pages than requested`);
+        if (point.confirmedCount + point.reviewCount + point.blockerCount + point.manualCount !== point.findingCount) {
+            errors.push(`${label} classification counts do not equal its finding count`);
+        }
+        if (point.criticalConfirmedCount + point.seriousConfirmedCount > point.confirmedCount) {
+            errors.push(`${label} severity counts exceed its confirmed finding count`);
+        }
+        const comparison = point.comparisonToPrevious;
+        if (index === 0 && comparison)
+            errors.push('the first history point has a comparison');
+        if (index > 0 && !comparison)
+            errors.push(`${label} has no comparison to its predecessor`);
+        if (comparison) {
+            if (comparison.coverage !== 'complete' && comparison.coverage !== 'partial') {
+                errors.push(`${label} has invalid comparison coverage`);
+            }
+            for (const [name, count] of Object.entries(comparison)) {
+                if (name !== 'coverage' && (!Number.isInteger(count) || count < 0)) {
+                    errors.push(`${label} has an invalid comparison ${name}`);
+                }
+            }
+            const previous = history.points[index - 1];
+            if (previous) {
+                if (comparison.newCount + comparison.unchangedCount + comparison.indeterminateCurrentCount !== point.findingCount) {
+                    errors.push(`${label} comparison does not account for all current findings`);
+                }
+                if (comparison.resolvedCount + comparison.unchangedCount + comparison.unobservedPreviousCount !== previous.findingCount) {
+                    errors.push(`${label} comparison does not account for all previous findings`);
+                }
+                if (comparison.coverage === 'complete' && (comparison.indeterminateCurrentCount !== 0 || comparison.unobservedPreviousCount !== 0)) {
+                    errors.push(`${label} complete comparison contains scope-indeterminate findings`);
+                }
+                if (comparison.coverage === 'partial') {
+                    const hasScopeLimitation = history.limitations.some((limitation) => (typeof limitation === 'string'
+                        && /(scope|coverage|observ|unmatch)/i.test(limitation)));
+                    if (!hasScopeLimitation) {
+                        errors.push(`${label} partial comparison has no scope limitation for its adjacent audits`);
+                    }
+                }
+            }
+        }
+    }
+    const current = history.points.at(-1);
+    if (current) {
+        const findings = summary.findings;
+        const expected = {
+            source: 'Current audit',
+            ...(summary.browserEngine ? { browserEngine: summary.browserEngine } : {}),
+            generatedAt: summary.generatedAt,
+            status: summary.status,
+            requestedPageCount: summary.requestedUrls.length,
+            auditedPageCount: summary.auditedUrls.length,
+            findingCount: findings.length,
+            confirmedCount: findings.filter((finding) => finding.classification === 'confirmed').length,
+            reviewCount: findings.filter((finding) => finding.classification === 'review').length,
+            blockerCount: findings.filter((finding) => finding.classification === 'blocker').length,
+            manualCount: findings.filter((finding) => finding.classification === 'manual').length,
+            criticalConfirmedCount: findings.filter((finding) => finding.classification === 'confirmed' && finding.severity === 'Critical').length,
+            seriousConfirmedCount: findings.filter((finding) => finding.classification === 'confirmed' && finding.severity === 'Serious').length
+        };
+        for (const [name, value] of Object.entries(expected)) {
+            if (current[name] !== value)
+                errors.push(`current history point does not match audit ${name}`);
+        }
+    }
+    return errors;
+}
 /** Rejects impossible or untraceable canonical results before any renderer sees them. */
 function assertCanonicalAuditSummary(summary) {
     const errors = [];
+    if (summary.browserEngine !== undefined && !['chromium', 'firefox', 'webkit'].includes(summary.browserEngine)) {
+        errors.push('browser engine is invalid');
+    }
     const findingIds = summary.findings.map((finding) => finding.id ?? finding.key);
     if (new Set(findingIds).size !== findingIds.length)
         errors.push('finding identities are not unique');
@@ -155864,12 +157425,13 @@ function assertCanonicalAuditSummary(summary) {
             errors.push('regression summary contains a negative count');
         }
     }
+    errors.push(...validateAuditHistory(summary));
     if (errors.length)
         throw new Error(`Canonical audit result is invalid: ${errors.join('; ')}.`);
 }
 //# sourceMappingURL=canonical-validation.js.map
 ;// CONCATENATED MODULE: ./dist/reporting/consolidate.js
-function uniqueSorted(values) {
+function consolidate_uniqueSorted(values) {
     return [...new Set(values.filter(Boolean))].sort();
 }
 function evidenceIdentity(item) {
@@ -155951,7 +157513,7 @@ function mergeEquivalentAxeDomFindings(findings) {
             if (!sharesRenderedElement(axe, dom))
                 continue;
             const context = mergeFindingContext([axe, dom]);
-            axe.wcag = uniqueSorted([...axe.wcag, ...dom.wcag]);
+            axe.wcag = consolidate_uniqueSorted([...axe.wcag, ...dom.wcag]);
             axe.urls = context.urls;
             axe.viewports = context.viewports;
             axe.selectors = context.selectors;
@@ -155970,7 +157532,7 @@ function rootCause(finding) {
         canonicalRule: canonicalRule(finding.ruleId),
         classification: finding.classification,
         severity: finding.severity,
-        wcag: uniqueSorted(finding.wcag),
+        wcag: consolidate_uniqueSorted(finding.wcag),
         summary: finding.summary,
         issue: finding.issue,
         remediation: finding.remediation
@@ -155978,9 +157540,9 @@ function rootCause(finding) {
 }
 function mergeFindingContext(findings) {
     const result = {
-        urls: uniqueSorted(findings.flatMap((finding) => finding.urls)),
-        viewports: uniqueSorted(findings.flatMap((finding) => finding.viewports)),
-        selectors: uniqueSorted(findings.flatMap((finding) => finding.selectors)),
+        urls: consolidate_uniqueSorted(findings.flatMap((finding) => finding.urls)),
+        viewports: consolidate_uniqueSorted(findings.flatMap((finding) => finding.viewports)),
+        selectors: consolidate_uniqueSorted(findings.flatMap((finding) => finding.selectors)),
         // Preserve every observed occurrence. Two byte-identical records can still
         // represent two separately collected failures and must not disappear merely
         // because their rendered evidence happens to match.
@@ -156001,7 +157563,7 @@ function findingHost(finding) {
         return new URL(finding.urls[0] ?? '').host.toLowerCase();
     }
     catch {
-        return uniqueSorted(finding.urls).join('|');
+        return consolidate_uniqueSorted(finding.urls).join('|');
     }
 }
 function rollUpBrokenComponentLinks(findings) {
@@ -156112,7 +157674,7 @@ function rollUpDescriptionListStructure(findings) {
             untouched.push(finding);
             continue;
         }
-        const page = uniqueSorted(finding.urls).join('|');
+        const page = consolidate_uniqueSorted(finding.urls).join('|');
         const location = finding.componentLocation?.trim() ?? '';
         const key = `${page}|${location}`;
         groups.set(key, [...(groups.get(key) ?? []), finding]);
@@ -156120,14 +157682,14 @@ function rollUpDescriptionListStructure(findings) {
     for (const grouped of groups.values()) {
         const first = grouped[0];
         const containerFinding = grouped.find((finding) => finding.ruleId === 'axe-definition-list');
-        const componentNames = uniqueSorted(grouped.map((finding) => finding.componentName ?? finding.component));
+        const componentNames = consolidate_uniqueSorted(grouped.map((finding) => finding.componentName ?? finding.component));
         untouched.push({
             ...first,
             key: `axe-description-list-structure:${first.key.split(':').at(-1) ?? 'grouped'}`,
             ruleId: 'axe-description-list-structure',
             classification: 'confirmed',
             severity: grouped.some((finding) => finding.severity === 'Critical') ? 'Critical' : 'Serious',
-            wcag: uniqueSorted(grouped.flatMap((finding) => finding.wcag)),
+            wcag: consolidate_uniqueSorted(grouped.flatMap((finding) => finding.wcag)),
             summary: 'Description-list markup has an invalid parent/child structure',
             issue: 'The description list contains invalid wrapper elements, leaving its dt and dd items outside the required direct dl structure. These axe signals describe one component/root cause and are reported together.',
             impact: 'Screen readers may not expose the job-detail terms and descriptions as one coherent description list.',
@@ -156138,9 +157700,9 @@ function rollUpDescriptionListStructure(findings) {
                 ? componentNames.join('; ')
                 : `${componentNames.slice(0, 4).join('; ')}; and ${componentNames.length - 4} more`),
             sharedComponentKey: `description-list-structure:${first.componentLocation ?? first.component}`,
-            urls: uniqueSorted(grouped.flatMap((finding) => finding.urls)),
-            viewports: uniqueSorted(grouped.flatMap((finding) => finding.viewports)),
-            selectors: uniqueSorted(grouped.flatMap((finding) => finding.selectors)),
+            urls: consolidate_uniqueSorted(grouped.flatMap((finding) => finding.urls)),
+            viewports: consolidate_uniqueSorted(grouped.flatMap((finding) => finding.viewports)),
+            selectors: consolidate_uniqueSorted(grouped.flatMap((finding) => finding.selectors)),
             evidence: mergeFindingContext(grouped).evidence,
             assignment: 'Development',
             effort: 'Small',
@@ -156152,7 +157714,7 @@ function rollUpDescriptionListStructure(findings) {
 function consolidateFindings(findings) {
     const merge = (existing, finding) => {
         const context = mergeFindingContext([existing, finding]);
-        existing.wcag = uniqueSorted([...existing.wcag, ...finding.wcag]);
+        existing.wcag = consolidate_uniqueSorted([...existing.wcag, ...finding.wcag]);
         existing.urls = context.urls;
         existing.viewports = context.viewports;
         existing.selectors = context.selectors;
@@ -156166,32 +157728,32 @@ function consolidateFindings(findings) {
     const ordered = mergeEquivalentAxeDomFindings(findings).sort((a, b) => JSON.stringify([
         a.ruleId,
         a.key,
-        uniqueSorted(a.urls),
-        uniqueSorted(a.viewports),
-        uniqueSorted(a.selectors),
+        consolidate_uniqueSorted(a.urls),
+        consolidate_uniqueSorted(a.viewports),
+        consolidate_uniqueSorted(a.selectors),
         a.componentName ?? '',
         a.componentLocation ?? ''
     ]).localeCompare(JSON.stringify([
         b.ruleId,
         b.key,
-        uniqueSorted(b.urls),
-        uniqueSorted(b.viewports),
-        uniqueSorted(b.selectors),
+        consolidate_uniqueSorted(b.urls),
+        consolidate_uniqueSorted(b.viewports),
+        consolidate_uniqueSorted(b.selectors),
         b.componentName ?? '',
         b.componentLocation ?? ''
     ])));
     const reportingUnits = rollUpReviewComponentLinks(rollUpBrokenComponentLinks(rollUpDescriptionListStructure(ordered)));
     for (const finding of reportingUnits) {
-        const pageIdentity = uniqueSorted(finding.urls).join('|');
+        const pageIdentity = consolidate_uniqueSorted(finding.urls).join('|');
         const localKey = `page:${pageIdentity}|${finding.component}|${rootCause(finding)}`;
         const existing = localFindings.get(localKey);
         if (!existing) {
             localFindings.set(localKey, {
                 ...finding,
-                wcag: uniqueSorted(finding.wcag),
-                urls: uniqueSorted(finding.urls),
-                viewports: uniqueSorted(finding.viewports),
-                selectors: uniqueSorted(finding.selectors),
+                wcag: consolidate_uniqueSorted(finding.wcag),
+                urls: consolidate_uniqueSorted(finding.urls),
+                viewports: consolidate_uniqueSorted(finding.viewports),
+                selectors: consolidate_uniqueSorted(finding.selectors),
                 evidence: [...finding.evidence]
             });
             continue;
@@ -156200,7 +157762,7 @@ function consolidateFindings(findings) {
     }
     const consolidated = new Map();
     for (const finding of localFindings.values()) {
-        const pageIdentity = uniqueSorted(finding.urls).join('|');
+        const pageIdentity = consolidate_uniqueSorted(finding.urls).join('|');
         const renderedName = finding.componentName ?? finding.component;
         const renderedIdentity = JSON.stringify({
             // Generic unnamed controls can share identical markup across unrelated widgets.
@@ -156224,7 +157786,7 @@ function consolidateFindings(findings) {
         return rank[a.classification] - rank[b.classification]
             || a.ruleId.localeCompare(b.ruleId)
             || a.key.localeCompare(b.key)
-            || uniqueSorted(a.urls).join('|').localeCompare(uniqueSorted(b.urls).join('|'));
+            || consolidate_uniqueSorted(a.urls).join('|').localeCompare(consolidate_uniqueSorted(b.urls).join('|'));
     });
 }
 /** Ensures consolidation preserves the multiplicity of every evidence record. */
@@ -156291,7 +157853,7 @@ async function writeJsonReport(summary, outputPath) {
 }
 //# sourceMappingURL=json.js.map
 ;// CONCATENATED MODULE: ./dist/text.js
-function singleLineText(value, maxLength = Number.POSITIVE_INFINITY) {
+function text_singleLineText(value, maxLength = Number.POSITIVE_INFINITY) {
     const visible = Array.from(value, (character) => {
         const codePoint = character.codePointAt(0) ?? 0;
         return codePoint < 32 || (codePoint >= 127 && codePoint <= 159) ? ' ' : character;
@@ -156299,18 +157861,53 @@ function singleLineText(value, maxLength = Number.POSITIVE_INFINITY) {
     return visible.replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 //# sourceMappingURL=text.js.map
+// EXTERNAL MODULE: external "node:fs"
+var external_node_fs_ = __nccwpck_require__(73024);
 // EXTERNAL MODULE: ./node_modules/exceljs/excel.js
 var excel = __nccwpck_require__(59203);
+// EXTERNAL MODULE: ./node_modules/saxes/saxes.js
+var saxes = __nccwpck_require__(59800);
 ;// CONCATENATED MODULE: ./dist/urls.js
+
+
 
 
 
 const urlPattern = /https?:\/\/[^\s<>'"\])}]+/gi;
 const stagingHostPattern = /(?:^|[.-])(?:dev|development|local|localhost|preview|qa|stage|staging|test|testing|uat)(?:[.\d-]|$)/i;
+const maximumSitemapBytes = 50 * 1024 * 1024;
+const maximumSitemapUrls = 50_000;
 function splitUrlListValue(value) {
-    return value
-        .trim()
-        .split(/\s+(?=https?:\/\/)/i)
+    const trimmed = value.trim();
+    if (!trimmed)
+        return [];
+    if (trimmed.startsWith('[')) {
+        let parsed;
+        try {
+            parsed = JSON.parse(trimmed);
+        }
+        catch {
+            throw new Error('Invalid explicit URL list JSON syntax. Supply a valid JSON array of HTTP(S) URL strings.');
+        }
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+            throw new Error('An explicit JSON URL list must contain at least one HTTP(S) URL string.');
+        }
+        return parsed.map((item, index) => {
+            if (typeof item !== 'string') {
+                throw new Error(`Invalid explicit URL list entry ${index + 1}. JSON URL list entries must be strings containing complete HTTP(S) URLs.`);
+            }
+            return item.trim();
+        });
+    }
+    const listMarker = /^(?:[-*\u2022]|\d+[.)])\s+/i;
+    const hasListMarker = /(?:^|\r?\n)\s*(?:[-*\u2022]|\d+[.)])\s+/i.test(trimmed);
+    const hasLineBreak = /[\r\n]/.test(trimmed);
+    const hasProtocolTokenWithWhitespace = /\s/.test(trimmed) && /(?:^|\s)[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
+    if (!hasListMarker && !hasLineBreak && !hasProtocolTokenWithWhitespace)
+        return [trimmed];
+    return trimmed
+        .split(/\r?\n+/)
+        .flatMap((line) => line.trim().replace(listMarker, '').split(/(?:[,;]?[ \t]+)(?:(?:[-*\u2022]|\d+[.)])[ \t]+)?/i))
         .map((item) => item.trim())
         .filter(Boolean);
 }
@@ -156332,6 +157929,21 @@ function normalizeUrl(value) {
             throw error;
         return null;
     }
+}
+function normalizeExplicitUrlEntries(entries) {
+    return entries.map((entry, index) => {
+        let normalized;
+        try {
+            normalized = normalizeUrl(entry);
+        }
+        catch {
+            normalized = null;
+        }
+        if (!normalized) {
+            throw new Error(`Invalid explicit URL list entry ${index + 1}. Supply a complete HTTP(S) URL without embedded credentials.`);
+        }
+        return normalized;
+    });
 }
 function unique(values) {
     return [...new Set(values.map(normalizeUrl).filter((value) => Boolean(value)))];
@@ -156361,6 +157973,100 @@ async function urlsFromWorkbook(path) {
         });
     }
     return unique(preferred.length > 0 ? preferred : fallback);
+}
+async function urlsFromSitemap(path) {
+    const label = (0,external_node_path_.basename)(path);
+    const xml = await new Promise((resolveXml, rejectXml) => {
+        const chunks = [];
+        let bytesRead = 0;
+        let settled = false;
+        const stream = (0,external_node_fs_.createReadStream)(path);
+        const rejectOnce = (error) => {
+            if (settled)
+                return;
+            settled = true;
+            rejectXml(error);
+        };
+        stream.on('data', (chunk) => {
+            const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+            bytesRead += buffer.length;
+            if (bytesRead > maximumSitemapBytes) {
+                stream.destroy();
+                rejectOnce(new Error(`Invalid XML sitemap "${label}": the uncompressed file exceeds the 50 MiB sitemap limit.`));
+                return;
+            }
+            chunks.push(buffer);
+        });
+        stream.once('error', rejectOnce);
+        stream.once('end', () => {
+            if (settled)
+                return;
+            settled = true;
+            resolveXml(Buffer.concat(chunks, bytesRead).toString('utf8'));
+        });
+    });
+    const parser = new saxes.SaxesParser({ xmlns: true });
+    const stack = [];
+    const urls = [];
+    let root;
+    let locationCount = 0;
+    let locText;
+    let parseError;
+    parser.on('error', (error) => {
+        parseError ??= error;
+    });
+    parser.on('doctype', () => {
+        parseError ??= new Error('DOCTYPE declarations are not allowed.');
+    });
+    parser.on('opentag', (tag) => {
+        const element = { local: tag.local, uri: tag.uri };
+        stack.push(element);
+        if (!root) {
+            root = element;
+            if (root.local === 'sitemapindex') {
+                parseError ??= new Error('sitemap indexes are not fetched; provide each child URL-set XML file explicitly.');
+            }
+            else if (root.local !== 'urlset') {
+                parseError ??= new Error('the root element must be <urlset>.');
+            }
+            return;
+        }
+        if (stack.length === 3
+            && stack[1]?.local === 'url'
+            && stack[1]?.uri === root.uri
+            && element.local === 'loc'
+            && element.uri === root.uri) {
+            locText = '';
+        }
+    });
+    const appendLocText = (text) => {
+        if (locText !== undefined && stack.length === 3)
+            locText += text;
+    };
+    parser.on('text', appendLocText);
+    parser.on('cdata', appendLocText);
+    parser.on('closetag', () => {
+        const closing = stack.pop();
+        if (locText !== undefined && stack.length === 2 && closing?.local === 'loc' && closing.uri === root?.uri) {
+            const value = locText.trim();
+            if (value) {
+                locationCount += 1;
+                if (locationCount > maximumSitemapUrls) {
+                    parseError ??= new Error('the file exceeds the 50,000 URL sitemap limit.');
+                }
+                else {
+                    urls.push(value);
+                }
+            }
+            locText = undefined;
+        }
+    });
+    parser.write(xml).close();
+    if (parseError) {
+        const message = parseError.message.replace(/^\d+:\d+:\s*/, '');
+        throw new Error(`Invalid XML sitemap "${label}": ${message}`);
+    }
+    return unique(urls);
 }
 function normalizeHostname(value) {
     return value.trim().toLowerCase().replace(/\.+$/, '');
@@ -156404,6 +158110,10 @@ function urlRestrictionReason(value, options = {}) {
     }
     const host = normalizeHostname(parsed.hostname);
     const allowedHosts = (options.allowedHosts ?? []).map(normalizeAllowedHost);
+    const exactHosts = (options.exactHosts ?? []).map(normalizeAllowedHost);
+    if (exactHosts.length > 0 && !exactHosts.includes(host)) {
+        return `Host ${host} is not in the exact-host list.`;
+    }
     if (allowedHosts.length > 0 && !allowedHosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) {
         return `Host ${host} is not in the allowed-host list.`;
     }
@@ -156417,9 +158127,11 @@ async function collectUrls(inputs, options = {}) {
     const sources = [];
     for (const input of inputs) {
         const expandedInputs = splitUrlListValue(input);
-        if (expandedInputs.length > 1) {
-            found.push(...expandedInputs);
-            sources.push('command line');
+        const isExplicitList = expandedInputs.length > 1 || expandedInputs[0] !== input.trim();
+        if (isExplicitList) {
+            const normalizedEntries = normalizeExplicitUrlEntries(expandedInputs);
+            found.push(...normalizedEntries);
+            sources.push('explicit URL list');
             continue;
         }
         const direct = normalizeUrl(input);
@@ -156438,11 +158150,16 @@ async function collectUrls(inputs, options = {}) {
             found.push(...(await urlsFromWorkbook(filePath)));
             continue;
         }
+        if (extension === '.xml') {
+            found.push(...(await urlsFromSitemap(filePath)));
+            continue;
+        }
         const text = await (0,promises_.readFile)(filePath, 'utf8');
         found.push(...(text.match(urlPattern) ?? []));
     }
     // Validate the allowlist even when the supplied page list contains no matching URL.
     (options.allowedHosts ?? []).map(normalizeAllowedHost);
+    (options.exactHosts ?? []).map(normalizeAllowedHost);
     const skipped = [];
     const urls = unique(found).filter((url) => {
         const reason = urlRestrictionReason(url, options);
@@ -156456,6 +158173,9 @@ async function collectUrls(inputs, options = {}) {
         throw new Error('No HTTP(S) URLs were found in the supplied input.');
     if (urls.length === 0)
         throw new Error('All discovered URLs were excluded by the host restrictions.');
+    if (options.maxPages !== undefined && urls.length > options.maxPages) {
+        throw new Error(`Resolved ${urls.length} authorized unique pages, exceeding the configured maximum of ${options.maxPages}. Narrow the input or increase maxPages.`);
+    }
     return { source: sources.join(', '), urls, skipped };
 }
 //# sourceMappingURL=urls.js.map
@@ -156482,9 +158202,18 @@ async function collectUrls(inputs, options = {}) {
 
 
 
+
 const CANCELLED_REASON = 'The audit was stopped by the user. Results include only work completed before cancellation.';
 const MAX_CAPTURED_RUNTIME_ERRORS = 50;
 const runner_require = (0,external_node_module_namespaceObject.createRequire)(import.meta.url);
+const browserTypes = { chromium: external_playwright_namespaceObject.chromium, firefox: external_playwright_namespaceObject.firefox, webkit: external_playwright_namespaceObject.webkit };
+function browserEngineLabel(engine) {
+    if (engine === 'firefox')
+        return 'Firefox';
+    if (engine === 'webkit')
+        return 'WebKit';
+    return 'Chromium';
+}
 function isBrowserNetworkConsoleError(message) {
     return /^Failed to load resource:\s+net::ERR_[A-Z0-9_]+$/i.test(message.trim());
 }
@@ -156533,7 +158262,7 @@ function safeSlug(url) {
     return value.slice(0, 100) || 'page';
 }
 function safeProgressLabel(value) {
-    return singleLineText(value, 240);
+    return text_singleLineText(value, 240);
 }
 function createBrowserLaunchOptions(options, headless) {
     return {
@@ -156545,10 +158274,24 @@ function createBrowserLaunchOptions(options, headless) {
         ...(options.executablePath ? { executablePath: options.executablePath } : {})
     };
 }
+function createBrowserContextOptions(viewport, storageState) {
+    return {
+        viewport: { width: viewport.width, height: viewport.height },
+        isMobile: viewport.isMobile ?? false,
+        deviceScaleFactor: 1,
+        reducedMotion: 'reduce',
+        colorScheme: 'light',
+        bypassCSP: true,
+        ...(storageState ? { storageState } : {})
+    };
+}
 function browserLaunchCandidates(options, headless) {
+    const browserEngine = options.browserEngine ?? 'chromium';
     const explicit = Boolean(options.channel || options.executablePath);
     if (explicit)
         return [createBrowserLaunchOptions(options, headless)];
+    if (browserEngine !== 'chromium')
+        return [createBrowserLaunchOptions({}, headless)];
     return [
         createBrowserLaunchOptions({}, headless),
         createBrowserLaunchOptions({ channel: 'chrome' }, headless),
@@ -156557,12 +158300,13 @@ function browserLaunchCandidates(options, headless) {
 }
 function isMissingBrowserExecutableError(error) {
     const message = error instanceof Error ? error.message : String(error);
-    return /executable (?:doesn['’]t|does not) exist|browser executable|could not find.+(?:chrome|edge|chromium)|(?:browser|channel|chromium distribution).+not found|(?:please\s+)?run.+playwright install/i.test(message);
+    return /executable (?:doesn['’]t|does not) exist|browser executable|could not find.+(?:chrome|edge|chromium|firefox|webkit)|(?:browser|channel|chromium|firefox|webkit).+not found|(?:please\s+)?run.+playwright install/i.test(message);
 }
-async function installPlaywrightChromium(signal) {
+async function installPlaywrightBrowser(engine, signal) {
+    const label = browserEngineLabel(engine);
     const cli = runner_require.resolve('playwright/cli');
     await new Promise((resolveInstall, rejectInstall) => {
-        const child = (0,external_node_child_process_namespaceObject.spawn)(process.execPath, [cli, 'install', 'chromium'], {
+        const child = (0,external_node_child_process_namespaceObject.spawn)(process.execPath, [cli, 'install', engine], {
             env: process.env,
             stdio: ['ignore', 'pipe', 'pipe']
         });
@@ -156575,23 +158319,28 @@ async function installPlaywrightChromium(signal) {
         child.once('exit', (code, exitSignal) => {
             signal?.removeEventListener('abort', abort);
             if (signal?.aborted) {
-                rejectInstall(new Error('Chromium installation was cancelled.'));
+                rejectInstall(new Error(`${label} installation was cancelled.`));
             }
             else if (code === 0) {
                 resolveInstall();
             }
             else {
-                rejectInstall(new Error(`Playwright Chromium installation failed${exitSignal ? ` with signal ${exitSignal}` : ` with exit code ${code ?? 'unknown'}`}.`));
+                rejectInstall(new Error(`Playwright ${label} installation failed${exitSignal ? ` with signal ${exitSignal}` : ` with exit code ${code ?? 'unknown'}`}.`));
             }
         });
     });
 }
+async function installPlaywrightChromium(signal) {
+    await installPlaywrightBrowser('chromium', signal);
+}
 async function launchAuditBrowser(options, execution) {
     const candidates = browserLaunchCandidates(options, options.headless);
+    const browserType = browserTypes[options.browserEngine];
+    const label = browserEngineLabel(options.browserEngine);
     let lastMissingError;
     for (const candidate of candidates) {
         try {
-            return await external_playwright_namespaceObject.chromium.launch(candidate);
+            return await browserType.launch(candidate);
         }
         catch (error) {
             if (!isMissingBrowserExecutableError(error))
@@ -156605,14 +158354,14 @@ async function launchAuditBrowser(options, execution) {
             : new Error('The explicitly configured browser executable is unavailable.');
     }
     if (!options.autoInstallBrowser) {
-        throw new Error(`No supported Chromium browser is available. Run "npx playwright install chromium" in the plugin directory or enable automatic browser installation. ${lastMissingError instanceof Error ? lastMissingError.message : ''}`.trim());
+        throw new Error(`No supported ${label} browser is available. Run "npx playwright install ${options.browserEngine}" in the plugin directory or enable automatic browser installation. ${lastMissingError instanceof Error ? lastMissingError.message : ''}`.trim());
     }
     await emitProgress(execution, {
         phase: 'browser',
-        message: 'No supported browser was found. Installing headless Playwright Chromium once before the audit starts.'
+        message: `No supported browser was found. Installing headless Playwright ${label} once before the audit starts.`
     });
-    await installPlaywrightChromium(execution.signal);
-    return external_playwright_namespaceObject.chromium.launch(createBrowserLaunchOptions({}, options.headless));
+    await installPlaywrightBrowser(options.browserEngine, execution.signal);
+    return browserType.launch(createBrowserLaunchOptions({}, options.headless));
 }
 async function runAxe(page, wcagLevel) {
     await page.addScriptTag({ content: external_axe_core_namespaceObject["default"].source });
@@ -156816,6 +158565,16 @@ function emptyConsent() {
         frameUrl: ''
     };
 }
+function unresolvedConsentInteractionBlocker(consent) {
+    if (!consent.found || consent.dismissed)
+        return null;
+    return {
+        selector: consent.surfaceSelector || 'consent surface',
+        role: 'consent surface',
+        name: consent.buttonName ? `Consent choice: ${consent.buttonName}` : 'Visible consent surface',
+        reason: 'A visible consent surface remained active before page-level interaction tests.'
+    };
+}
 const defaultAuditViewportDependencies = {
     runAxe,
     runDomChecks: runDomChecks,
@@ -156839,7 +158598,7 @@ function isPartialAudit(errors, axeRun, blocker) {
         || !axeRun.completed
         || errors.some((message) => /^(?:DOM|Keyboard|Configured journey|Disclosure|Tab|Responsive|Link|Element context|Screenshot) checks? error:/i.test(message));
 }
-async function auditViewport(browser, url, options, viewport, signal, dependencyOverrides = {}) {
+async function auditViewport(browser, url, options, viewport, signal, dependencyOverrides = {}, storageState) {
     const dependencies = { ...defaultAuditViewportDependencies, ...dependencyOverrides };
     const errors = [];
     let status = null;
@@ -156916,14 +158675,7 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
     try {
         if (signal?.aborted)
             throw new Error(CANCELLED_REASON);
-        context = await browser.newContext({
-            viewport: { width: viewport.width, height: viewport.height },
-            isMobile: viewport.isMobile ?? false,
-            deviceScaleFactor: 1,
-            reducedMotion: 'reduce',
-            colorScheme: 'light',
-            bypassCSP: true
-        });
+        context = await browser.newContext(createBrowserContextOptions(viewport, storageState));
         signal?.addEventListener('abort', closeOnAbort, { once: true });
         const page = await context.newPage();
         page.setDefaultTimeout(options.timeoutMs);
@@ -157002,14 +158754,8 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
         if (consent.error)
             errors.push(`Consent handling error: ${consent.error}`);
         interactionBlocker = await dependencies.detectInteractionBlocker(page);
-        if (!interactionBlocker && consent.found && !consent.dismissed) {
-            interactionBlocker = {
-                selector: consent.surfaceSelector || 'consent surface',
-                role: 'consent surface',
-                name: consent.buttonName ? `Consent choice: ${consent.buttonName}` : 'Visible consent surface',
-                reason: 'A visible consent surface remained active before page-level interaction tests.'
-            };
-        }
+        if (!interactionBlocker)
+            interactionBlocker = unresolvedConsentInteractionBlocker(consent);
         if (interactionBlocker)
             errors.push(`${interactionBlocker.reason} ${interactionBlocker.selector}`);
         try {
@@ -157287,7 +159033,7 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
         await context?.close().catch(() => undefined);
     }
 }
-async function auditPageBrowser(browser, url, options, execution, pageNumber, pageTotal) {
+async function auditPageBrowser(browser, url, options, execution, pageNumber, pageTotal, storageState) {
     const viewports = [];
     for (const viewport of options.viewports) {
         if (execution.signal?.aborted)
@@ -157300,7 +159046,7 @@ async function auditPageBrowser(browser, url, options, execution, pageNumber, pa
             url,
             viewport: viewport.name
         });
-        const result = await auditViewport(browser, url, options, viewport, execution.signal);
+        const result = await auditViewport(browser, url, options, viewport, execution.signal, {}, storageState);
         viewports.push(result);
         if (result.cancelled)
             break;
@@ -157363,7 +159109,7 @@ async function pruneUnreferencedScreenshots(summary, outputDir) {
     const files = await screenshotFiles((0,external_node_path_.resolve)(outputDir, 'screenshots'));
     await Promise.all(files.filter((path) => !referenced.has((0,external_node_path_.resolve)(path))).map((path) => (0,promises_.unlink)(path)));
 }
-async function runAudit(urls, source, skippedUrls, options, execution = {}) {
+async function runAudit(urls, source, skippedUrls, options, execution = {}, authentication = { configured: false, scopedHostCount: 0 }) {
     await emitProgress(execution, {
         phase: 'browser',
         message: `Starting ${options.headless ? 'headless' : 'headed'} browser checks for ${urls.length} page${urls.length === 1 ? '' : 's'}.`,
@@ -157377,7 +159123,7 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}) {
         try {
             browser = await launchAuditBrowser(options, execution);
             execution.signal?.addEventListener('abort', closeOnAbort, { once: true });
-            pages = await runPool(urls, options.concurrency, execution.signal, (url, index) => auditPageBrowser(browser, url, options, execution, index + 1, urls.length));
+            pages = await runPool(urls, options.concurrency, execution.signal, (url, index) => auditPageBrowser(browser, url, options, execution, index + 1, urls.length, authentication.storageState));
         }
         finally {
             execution.signal?.removeEventListener('abort', closeOnAbort);
@@ -157407,10 +159153,12 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}) {
     const aaaAdvisory = Boolean(options.aaaAdvisory || options.wcagLevel === 'AAA');
     const summary = {
         status: cancelled ? 'cancelled' : 'completed',
+        scopeMode: AUDIT_SCOPE_MODE,
         ...(cancelled ? { cancelledAt: generatedAt } : {}),
         generatedAt,
         auditor: options.auditor,
         source,
+        browserEngine: options.browserEngine,
         wcagLevel: options.wcagLevel,
         conformanceTarget: 'AA',
         aaaAdvisory,
@@ -157451,6 +159199,234 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}) {
 //# sourceMappingURL=runner.js.map
 // EXTERNAL MODULE: external "node:url"
 var external_node_url_ = __nccwpck_require__(73136);
+;// CONCATENATED MODULE: ./dist/reporting/executive-summary.js
+function findingCount(summary, predicate) {
+    return summary.findings.filter(predicate).length;
+}
+function plural(count, singular, pluralForm = `${singular}s`) {
+    return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+function buildExecutiveSummary(summary) {
+    const confirmedFindings = findingCount(summary, (finding) => finding.classification === 'confirmed');
+    const seriousOrCriticalFindings = findingCount(summary, (finding) => finding.classification === 'confirmed'
+        && (finding.severity === 'Critical' || finding.severity === 'Serious'));
+    const reviewCandidates = findingCount(summary, (finding) => finding.classification === 'review');
+    const coverageBlockers = findingCount(summary, (finding) => finding.classification === 'blocker');
+    const partialPages = summary.pages.filter((page) => page.partial).length;
+    const skippedUrls = summary.skippedUrls.length;
+    const unresolvedCriteria = (summary.criteria ?? []).filter((criterion) => criterion.scope === 'standard'
+        && ['manual-review-required', 'inconclusive'].includes(criterion.status)).length;
+    const unauditedUrls = Math.max(0, summary.requestedUrls.length - summary.auditedUrls.length);
+    const coverageIncomplete = summary.status !== 'completed'
+        || coverageBlockers > 0
+        || partialPages > 0
+        || skippedUrls > 0
+        || unauditedUrls > 0;
+    let headline;
+    let nextStep;
+    if (summary.status !== 'completed') {
+        headline = 'The audit stopped before completion, so every result must be treated as partial.';
+        nextStep = 'Resolve the interruption, confirm the approved scope, and rerun the audit before triage.';
+    }
+    else if (coverageIncomplete) {
+        headline = 'Audit coverage is incomplete, so resolve the gaps before drawing conclusions from the results.';
+        nextStep = 'Resolve coverage blockers, partial pages, and skipped or unaudited URLs, then rerun the affected scope.';
+    }
+    else if (seriousOrCriticalFindings > 0) {
+        headline = `${plural(seriousOrCriticalFindings, 'confirmed barrier')} rated Serious or Critical ${seriousOrCriticalFindings === 1 ? 'requires' : 'require'} priority remediation.`;
+        nextStep = 'Prioritise confirmed Serious and Critical barriers, assign owners and due dates, then retest the fixes.';
+    }
+    else if (confirmedFindings > 0) {
+        headline = `${plural(confirmedFindings, 'confirmed barrier')} ${confirmedFindings === 1 ? 'requires' : 'require'} remediation and verification.`;
+        nextStep = 'Assign the confirmed barriers for remediation, then retest each fix before human sign-off.';
+    }
+    else if (reviewCandidates > 0 || unresolvedCriteria > 0) {
+        headline = 'No confirmed barriers were recorded, but unresolved evidence still requires qualified human review.';
+        nextStep = 'Validate review candidates and unresolved WCAG criteria, recording evidence and a human verdict for each.';
+    }
+    else {
+        headline = 'No confirmed barriers were recorded in the completed automated scope.';
+        nextStep = 'Complete the applicable human checks and qualified sign-off before making any conformance claim.';
+    }
+    const currentPosition = [
+        `Coverage reached ${summary.auditedUrls.length} of ${summary.requestedUrls.length} requested URLs`,
+        `with ${plural(partialPages, 'partial page')} and ${plural(skippedUrls, 'skipped URL')}.`,
+        `The report contains ${plural(confirmedFindings, 'confirmed finding')}, ${plural(reviewCandidates, 'review candidate')}, and ${plural(coverageBlockers, 'coverage blocker')}.`,
+        'WCAG conformance remains not determined pending qualified human assessment.'
+    ].join(' ');
+    return {
+        headline,
+        currentPosition,
+        nextStep,
+        confirmedFindings,
+        seriousOrCriticalFindings,
+        reviewCandidates,
+        coverageBlockers,
+        partialPages,
+        skippedUrls,
+        unresolvedCriteria,
+        coverageIncomplete
+    };
+}
+//# sourceMappingURL=executive-summary.js.map
+;// CONCATENATED MODULE: ./dist/reporting/comparison-presentation.js
+const RESOLUTION_SCOPE_NOTE = 'Resolved means the finding was not observed when the same URL and viewport scope was successfully rerun; it does not establish WCAG conformance.';
+function comparison_presentation_findingCount(count) {
+    return `${count} finding${count === 1 ? '' : 's'}`;
+}
+function comparisonCategories(comparison) {
+    return [
+        {
+            key: 'new',
+            label: 'New findings',
+            shortLabel: 'New',
+            explanation: 'Observed in the current audit but not in equivalent baseline scope.',
+            records: comparison.newFindings
+        },
+        {
+            key: 'unchanged',
+            label: 'Unchanged findings',
+            shortLabel: 'Unchanged',
+            explanation: 'Observed in both the baseline and current audit in equivalent scope.',
+            records: comparison.unchangedFindings
+        },
+        {
+            key: 'resolved',
+            label: 'Resolved findings',
+            shortLabel: 'Resolved',
+            explanation: 'Not observed after equivalent baseline scope was successfully rerun.',
+            records: comparison.resolvedFindings
+        },
+        {
+            key: 'indeterminate-current',
+            label: 'Indeterminate current findings',
+            shortLabel: 'Indeterminate current',
+            explanation: 'Current findings outside scope that can be compared reliably with the baseline.',
+            records: comparison.indeterminateCurrentFindings
+        },
+        {
+            key: 'unobserved-baseline',
+            label: 'Baseline findings not re-observed',
+            shortLabel: 'Baseline not re-observed',
+            explanation: 'Baseline findings whose URL and viewport scope was not successfully repeated.',
+            records: comparison.unobservedBaselineFindings
+        }
+    ];
+}
+function comparisonHeadline(comparison) {
+    const established = `${comparison_presentation_findingCount(comparison.newFindings.length)} new, ${comparison_presentation_findingCount(comparison.unchangedFindings.length)} unchanged and ${comparison_presentation_findingCount(comparison.resolvedFindings.length)} resolved`;
+    if (comparison.coverage === 'complete')
+        return `Complete comparison: ${established}.`;
+    return `Partial comparison: ${established} within equivalent observed scope; ${comparison_presentation_findingCount(comparison.indeterminateCurrentFindings.length)} current and ${comparison_presentation_findingCount(comparison.unobservedBaselineFindings.length)} baseline remain indeterminate.`;
+}
+function comparisonPriorityLabel(record) {
+    if (record.classification === 'confirmed')
+        return record.severity;
+    if (record.classification === 'review')
+        return `Review priority: ${record.severity}`;
+    if (record.classification === 'blocker')
+        return 'Coverage blocked';
+    return 'Human check';
+}
+//# sourceMappingURL=comparison-presentation.js.map
+;// CONCATENATED MODULE: ./dist/reporting/finding-actions.js
+
+const SEVERITY_PRIORITY = {
+    Critical: 0,
+    Serious: 1,
+    Moderate: 2,
+    Minor: 3,
+    Advisory: 4
+};
+const CLASSIFICATION_PRIORITY = {
+    blocker: 0,
+    confirmed: 1,
+    review: 2,
+    manual: 3
+};
+function findingConciseClassificationLabel(classification) {
+    switch (classification) {
+        case 'confirmed':
+            return 'Confirmed';
+        case 'review':
+            return 'Review';
+        case 'blocker':
+            return 'Blocker';
+        case 'manual':
+            return 'Manual';
+    }
+}
+function findingActionGuidance(classification) {
+    switch (classification) {
+        case 'confirmed':
+            return 'Treat this as a reproduced barrier: assign an owner, apply the recommended fix, and retest every affected page and viewport.';
+        case 'review':
+            return 'Validate this evidence with human judgement before recording a failure, and keep the reviewer’s decision with the finding.';
+        case 'blocker':
+            return 'Restore access or remove the blocking condition, then rerun the affected scope; this item is not a conformance result.';
+        case 'manual':
+            return 'Complete the documented human procedure and record the evidence and verdict; do not infer a pass from automation.';
+    }
+}
+function findingClassificationLabel(classification) {
+    switch (classification) {
+        case 'confirmed':
+            return 'Confirmed barrier';
+        case 'review':
+            return 'Requires human validation';
+        case 'blocker':
+            return 'Coverage blocker (not a conformance result)';
+        case 'manual':
+            return 'Manual check required';
+    }
+}
+function findingPriorityLabel(finding) {
+    switch (finding.classification) {
+        case 'confirmed':
+            return finding.severity;
+        case 'review':
+            return `Review priority: ${finding.severity}`;
+        case 'blocker':
+            return 'Coverage blocked';
+        case 'manual':
+            return 'Human check';
+    }
+}
+function topActionNextStep(finding) {
+    const remediation = finding.remediation.trim();
+    const testing = finding.testing.trim();
+    switch (finding.classification) {
+        case 'confirmed':
+            return remediation || findingActionGuidance(finding.classification);
+        case 'review':
+        case 'manual':
+            return testing || findingActionGuidance(finding.classification);
+        case 'blocker':
+            return remediation
+                ? `${remediation.replace(/[.!?]+$/, '')}. Then rerun the affected scope.`
+                : findingActionGuidance(finding.classification);
+    }
+}
+function buildTopActions(summary, limit = 3) {
+    const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0;
+    return summary.findings
+        .map((finding, sourceIndex) => ({ finding, sourceIndex }))
+        .sort((left, right) => (CLASSIFICATION_PRIORITY[left.finding.classification] - CLASSIFICATION_PRIORITY[right.finding.classification]
+        || SEVERITY_PRIORITY[left.finding.severity] - SEVERITY_PRIORITY[right.finding.severity]
+        || left.sourceIndex - right.sourceIndex))
+        .slice(0, safeLimit)
+        .map(({ finding, sourceIndex }) => ({
+        finding,
+        sourceIndex,
+        id: findingId(finding, sourceIndex),
+        classificationLabel: findingClassificationLabel(finding.classification),
+        conciseClassificationLabel: findingConciseClassificationLabel(finding.classification),
+        priorityLabel: findingPriorityLabel(finding),
+        nextStep: topActionNextStep(finding),
+        affectedPageCount: new Set(finding.urls).size
+    }));
+}
+//# sourceMappingURL=finding-actions.js.map
 ;// CONCATENATED MODULE: ./dist/reporting/cell-text.js
 function scalarText(value) {
     if (value === null || value === undefined)
@@ -157493,6 +159469,7 @@ function cellText(cell) {
 
 
 
+
 const EXPECTED_TEMPLATE_REPORT_HEADERS = [
     'Finding ID', 'Evidence type', 'Status', 'Severity', 'WCAG criterion', 'Level', 'WCAG title',
     'Affected URL(s)', 'Viewport(s)', 'Component', 'Location', 'Summary', 'Issue', 'User impact',
@@ -157520,13 +159497,20 @@ const EXPECTED_WORKSHEETS = [
     ...EXPECTED_TEMPLATE_WORKSHEETS,
     'WCAG Criteria'
 ];
+const OPTIONAL_REPORT_WORKSHEETS = ['Baseline Comparison', 'History & Trends'];
 const expectedHeaders = new Map([
     ['Findings', { row: 6, values: EXPECTED_REPORT_HEADERS }],
     ['Page Inventory', { row: 4, values: ['URL', 'Audit state', 'Viewports planned', 'Viewports completed', 'Consent handling', 'Runtime errors', 'Notes'] }],
     ['Evidence', { row: 4, values: ['Evidence path', 'Finding ID', 'Page URL', 'Viewport', 'Rule ID', 'Component', 'Technical locator', 'Evidence type', 'Detail'] }],
     ['Manual Checks', { row: 4, values: ['Check ID', 'Manual check', 'WCAG criterion', 'Applies to', 'Procedure', 'Status', 'Reviewer notes'] }],
     ['WCAG 2.2 Reference', { row: 3, values: ['Success criterion', 'Level', 'Title', 'Understanding link'] }],
-    ['WCAG Criteria', { row: 4, values: ['Criterion', 'Level', 'Scope', 'Status', 'Finding IDs', 'Automated evidence', 'Decision note', 'Understanding'] }]
+    ['WCAG Criteria', { row: 4, values: ['Criterion', 'Level', 'Scope', 'Status', 'Finding IDs', 'Automated evidence', 'Decision note', 'Understanding'] }],
+    ['Baseline Comparison', { row: 7, values: ['Change', 'Finding ID', 'Classification', 'Impact / priority', 'Finding', 'Affected URLs', 'Viewports', 'Stable fingerprint'] }],
+    ['History & Trends', { row: 5, values: [
+                'Audit', 'Generated (UTC)', 'Status', 'Requested pages', 'Audited pages', 'Findings', 'Confirmed', 'Review',
+                'Blockers', 'Manual', 'Critical confirmed', 'Serious confirmed', 'Coverage vs previous', 'New', 'Unchanged',
+                'Resolved', 'Indeterminate current', 'Previous not re-observed'
+            ] }]
 ]);
 const expectedTabColors = new Map([
     ['Audit Summary', 'FF17365D'],
@@ -157542,6 +159526,7 @@ const allowedStatuses = new Set(['Open', 'In progress', 'Resolved', 'Risk accept
 const allowedSeverities = new Set(['Critical', 'Serious', 'Moderate', 'Minor', 'Advisory']);
 const allowedCriterionStatuses = new Set(['passed', 'failed', 'manual-review-required', 'not-applicable', 'inconclusive']);
 const allowedEvidenceKinds = new Set(['axe', 'dom', 'keyboard', 'responsive', 'network', 'manual']);
+const allowedComparisonChanges = new Set(['New', 'Unchanged', 'Resolved', 'Indeterminate current', 'Baseline not re-observed']);
 const criterionDefinitions = new Map(WCAG_CRITERIA_DEFINITIONS.map((criterion) => [criterion.criterion, criterion]));
 const standardCriteria = new Set(WCAG_CRITERIA_DEFINITIONS.filter(({ level }) => level !== 'AAA').map(({ criterion }) => criterion));
 const requiredManualChecks = new Map(REQUIRED_MANUAL_CHECKS.map((check) => [check.id, check]));
@@ -157558,8 +159543,14 @@ function cellHyperlink(value) {
 }
 function validateTemplateShape(workbook, errors) {
     const names = workbook.worksheets.map((worksheet) => worksheet.name);
-    if (names.join('|') !== EXPECTED_WORKSHEETS.join('|')) {
-        errors.push(`Worksheet names and order must be exactly: ${EXPECTED_WORKSHEETS.join(', ')}.`);
+    const requiredNames = names.slice(0, EXPECTED_WORKSHEETS.length);
+    const optionalNames = names.slice(EXPECTED_WORKSHEETS.length);
+    const optionalIndexes = optionalNames.map((name) => OPTIONAL_REPORT_WORKSHEETS.indexOf(name));
+    const optionalNamesAreValid = optionalIndexes.every((index) => index >= 0)
+        && new Set(optionalNames).size === optionalNames.length
+        && optionalIndexes.every((index, position) => position === 0 || index > optionalIndexes[position - 1]);
+    if (requiredNames.join('|') !== EXPECTED_WORKSHEETS.join('|') || !optionalNamesAreValid) {
+        errors.push(`Worksheet names and order must be: ${EXPECTED_WORKSHEETS.join(', ')}, optionally followed in order by ${OPTIONAL_REPORT_WORKSHEETS.join(', ')}.`);
     }
     for (const [name, expected] of expectedHeaders) {
         const worksheet = workbook.getWorksheet(name);
@@ -157573,6 +159564,150 @@ function validateTemplateShape(workbook, errors) {
         if (workbook.getWorksheet(name)?.properties.tabColor?.argb !== color) {
             errors.push(`${name} worksheet tab colour does not match the CarlasHub template.`);
         }
+    }
+    const comparison = workbook.getWorksheet('Baseline Comparison');
+    if (comparison && comparison.properties.tabColor?.argb !== 'FF1A73E8') {
+        errors.push('Baseline Comparison worksheet tab colour does not match the CarlasHub report style.');
+    }
+    const history = workbook.getWorksheet('History & Trends');
+    if (history && history.properties.tabColor?.argb !== 'FF00897B') {
+        errors.push('History & Trends worksheet tab colour does not match the CarlasHub report style.');
+    }
+}
+function validateComparisonSheet(workbook, errors) {
+    const worksheet = workbook.getWorksheet('Baseline Comparison');
+    if (!worksheet)
+        return;
+    const expectedLabels = new Map([
+        ['A4', 'Baseline source'], ['E4', 'Coverage'], ['A5', 'Baseline generated'],
+        ['E5', 'Baseline findings'], ['G5', 'Current findings']
+    ]);
+    for (const [address, expected] of expectedLabels) {
+        if (cellText(worksheet.getCell(address)) !== expected)
+            errors.push(`Baseline Comparison!${address} must contain “${expected}”.`);
+    }
+    if (!['Complete equivalent scope', 'Partial equivalent scope'].includes(cellText(worksheet.getCell('F4')))) {
+        errors.push('Baseline Comparison!F4 must describe complete or partial equivalent scope.');
+    }
+    if (!cellText(worksheet.getCell('B4')))
+        errors.push('Baseline Comparison!B4 must identify the baseline source.');
+    let foundComparisonContent = false;
+    let foundNoFindingsSentinel = false;
+    let gapBeforeNextContent = false;
+    let foundScopeNote = false;
+    for (let rowNumber = 8; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+        const changeCell = worksheet.getCell(rowNumber, 1);
+        const change = cellText(changeCell);
+        const remainingValues = Array.from({ length: 7 }, (_, index) => {
+            const cell = worksheet.getCell(rowNumber, index + 2);
+            return cell.isMergedTo(changeCell) ? '' : cellText(cell);
+        });
+        const hasRemainingData = remainingValues.some(Boolean);
+        if (change === RESOLUTION_SCOPE_NOTE) {
+            foundScopeNote = true;
+            break;
+        }
+        if (!change) {
+            if (hasRemainingData)
+                errors.push(`Baseline Comparison row ${rowNumber} has data after an empty change category.`);
+            gapBeforeNextContent = true;
+            continue;
+        }
+        if (change === 'No baseline or current findings were available to compare.') {
+            if (gapBeforeNextContent)
+                errors.push(`Baseline Comparison row ${rowNumber} appears after a gap in the comparison data.`);
+            if (foundComparisonContent || foundNoFindingsSentinel)
+                errors.push(`Baseline Comparison!A${rowNumber} uses the no-findings message alongside comparison data.`);
+            if (hasRemainingData)
+                errors.push(`Baseline Comparison row ${rowNumber} must not contain data after the no-findings message.`);
+            foundNoFindingsSentinel = true;
+            continue;
+        }
+        if (!allowedComparisonChanges.has(change)) {
+            errors.push(`Baseline Comparison!A${rowNumber} contains an unsupported change category.`);
+            continue;
+        }
+        if (gapBeforeNextContent)
+            errors.push(`Baseline Comparison row ${rowNumber} appears after a gap in the comparison data.`);
+        if (foundNoFindingsSentinel)
+            errors.push(`Baseline Comparison row ${rowNumber} contains data after the no-findings message.`);
+        foundComparisonContent = true;
+        for (let column = 1; column <= 8; column += 1) {
+            if (!cellText(worksheet.getCell(rowNumber, column))) {
+                errors.push(`Required comparison cell ${worksheet.getCell(rowNumber, column).address} is empty.`);
+            }
+        }
+        if (!allowedClassifications.has(cellText(worksheet.getCell(rowNumber, 3)))) {
+            errors.push(`Baseline Comparison!C${rowNumber} contains an unsupported classification.`);
+        }
+    }
+    if (!foundComparisonContent && !foundNoFindingsSentinel)
+        errors.push('Baseline Comparison must contain comparison rows or the no-findings message.');
+    if (!foundScopeNote)
+        errors.push('Baseline Comparison must include the resolution scope note.');
+}
+function validateHistorySheet(workbook, errors) {
+    const worksheet = workbook.getWorksheet('History & Trends');
+    if (!worksheet)
+        return;
+    if (cellText(worksheet.getCell('A1')) !== 'History and trends') {
+        errors.push('History & Trends!A1 must contain “History and trends”.');
+    }
+    if (!cellText(worksheet.getCell('A3')).startsWith('History limitations:')) {
+        errors.push('History & Trends!A3 must describe history limitations.');
+    }
+    let previousTimestamp = Number.NEGATIVE_INFINITY;
+    let pointCount = 0;
+    for (let rowNumber = 6; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+        const source = cellText(worksheet.getCell(rowNumber, 1));
+        const rowValues = Array.from({ length: 18 }, (_, index) => cellText(worksheet.getCell(rowNumber, index + 1)));
+        if (!source) {
+            if (rowValues.some(Boolean))
+                errors.push(`History & Trends row ${rowNumber} has data after an empty audit source.`);
+            continue;
+        }
+        pointCount += 1;
+        const generatedAt = cellText(worksheet.getCell(rowNumber, 2));
+        const timestamp = Date.parse(generatedAt);
+        if (!generatedAt || Number.isNaN(timestamp)) {
+            errors.push(`History & Trends!B${rowNumber} must contain a valid audit timestamp.`);
+        }
+        else {
+            if (timestamp < previousTimestamp)
+                errors.push(`History & Trends row ${rowNumber} is not in chronological order.`);
+            previousTimestamp = timestamp;
+        }
+        if (!['completed', 'cancelled'].includes(cellText(worksheet.getCell(rowNumber, 3)))) {
+            errors.push(`History & Trends!C${rowNumber} contains an unsupported audit status.`);
+        }
+        for (let column = 4; column <= 12; column += 1) {
+            const value = Number(cellText(worksheet.getCell(rowNumber, column)));
+            if (!Number.isInteger(value) || value < 0)
+                errors.push(`History & Trends!${worksheet.getCell(rowNumber, column).address} must contain a non-negative whole number.`);
+        }
+        const coverage = cellText(worksheet.getCell(rowNumber, 13));
+        if (pointCount === 1) {
+            if (coverage !== 'Starting point')
+                errors.push(`History & Trends!M${rowNumber} must identify the starting point.`);
+            for (let column = 14; column <= 18; column += 1) {
+                if (cellText(worksheet.getCell(rowNumber, column)))
+                    errors.push(`History & Trends!${worksheet.getCell(rowNumber, column).address} must be empty for the starting point.`);
+            }
+        }
+        else {
+            if (!['complete', 'partial'].includes(coverage))
+                errors.push(`History & Trends!M${rowNumber} must contain complete or partial coverage.`);
+            for (let column = 14; column <= 18; column += 1) {
+                const value = Number(cellText(worksheet.getCell(rowNumber, column)));
+                if (!Number.isInteger(value) || value < 0)
+                    errors.push(`History & Trends!${worksheet.getCell(rowNumber, column).address} must contain a non-negative whole number.`);
+            }
+        }
+    }
+    if (pointCount < 2)
+        errors.push('History & Trends must contain at least one prior audit and the current audit.');
+    if (pointCount > 0 && cellText(worksheet.getCell(pointCount + 5, 1)) !== 'Current audit') {
+        errors.push('History & Trends must end with the current audit.');
     }
 }
 async function validateRelativeEvidenceLink(workbookPath, hyperlink, location, errors) {
@@ -157609,6 +159744,8 @@ async function validateExcelReport(path) {
     const errors = [];
     const warnings = [];
     validateTemplateShape(workbook, errors);
+    validateComparisonSheet(workbook, errors);
+    validateHistorySheet(workbook, errors);
     for (const name of EXPECTED_WORKSHEETS) {
         if (!workbook.getWorksheet(name))
             errors.push(`Missing ${name} worksheet.`);
@@ -157838,6 +159975,10 @@ async function validateExcelReport(path) {
 
 
 
+
+
+
+
 const moduleDirectory = (0,external_node_path_.dirname)((0,external_node_url_.fileURLToPath)(import.meta.url));
 const templateFileName = ['accessibility', 'report', 'template.xlsx'].join('-');
 const DEFAULT_TEMPLATE = (0,external_node_path_.resolve)(moduleDirectory, '..', '..', 'assets', templateFileName);
@@ -157881,6 +160022,34 @@ async function assertCanonicalTemplate(path) {
 function excel_clone(value) {
     return structuredClone(value);
 }
+const SUMMARY_LINE_LENGTH = 88;
+const SUMMARY_LINE_HEIGHT = 18;
+function wrapSummaryText(value) {
+    const wrapped = [];
+    for (const paragraph of value.split('\n')) {
+        if (!paragraph) {
+            wrapped.push('');
+            continue;
+        }
+        let line = '';
+        for (const originalWord of paragraph.split(/\s+/)) {
+            let word = originalWord;
+            if (line && line.length + word.length + 1 > SUMMARY_LINE_LENGTH) {
+                wrapped.push(line);
+                line = '';
+            }
+            while (word.length > SUMMARY_LINE_LENGTH) {
+                wrapped.push(word.slice(0, SUMMARY_LINE_LENGTH));
+                word = word.slice(SUMMARY_LINE_LENGTH);
+            }
+            if (word)
+                line = line ? `${line} ${word}` : word;
+        }
+        if (line)
+            wrapped.push(line);
+    }
+    return wrapped.join('\n');
+}
 function solidFill(cell, colour) {
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colour } };
 }
@@ -157894,6 +160063,14 @@ function styleBadge(cell, background, foreground) {
         left: { style: 'thin', color: { argb: REPORT_COLOURS.border } },
         right: { style: 'thin', color: { argb: REPORT_COLOURS.border } }
     };
+}
+function comparisonRowHeight(values, widths, minimum = 42) {
+    const lineCount = values.reduce((maximum, value, index) => {
+        const charactersPerLine = Math.max(8, Math.floor((widths[index] ?? 20) * 0.85));
+        const wrappedLines = value.split(/\r?\n/).reduce((total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)), 0);
+        return Math.max(maximum, wrappedLines);
+    }, 1);
+    return Math.max(minimum, lineCount * 15 + 9);
 }
 function evidenceKey(value) {
     return value
@@ -158263,7 +160440,185 @@ function populateCriteria(workbook, summary) {
     worksheet.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(5, (summary.criteria?.length ?? 0) + 4), column: 8 } };
     worksheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
 }
+function populateComparison(workbook, summary) {
+    const comparison = summary.comparison;
+    if (!comparison)
+        return;
+    const worksheet = workbook.addWorksheet('Baseline Comparison', {
+        properties: { tabColor: { argb: 'FF1A73E8' } }
+    });
+    worksheet.mergeCells('A1:H1');
+    worksheet.getCell('A1').value = 'Baseline comparison';
+    worksheet.getCell('A1').font = { name: 'Arial', size: 18, bold: true, color: { argb: 'FFFFFFFF' } };
+    solidFill(worksheet.getCell('A1'), REPORT_COLOURS.primaryDark);
+    worksheet.getCell('A1').alignment = { vertical: 'middle' };
+    worksheet.getRow(1).height = 32;
+    worksheet.mergeCells('A2:H2');
+    worksheet.getCell('A2').value = comparisonHeadline(comparison);
+    worksheet.getCell('A2').font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF595959' } };
+    worksheet.getCell('A2').alignment = { wrapText: true, vertical: 'middle' };
+    worksheet.getRow(2).height = 32;
+    worksheet.getCell('A4').value = 'Baseline source';
+    worksheet.mergeCells('B4:D4');
+    worksheet.getCell('B4').value = comparison.baselineSource;
+    worksheet.getCell('E4').value = 'Coverage';
+    worksheet.mergeCells('F4:H4');
+    worksheet.getCell('F4').value = comparison.coverage === 'complete' ? 'Complete equivalent scope' : 'Partial equivalent scope';
+    worksheet.getCell('A5').value = 'Baseline generated';
+    worksheet.mergeCells('B5:D5');
+    worksheet.getCell('B5').value = comparison.baselineGeneratedAt ?? 'Not recorded';
+    worksheet.getCell('E5').value = 'Baseline findings';
+    worksheet.getCell('F5').value = comparison.baselineFindingCount;
+    worksheet.getCell('G5').value = 'Current findings';
+    worksheet.getCell('H5').value = comparison.currentFindingCount;
+    for (const address of ['A4', 'E4', 'A5', 'E5', 'G5']) {
+        worksheet.getCell(address).font = { name: 'Arial', size: 10, bold: true, color: { argb: REPORT_COLOURS.primaryDark } };
+    }
+    for (const rowNumber of [4, 5]) {
+        worksheet.getRow(rowNumber).height = 24;
+        worksheet.getRow(rowNumber).eachCell((cell) => {
+            cell.alignment = { vertical: 'middle', wrapText: true };
+            cell.border = { bottom: { style: 'hair', color: { argb: REPORT_COLOURS.border } } };
+        });
+    }
+    const headers = ['Change', 'Finding ID', 'Classification', 'Impact / priority', 'Finding', 'Affected URLs', 'Viewports', 'Stable fingerprint'];
+    const columnWidths = [24, 16, 18, 22, 44, 46, 22, 34];
+    worksheet.getRow(7).values = headers;
+    const changeColours = {
+        new: { background: REPORT_COLOURS.confirmed, foreground: REPORT_COLOURS.serious },
+        unchanged: { background: REPORT_COLOURS.open, foreground: REPORT_COLOURS.primaryDark },
+        resolved: { background: REPORT_COLOURS.manual, foreground: 'FF137333' },
+        'indeterminate-current': { background: REPORT_COLOURS.review, foreground: 'FF7A4F01' },
+        'unobserved-baseline': { background: 'FFE7E6E6', foreground: REPORT_COLOURS.text }
+    };
+    let rowNumber = 8;
+    for (const category of comparisonCategories(comparison)) {
+        for (const record of category.records) {
+            const row = worksheet.getRow(rowNumber);
+            const values = [
+                category.shortLabel,
+                record.id ?? 'Not recorded',
+                record.classification,
+                comparisonPriorityLabel(record),
+                record.summary,
+                record.urls.join('\n') || 'Not recorded',
+                record.viewports.join('\n') || 'Not recorded',
+                record.fingerprint
+            ];
+            row.values = values;
+            row.height = comparisonRowHeight(values, columnWidths, 54);
+            rowNumber += 1;
+        }
+    }
+    applySupportingSheetPresentation(worksheet, 7, 8, 8, 2);
+    let styledRowNumber = 8;
+    for (const category of comparisonCategories(comparison)) {
+        for (const record of category.records) {
+            const row = worksheet.getRow(styledRowNumber);
+            const changeColour = changeColours[category.key];
+            styleBadge(row.getCell(1), changeColour.background, changeColour.foreground);
+            const classificationColour = CLASSIFICATION_COLOURS[record.classification];
+            styleBadge(row.getCell(3), classificationColour.background, classificationColour.foreground);
+            const priorityColour = record.classification === 'confirmed'
+                ? SEVERITY_COLOURS[record.severity]
+                : classificationColour;
+            styleBadge(row.getCell(4), priorityColour.background, priorityColour.foreground);
+            styledRowNumber += 1;
+        }
+    }
+    if (rowNumber === 8) {
+        worksheet.mergeCells('A8:H8');
+        worksheet.getCell('A8').value = 'No baseline or current findings were available to compare.';
+        worksheet.getCell('A8').font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF595959' } };
+    }
+    const noteRow = Math.max(10, rowNumber + 1);
+    worksheet.mergeCells(`A${noteRow}:H${noteRow}`);
+    worksheet.getCell(`A${noteRow}`).value = RESOLUTION_SCOPE_NOTE;
+    worksheet.getCell(`A${noteRow}`).font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF7A4F01' } };
+    worksheet.getCell(`A${noteRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: REPORT_COLOURS.review } };
+    worksheet.getCell(`A${noteRow}`).alignment = { wrapText: true, vertical: 'middle' };
+    worksheet.getRow(noteRow).height = comparisonRowHeight([RESOLUTION_SCOPE_NOTE], [150], 34);
+    worksheet.mergeCells(`A${noteRow + 1}:H${noteRow + 1}`);
+    const limitationText = comparison.limitations.length
+        ? `Comparison limitations: ${comparison.limitations.join(' | ')}`
+        : 'Comparison limitations: No additional limitations were recorded.';
+    worksheet.getCell(`A${noteRow + 1}`).value = limitationText;
+    worksheet.getCell(`A${noteRow + 1}`).font = { name: 'Arial', size: 10, color: { argb: REPORT_COLOURS.text } };
+    worksheet.getCell(`A${noteRow + 1}`).alignment = { wrapText: true, vertical: 'top' };
+    worksheet.getRow(noteRow + 1).height = comparisonRowHeight([limitationText], [150]);
+    worksheet.columns = columnWidths.map((width) => ({ width }));
+    worksheet.autoFilter = { from: { row: 7, column: 1 }, to: { row: Math.max(7, rowNumber - 1), column: 8 } };
+    worksheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+}
+function populateHistory(workbook, summary) {
+    const history = summary.history;
+    if (!history)
+        return;
+    const worksheet = workbook.addWorksheet('History & Trends', {
+        properties: { tabColor: { argb: 'FF00897B' } }
+    });
+    worksheet.mergeCells('A1:R1');
+    worksheet.getCell('A1').value = 'History and trends';
+    worksheet.getCell('A1').font = { name: 'Arial', size: 18, bold: true, color: { argb: 'FFFFFFFF' } };
+    solidFill(worksheet.getCell('A1'), REPORT_COLOURS.primaryDark);
+    worksheet.getCell('A1').alignment = { vertical: 'middle' };
+    worksheet.getRow(1).height = 32;
+    worksheet.mergeCells('A2:R2');
+    worksheet.getCell('A2').value = 'Chronological audit snapshots; each change is measured against the immediately preceding snapshot and qualified by comparable scope.';
+    worksheet.getCell('A2').font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF595959' } };
+    worksheet.getCell('A2').alignment = { wrapText: true, vertical: 'middle' };
+    worksheet.getRow(2).height = 32;
+    worksheet.mergeCells('A3:R3');
+    worksheet.getCell('A3').value = history.limitations.length
+        ? `History limitations: ${history.limitations.join(' | ')}`
+        : 'History limitations: No additional limitations were recorded.';
+    worksheet.getCell('A3').font = { name: 'Arial', size: 10, color: { argb: REPORT_COLOURS.text } };
+    worksheet.getCell('A3').alignment = { wrapText: true, vertical: 'middle' };
+    worksheet.getRow(3).height = comparisonRowHeight([String(worksheet.getCell('A3').value)], [180], 28);
+    const headers = [
+        'Audit', 'Generated (UTC)', 'Status', 'Requested pages', 'Audited pages', 'Findings', 'Confirmed', 'Review',
+        'Blockers', 'Manual', 'Critical confirmed', 'Serious confirmed', 'Coverage vs previous', 'New', 'Unchanged',
+        'Resolved', 'Indeterminate current', 'Previous not re-observed'
+    ];
+    worksheet.getRow(5).values = headers;
+    history.points.forEach((point, index) => {
+        const delta = point.comparisonToPrevious;
+        worksheet.getRow(index + 6).values = [
+            point.source,
+            point.generatedAt,
+            point.status,
+            point.requestedPageCount,
+            point.auditedPageCount,
+            point.findingCount,
+            point.confirmedCount,
+            point.reviewCount,
+            point.blockerCount,
+            point.manualCount,
+            point.criticalConfirmedCount,
+            point.seriousConfirmedCount,
+            delta?.coverage ?? 'Starting point',
+            delta?.newCount ?? '',
+            delta?.unchangedCount ?? '',
+            delta?.resolvedCount ?? '',
+            delta?.indeterminateCurrentCount ?? '',
+            delta?.unobservedPreviousCount ?? ''
+        ];
+    });
+    applySupportingSheetPresentation(worksheet, 5, 6, 18, 2);
+    for (let rowNumber = 6; rowNumber < history.points.length + 6; rowNumber += 1) {
+        const status = valueText(worksheet.getCell(rowNumber, 3));
+        styleBadge(worksheet.getCell(rowNumber, 3), status === 'completed' ? REPORT_COLOURS.manual : REPORT_COLOURS.review, status === 'completed' ? 'FF137333' : 'FF7A4F01');
+        const coverage = valueText(worksheet.getCell(rowNumber, 13));
+        styleBadge(worksheet.getCell(rowNumber, 13), coverage === 'complete' ? REPORT_COLOURS.manual : coverage === 'partial' ? REPORT_COLOURS.review : REPORT_COLOURS.open, coverage === 'complete' ? 'FF137333' : coverage === 'partial' ? 'FF7A4F01' : REPORT_COLOURS.primaryDark);
+    }
+    worksheet.columns = [28, 25, 14, 16, 15, 12, 12, 12, 12, 12, 19, 18, 22, 10, 13, 12, 22, 26]
+        .map((width) => ({ width }));
+    worksheet.autoFilter = { from: { row: 5, column: 1 }, to: { row: history.points.length + 5, column: 18 } };
+    worksheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+}
 function populateSummary(worksheet, summary) {
+    const executiveSummary = buildExecutiveSummary(summary);
+    const topActions = buildTopActions(summary);
     const allViewports = summary.pages.flatMap((page) => page.viewports);
     const classifications = (classification) => summary.findings.filter((finding) => finding.classification === classification).length;
     const confirmedSeverities = (severity) => summary.findings.filter((finding) => finding.classification === 'confirmed' && finding.severity === severity).length;
@@ -158289,18 +160644,52 @@ function populateSummary(worksheet, summary) {
     ['Critical', 'Serious', 'Moderate', 'Minor', 'Advisory'].forEach((severity, index) => {
         worksheet.getCell(`H${index + 4}`).value = confirmedSeverities(severity);
     });
-    worksheet.getCell('A14').value = [
+    const summaryStyle = excel_clone(worksheet.getCell('A14').style);
+    worksheet.unMergeCells('A14:H16');
+    for (const rowNumber of [14, 15, 16]) {
+        worksheet.mergeCells(`A${rowNumber}:H${rowNumber}`);
+        worksheet.getCell(`A${rowNumber}`).style = excel_clone(summaryStyle);
+    }
+    const scopeAndMethod = [
+        `Browser engine: ${summary.browserEngine ?? 'not recorded'}`,
+        `Scope mode: ${AUDIT_SCOPE_LABEL}`,
         `Requested URLs: ${summary.requestedUrls.length}`,
         `Audited URLs: ${summary.auditedUrls.length}`,
         `Partial pages: ${summary.pages.filter((page) => page.partial).length}`,
         `Skipped URLs: ${summary.skippedUrls.length}`,
         `Viewports run: ${allViewports.length}`,
-        `Conformance target: WCAG 2.2 Level AA`,
+        'Conformance target: WCAG 2.2 Level AA',
         `Audit Quality Contract: ${summary.qualityContract?.version ?? 'not recorded'}`,
         `Finding policy: ${summary.qualityContract?.findingPolicy ?? 'not recorded'}`,
         `AAA advisory checks: ${aaaAdvisory ? 'Enabled' : 'Disabled'}`,
         `Source: ${summary.source}`
-    ].join('\n');
+    ].join('; ');
+    worksheet.getCell('A13').value = 'Executive summary, scope and method';
+    worksheet.getCell('A14').value = wrapSummaryText(`Executive summary: ${executiveSummary.headline}`);
+    worksheet.getCell('A15').value = wrapSummaryText(`Current position: ${executiveSummary.currentPosition}`);
+    worksheet.getCell('A16').value = wrapSummaryText([
+        `Recommended next step: ${executiveSummary.nextStep}`,
+        topActions.length
+            ? ['Top actions:', ...topActions.map((action, index) => `${index + 1}. [${action.id}] ${action.classificationLabel} · ${action.priorityLabel} — ${action.nextStep}`)].join('\n')
+            : `Top actions: ${executiveSummary.nextStep}`,
+        summary.comparison ? `Baseline comparison: ${comparisonHeadline(summary.comparison)} See the Baseline Comparison sheet for details.` : '',
+        `Scope and method: ${scopeAndMethod}`
+    ].filter(Boolean).join('\n'));
+    worksheet.mergeCells('A17:B17');
+    worksheet.getCell('A17').value = 'Open top actions in Findings:';
+    const actionLinkRanges = ['C17:D17', 'E17:F17', 'G17:H17'];
+    const actionLinkCells = ['C17', 'E17', 'G17'];
+    actionLinkRanges.forEach((range) => worksheet.mergeCells(range));
+    actionLinkCells.forEach((address, index) => {
+        const action = topActions[index];
+        worksheet.getCell(address).value = action
+            ? {
+                text: `Open ${action.id}`,
+                hyperlink: `#'Findings'!A${action.sourceIndex + 7}`,
+                tooltip: `Open ${action.id} in the Findings sheet.`
+            }
+            : 'No additional action';
+    });
     const unresolvedCoverage = summary.coverage.flatMap((page) => page.viewports)
         .flatMap((viewport) => viewport.assessments)
         .filter((item) => !['confirmed-passed', 'confirmed-failed', 'not-applicable'].includes(item.status)).length;
@@ -158341,7 +160730,24 @@ function applySummaryPresentation(worksheet) {
         styleBadge(worksheet.getCell(`G${index + 4}`), colours.background, colours.foreground);
         styleBadge(worksheet.getCell(`H${index + 4}`), colours.background, colours.foreground);
     });
-    worksheet.getCell('A14').alignment = { vertical: 'top', wrapText: true };
+    for (const rowNumber of [14, 15, 16]) {
+        const cell = worksheet.getCell(`A${rowNumber}`);
+        cell.alignment = { vertical: 'top', wrapText: true };
+        const lineCount = valueText(cell.value).split('\n').length;
+        worksheet.getRow(rowNumber).height = Math.max(36, lineCount * SUMMARY_LINE_HEIGHT + 8);
+    }
+    const actionLabel = worksheet.getCell('A17');
+    solidFill(actionLabel, REPORT_COLOURS.surface);
+    actionLabel.font = { name: 'Arial', size: 10, bold: true, color: { argb: REPORT_COLOURS.text } };
+    actionLabel.alignment = { vertical: 'middle', wrapText: true };
+    for (const address of ['C17', 'E17', 'G17']) {
+        const cell = worksheet.getCell(address);
+        styleBadge(cell, REPORT_COLOURS.open, REPORT_COLOURS.primaryDark);
+        if (typeof cell.value === 'object' && cell.value !== null && 'hyperlink' in cell.value) {
+            cell.font = { ...cell.font, underline: true };
+        }
+    }
+    worksheet.getRow(17).height = 30;
     worksheet.getCell('A19').alignment = { vertical: 'top', wrapText: true };
     worksheet.getRow(19).height = 156;
 }
@@ -158360,7 +160766,7 @@ function applyFindingPresentation(worksheet, findings) {
             showGridLines: false,
             zoomScale: 75
         }];
-    worksheet.getCell('A4').value = 'Prioritise confirmed barriers and blockers. Review rows are evidence-led candidates requiring human validation; their rating is review priority, not confirmed impact severity.';
+    worksheet.getCell('A4').value = 'Confirmed = reproduced barrier to assign, fix and retest. Review = evidence requiring a documented human decision. Blocker = restore the affected scope and rerun it. Manual = complete the human procedure and record evidence. Ratings on non-confirmed rows are review priority, not confirmed impact severity.';
     const widths = [12, 14, 12, 16, 14, 8, 22, 34, 18, 22, 22, 32, 36, 34, 30, 34, 36, 34, 36, 14, 12, 18, 18, 18, 16];
     const hiddenColumns = new Set([6, 7, 9, 11, 15, 16, 24, 25]);
     widths.forEach((width, index) => {
@@ -158467,6 +160873,8 @@ async function writeExcelReport(summary, options) {
     populateEvidence(evidenceSheet, summary, options.outputPath);
     populateManualChecks(manualSheet, summary);
     populateCriteria(workbook, summary);
+    populateComparison(workbook, summary);
+    populateHistory(workbook, summary);
     applySummaryPresentation(summarySheet);
     applyFindingPresentation(findingsSheet, summary.findings);
     applySupportingSheetPresentation(pageSheet, 4, 5, 7, 2);
@@ -158483,8 +160891,6 @@ async function writeExcelReport(summary, options) {
     return options.outputPath;
 }
 //# sourceMappingURL=excel.js.map
-// EXTERNAL MODULE: external "node:fs"
-var external_node_fs_ = __nccwpck_require__(73024);
 // EXTERNAL MODULE: ./node_modules/archiver/index.js
 var archiver = __nccwpck_require__(99392);
 ;// CONCATENATED MODULE: ./dist/reporting/archive.js
@@ -158492,12 +160898,16 @@ var archiver = __nccwpck_require__(99392);
 
 
 
-async function createAuditArchive(outputDir, reportPath, htmlPath, jsonPath) {
+function auditArchivePath(outputDir) {
     const bundleName = (0,external_node_path_.basename)((0,external_node_path_.resolve)(outputDir));
     // Construct the extension at runtime so JavaScript bundlers do not mistake
     // the generated archive for a static asset that must be relocated.
     const archiveName = [bundleName, '.', 'z', 'i', 'p'].join('');
-    const archivePath = (0,external_node_path_.resolve)((0,external_node_path_.dirname)((0,external_node_path_.resolve)(outputDir)), archiveName);
+    return (0,external_node_path_.resolve)((0,external_node_path_.dirname)((0,external_node_path_.resolve)(outputDir)), archiveName);
+}
+async function createAuditArchive(outputDir, reportPath, htmlPath, jsonPath, additionalPaths = []) {
+    const bundleName = (0,external_node_path_.basename)((0,external_node_path_.resolve)(outputDir));
+    const archivePath = auditArchivePath(outputDir);
     const screenshotsPath = (0,external_node_path_.resolve)(outputDir, 'screenshots');
     const hasScreenshots = await (0,promises_.access)(screenshotsPath).then(() => true).catch(() => false);
     await new Promise((resolveArchive, rejectArchive) => {
@@ -158514,6 +160924,9 @@ async function createAuditArchive(outputDir, reportPath, htmlPath, jsonPath) {
         archive.file(reportPath, { name: `${bundleName}/${(0,external_node_path_.basename)(reportPath)}` });
         archive.file(htmlPath, { name: `${bundleName}/${(0,external_node_path_.basename)(htmlPath)}` });
         archive.file(jsonPath, { name: `${bundleName}/${(0,external_node_path_.basename)(jsonPath)}` });
+        for (const path of additionalPaths) {
+            archive.file(path, { name: `${bundleName}/${(0,external_node_path_.basename)(path)}` });
+        }
         if (hasScreenshots)
             archive.directory(screenshotsPath, `${bundleName}/screenshots`);
         void archive.finalize().catch(rejectArchive);
@@ -158522,6 +160935,11 @@ async function createAuditArchive(outputDir, reportPath, htmlPath, jsonPath) {
 }
 //# sourceMappingURL=archive.js.map
 ;// CONCATENATED MODULE: ./dist/reporting/html.js
+
+
+
+
+
 
 
 
@@ -158571,6 +160989,47 @@ function sourceLabel(value) {
     const sources = value.split(',').map((source) => source.trim()).filter(Boolean);
     return [...new Map(sources.map((source) => [source.toLocaleLowerCase(), source])).values()].join(', ') || 'Not specified';
 }
+function findingTicketText(finding, index) {
+    const id = findingId(finding, index);
+    const standards = [...new Set([...finding.wcag, ...(finding.standards ?? [])])];
+    const component = [finding.componentName || finding.component, finding.componentLocation]
+        .filter(Boolean)
+        .join(' — ');
+    const lines = [
+        `[${id}] ${finding.summary}`,
+        '',
+        `Evidence type: ${findingClassificationLabel(finding.classification)}`,
+        `Impact / priority: ${findingPriorityLabel(finding)}`,
+        `WCAG / standard: ${standards.join(', ') || 'Advisory'}`,
+        `Affected viewports: ${finding.viewports.join(', ') || 'Not specified'}`,
+        `Component / location: ${component || 'Not specified'}`,
+        `Suggested owner: ${finding.assignment}`,
+        `Estimated effort: ${finding.effort}`,
+        `Translation review: ${finding.translationRequired}`,
+        '',
+        'Affected pages:',
+        ...finding.urls.map((url) => `- ${url}`),
+        '',
+        'Issue:',
+        finding.issue,
+        '',
+        'Why this matters:',
+        finding.impact,
+        '',
+        'How this was checked:',
+        finding.testing,
+        '',
+        'Recommended fix:',
+        finding.remediation,
+        '',
+        'Next step:',
+        findingActionGuidance(finding.classification)
+    ];
+    if (finding.selectors.length) {
+        lines.push('', 'Technical selectors:', ...finding.selectors.map((selector) => `- ${selector}`));
+    }
+    return lines.join('\n');
+}
 function findingRows(summary, outputPath) {
     if (!summary.findings.length) {
         return '<tr><td colspan="6" class="empty">No automated findings were recorded.</td></tr>';
@@ -158586,13 +161045,14 @@ function findingRows(summary, outputPath) {
         const pages = finding.urls.map((url) => `<li>${html_link(url)}</li>`).join('');
         const selectors = finding.selectors.map((selector) => `<li><code>${escapeHtml(selector)}</code></li>`).join('');
         const id = findingId(finding, index);
+        const ticket = findingTicketText(finding, index);
         const impact = finding.classification === 'confirmed'
-            ? { css: `severity-${finding.severity.toLowerCase()}`, label: finding.severity }
+            ? { css: `severity-${finding.severity.toLowerCase()}`, label: findingPriorityLabel(finding) }
             : finding.classification === 'review'
-                ? { css: 'badge-review', label: `Review priority: ${finding.severity}` }
+                ? { css: 'badge-review', label: findingPriorityLabel(finding) }
                 : finding.classification === 'blocker'
-                    ? { css: 'badge-blocker', label: 'Coverage blocked' }
-                    : { css: 'badge-manual', label: 'Human check' };
+                    ? { css: 'badge-blocker', label: findingPriorityLabel(finding) }
+                    : { css: 'badge-manual', label: findingPriorityLabel(finding) };
         return `<tr id="finding-${escapeHtml(id)}" data-search="${escapeHtml([
             finding.ruleId,
             finding.summary,
@@ -158609,13 +161069,15 @@ function findingRows(summary, outputPath) {
       <td><span class="badge badge-${escapeHtml(finding.classification)}">${escapeHtml(finding.classification)}</span></td>
       <td><span class="badge ${escapeHtml(impact.css)}">${escapeHtml(impact.label)}</span></td>
       <td><strong>${escapeHtml(finding.summary)}</strong><p>${escapeHtml(finding.issue)}</p>
-        <details><summary>Impact, testing and remediation</summary>
-          <h3>Impact</h3><p>${escapeHtml(finding.impact)}</p>
-          <h3>How to verify</h3><p>${escapeHtml(finding.testing)}</p>
-          <h3>Recommended remediation</h3><p>${escapeHtml(finding.remediation)}</p>
-          <h3>Component</h3><p>${escapeHtml(finding.componentName || finding.component)}${finding.componentLocation ? ` — ${escapeHtml(finding.componentLocation)}` : ''}</p>
-          ${selectors ? `<h3>Selectors</h3><ul>${selectors}</ul>` : ''}
-          ${screenshots ? `<h3>Evidence</h3><ul>${screenshots}</ul>` : ''}
+        <details><summary>Understand and resolve this finding</summary>
+          <p class="finding-guidance"><strong>What to do with this result:</strong> ${escapeHtml(findingActionGuidance(finding.classification))}</p>
+          <h3>Why this matters</h3><p>${escapeHtml(finding.impact)}</p>
+          <h3>How this was checked</h3><p>${escapeHtml(finding.testing)}</p>
+          <h3>How to fix it</h3><p>${escapeHtml(finding.remediation)}</p>
+          <h3>Affected component</h3><p>${escapeHtml(finding.componentName || finding.component)}${finding.componentLocation ? ` — ${escapeHtml(finding.componentLocation)}` : ''}</p>
+          ${selectors ? `<h3>Technical selectors</h3><ul>${selectors}</ul>` : ''}
+          ${screenshots ? `<h3>Evidence screenshots</h3><ul>${screenshots}</ul>` : ''}
+          <div class="finding-actions"><button type="button" class="copy-ticket" data-ticket="${escapeHtml(ticket)}" data-finding-id="${escapeHtml(id)}" aria-describedby="copy-status-${escapeHtml(id)}">Copy ticket</button><span id="copy-status-${escapeHtml(id)}" class="copy-status" role="status" aria-live="polite"></span></div>
         </details>
       </td>
       <td>${finding.standards?.length
@@ -158662,7 +161124,73 @@ function criterionRows(summary) {
         return `<tr><td><a href="${escapeHtml(criterion.understandingUrl)}" target="_blank" rel="noopener noreferrer"><span class="finding-id">${escapeHtml(criterion.criterion)}</span></a><br><span class="muted">${escapeHtml(criterion.title)}</span></td><td>${escapeHtml(criterion.level)}</td><td>${escapeHtml(criterion.scope === 'standard' ? 'AA conformance target' : 'AAA advisory')}</td><td><span class="coverage coverage-${escapeHtml(criterion.status)}">${escapeHtml(STATUS_LABELS[criterion.status] || criterion.status)}</span></td><td>${evidenceList}</td><td>${escapeHtml(criterion.detail)}</td></tr>`;
     }).join('') || '<tr><td colspan="6" class="empty">No criterion ledger was generated.</td></tr>';
 }
+function comparisonSection(summary) {
+    const comparison = summary.comparison;
+    if (!comparison)
+        return '';
+    const categories = comparisonCategories(comparison);
+    const rows = categories.flatMap((category) => category.records.map((record) => {
+        const urls = record.urls.length
+            ? `<ul>${record.urls.map((url) => `<li>${html_link(url)}</li>`).join('')}</ul>`
+            : '<p>Not recorded</p>';
+        return `<tr><td><span class="badge comparison-${escapeHtml(category.key)}">${escapeHtml(category.shortLabel)}</span><br><span class="muted">${escapeHtml(category.explanation)}</span></td><td><span class="finding-id">${escapeHtml(record.id ?? 'Not recorded')}</span><br><code>${escapeHtml(record.fingerprint)}</code></td><td>${escapeHtml(findingClassificationLabel(record.classification))}</td><td>${escapeHtml(comparisonPriorityLabel(record))}</td><td>${escapeHtml(record.summary)}</td><td>${urls}</td><td>${list(record.viewports, 'Not recorded')}</td></tr>`;
+    })).join('') || '<tr><td colspan="7" class="empty">No baseline or current findings were available to compare.</td></tr>';
+    const baselineDateIsValid = comparison.baselineGeneratedAt && !Number.isNaN(Date.parse(comparison.baselineGeneratedAt));
+    const generatedAt = baselineDateIsValid
+        ? new Date(comparison.baselineGeneratedAt).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' })
+        : comparison.baselineGeneratedAt ?? 'Not recorded';
+    const limitationItems = comparison.limitations.length
+        ? `<ul>${comparison.limitations.map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join('')}</ul>`
+        : '<p>No additional comparison limitations were recorded.</p>';
+    return `<section id="comparison" aria-labelledby="comparison-title">
+      <h2 id="comparison-title">Baseline comparison</h2>
+      <p class="lede"><strong>${escapeHtml(comparisonHeadline(comparison))}</strong></p>
+      <div class="panel comparison-meta"><p><strong>Baseline:</strong> ${escapeHtml(comparison.baselineSource)}</p><p><strong>Baseline generated:</strong> ${escapeHtml(generatedAt)}${baselineDateIsValid ? ' UTC' : ''}</p><p><strong>Coverage:</strong> ${escapeHtml(comparison.coverage === 'complete' ? 'Complete equivalent scope' : 'Partial equivalent scope')}</p></div>
+      <div class="metrics comparison-metrics" aria-label="Baseline comparison summary">${categories.map((category) => `<div class="metric"><span>${escapeHtml(category.label)}</span><strong>${category.records.length}</strong></div>`).join('')}</div>
+      <div class="notice warning"><strong>Interpret resolved findings carefully.</strong> ${escapeHtml(RESOLUTION_SCOPE_NOTE)}</div>
+      <div class="table-wrap"><table><caption>Finding changes compared with the selected baseline</caption><thead><tr><th scope="col">Change</th><th scope="col">Finding / match key</th><th scope="col">Class</th><th scope="col">Impact / priority</th><th scope="col">Finding</th><th scope="col">Affected URLs</th><th scope="col">Viewports</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="panel comparison-limitations"><h3>Comparison limitations</h3>${limitationItems}</div>
+    </section>`;
+}
+function historySection(summary) {
+    const history = summary.history;
+    if (!history)
+        return '';
+    const rows = history.points.map((point, index) => {
+        const generatedAt = Number.isNaN(Date.parse(point.generatedAt))
+            ? point.generatedAt
+            : `${new Date(point.generatedAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' })} UTC`;
+        const delta = point.comparisonToPrevious;
+        const change = !delta
+            ? 'Starting point'
+            : `${delta.coverage === 'complete' ? 'Complete scope' : 'Partial scope'}: ${delta.newCount} new, ${delta.unchangedCount} unchanged, ${delta.resolvedCount} resolved${delta.coverage === 'partial' ? `, ${delta.indeterminateCurrentCount} indeterminate, ${delta.unobservedPreviousCount} previously observed but not re-observed` : ''}`;
+        return `<tr><th scope="row">${escapeHtml(point.source)}${index === history.points.length - 1 ? '<br><span class="badge comparison-unchanged">Latest</span>' : ''}</th><td>${escapeHtml(generatedAt)}</td><td>${escapeHtml(point.status)}</td><td>${point.auditedPageCount} / ${point.requestedPageCount}</td><td>${point.findingCount}</td><td>${point.confirmedCount}</td><td>${point.reviewCount}</td><td>${point.blockerCount}</td><td>${point.manualCount}</td><td>${point.criticalConfirmedCount}</td><td>${point.seriousConfirmedCount}</td><td>${escapeHtml(change)}</td></tr>`;
+    }).join('');
+    const limitations = history.limitations.length
+        ? `<ul>${history.limitations.map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join('')}</ul>`
+        : '<p>No additional history limitations were recorded.</p>';
+    return `<section id="history" aria-labelledby="history-title">
+      <h2 id="history-title">History and trends</h2>
+      <p class="lede">Chronological audit snapshots with each change measured against the immediately preceding snapshot. Resolution counts are only definitive when the compared audit scopes are equivalent.</p>
+      <div class="table-wrap"><table><caption>Audit history from oldest to latest</caption><thead><tr><th scope="col">Audit</th><th scope="col">Generated</th><th scope="col">Status</th><th scope="col">Pages audited / requested</th><th scope="col">Findings</th><th scope="col">Confirmed</th><th scope="col">Review</th><th scope="col">Blockers</th><th scope="col">Manual</th><th scope="col">Critical confirmed</th><th scope="col">Serious confirmed</th><th scope="col">Change from previous</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="panel comparison-limitations"><h3>History limitations</h3>${limitations}</div>
+    </section>`;
+}
 function renderReport(summary, outputPath) {
+    const executiveSummary = buildExecutiveSummary(summary);
+    const topActions = buildTopActions(summary);
+    const topActionItems = topActions.map((action) => {
+        const pageLabel = `${action.affectedPageCount} affected page${action.affectedPageCount === 1 ? '' : 's'}`;
+        return `<li class="top-action panel">
+      <div class="top-action-badges"><span class="badge badge-${escapeHtml(action.finding.classification)}" aria-label="Evidence type: ${escapeHtml(action.classificationLabel)}">${escapeHtml(action.conciseClassificationLabel)}</span><span class="badge ${action.finding.classification === 'confirmed' ? `severity-${escapeHtml(action.finding.severity.toLowerCase())}` : `badge-${escapeHtml(action.finding.classification)}`}">${escapeHtml(action.priorityLabel)}</span></div>
+      <h3><a href="#finding-${escapeHtml(action.id)}"><span class="finding-id">${escapeHtml(action.id)}</span> ${escapeHtml(action.finding.summary)}</a></h3>
+      <p>${escapeHtml(action.nextStep)}</p>
+      <p class="top-action-meta"><strong>Owner:</strong> ${escapeHtml(action.finding.assignment)} <span aria-hidden="true">·</span> <strong>Effort:</strong> ${escapeHtml(action.finding.effort)} <span aria-hidden="true">·</span> ${escapeHtml(pageLabel)}</p>
+    </li>`;
+    }).join('');
+    const topActionContent = topActionItems
+        ? `<ol class="top-action-list">${topActionItems}</ol>${summary.findings.length > topActions.length ? `<p class="top-action-count">Showing ${topActions.length} of ${summary.findings.length} report items. <a href="#findings">Review all findings</a>.</p>` : ''}`
+        : `<div class="panel"><p><strong>No report items require triage.</strong> ${escapeHtml(executiveSummary.nextStep)}</p></div>`;
     const confirmed = count(summary, (finding) => finding.classification === 'confirmed');
     const reviews = count(summary, (finding) => finding.classification === 'review');
     const blockers = count(summary, (finding) => finding.classification === 'blocker');
@@ -158673,6 +161201,12 @@ function renderReport(summary, outputPath) {
     const conformance = `WCAG 2.2 Level A and AA${aaaAdvisory ? ', with separate Level AAA advisory checks' : ''}`;
     const criteria = summary.criteria ?? [];
     const unresolvedCriteria = criteria.filter((criterion) => criterion.scope === 'standard' && ['manual-review-required', 'inconclusive'].includes(criterion.status)).length;
+    const comparison = comparisonSection(summary);
+    const history = historySection(summary);
+    const comparisonSummaryLink = summary.comparison ? '<a href="#comparison">Review baseline changes</a>' : '';
+    const comparisonNavLink = summary.comparison ? '<a href="#comparison">Baseline comparison</a>' : '';
+    const historySummaryLink = summary.history ? '<a href="#history">Review audit trends</a>' : '';
+    const historyNavLink = summary.history ? '<a href="#history">History and trends</a>' : '';
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -158681,8 +161215,8 @@ function renderReport(summary, outputPath) {
   <title>Accessibility audit report — ${escapeHtml(target)}</title>
   <style>
     :root{--blue:#1a73e8;--blue-dark:#174ea6;--ink:#202124;--muted:#5f6368;--line:#dadce0;--surface:#f8f9fa;--red:#c5221f;--amber:#b06000;--green:#137333;--shadow:0 1px 2px rgba(60,64,67,.12),0 1px 3px 1px rgba(60,64,67,.08)}
-    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--ink);background:#fff;font:15px/1.55 Arial,"Helvetica Neue",sans-serif}a{color:var(--blue-dark);text-underline-offset:2px}a:hover{text-decoration-thickness:2px}:focus-visible{outline:3px solid #8ab4f8;outline-offset:3px}.skip{position:absolute;left:16px;top:-60px;background:#fff;padding:12px 16px;border:2px solid var(--blue);z-index:10}.skip:focus{top:12px}.masthead{border-bottom:1px solid var(--line);background:#fff}.masthead-inner,.page{max-width:1440px;margin:auto;padding-left:32px;padding-right:32px}.masthead-inner{height:72px;display:flex;align-items:center;gap:14px}.mark{width:36px;height:36px;border-radius:9px;background:var(--blue);color:#fff;display:grid;place-items:center;font-weight:700}.brand{font-size:18px;font-weight:600}.brand span{display:block;color:var(--muted);font-size:12px;font-weight:400}.page{padding-top:38px;padding-bottom:64px}.eyebrow{color:var(--blue-dark);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}h1{font-size:38px;line-height:1.15;letter-spacing:-.6px;margin:8px 0 12px}h2{font-size:24px;margin:42px 0 14px;letter-spacing:-.2px}h3{font-size:14px;margin:16px 0 4px}.lede{font-size:17px;color:var(--muted);max-width:850px}.meta{display:flex;flex-wrap:wrap;gap:10px 26px;color:var(--muted);margin:20px 0 28px}.meta strong{color:var(--ink)}.notice{border-left:4px solid var(--blue);background:#e8f0fe;border-radius:0 8px 8px 0;padding:15px 18px;margin:26px 0}.notice.warning{border-color:var(--amber);background:#fef7e0}.metrics{display:grid;grid-template-columns:repeat(6,minmax(135px,1fr));gap:14px;margin:28px 0}.metric{border:1px solid var(--line);border-radius:12px;padding:18px;background:#fff;box-shadow:var(--shadow)}.metric strong{display:block;font-size:28px;line-height:1.1;margin-top:6px}.metric span{color:var(--muted);font-size:13px}.metric.attention strong{color:var(--red)}nav{position:sticky;top:0;z-index:5;background:rgba(255,255,255,.96);border-bottom:1px solid var(--line);margin:28px calc(50% - 50vw);padding:0 max(32px,calc((100vw - 1440px)/2 + 32px));display:flex;gap:22px;overflow:auto}nav a{display:block;padding:14px 0;color:var(--muted);font-weight:600;text-decoration:none;white-space:nowrap}nav a:hover,nav a:focus{color:var(--blue-dark);border-bottom:2px solid var(--blue)}.toolbar{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:16px 0}.field{display:grid;gap:5px}.field label{font-size:12px;font-weight:700;color:var(--muted)}input,select{min-height:42px;border:1px solid #9aa0a6;border-radius:6px;background:#fff;color:var(--ink);padding:8px 11px;font:inherit}input{width:min(420px,80vw)}input:focus,select:focus{outline:3px solid #d2e3fc;border-color:var(--blue)}.result-count{margin-left:auto;color:var(--muted);padding-bottom:10px}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}table{width:100%;border-collapse:collapse;min-width:900px}caption{text-align:left;padding:14px 16px;background:var(--surface);font-weight:600}th{position:sticky;top:0;background:#f1f3f4;text-align:left;font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:#3c4043}th,td{padding:13px 14px;border-bottom:1px solid var(--line);vertical-align:top}tr:last-child td{border-bottom:0}tbody tr:hover{background:#f8fbff}td p{margin:5px 0}td ul{margin:0;padding-left:18px}.finding-id{font-weight:700;white-space:nowrap}.muted{color:var(--muted);font-size:13px}.badge,.criterion,.coverage{display:inline-block;border-radius:999px;font-size:12px;font-weight:700;line-height:1.4;padding:3px 8px;white-space:nowrap}.badge-confirmed,.severity-critical,.severity-serious,.coverage-confirmed-failed,.coverage-failed{color:#a50e0e;background:#fce8e6}.badge-review,.severity-moderate,.coverage-tested-inconclusive,.coverage-manual-review-required,.coverage-not-tested,.coverage-inconclusive{color:#8a4b00;background:#fef7e0}.badge-blocker{color:#fff;background:var(--red)}.badge-manual,.severity-minor,.severity-advisory,.coverage-not-applicable{color:#3c4043;background:#f1f3f4}.coverage-confirmed-passed,.coverage-passed{color:#0d652d;background:#e6f4ea}.criterion{margin:1px;color:#174ea6;background:#e8f0fe}details{margin-top:9px}summary{cursor:pointer;color:var(--blue-dark);font-weight:600}code{white-space:normal;overflow-wrap:anywhere;background:#f1f3f4;border-radius:3px;padding:1px 4px}.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:#9aa0a6}.status-audited{background:var(--green)}.status-partial,.status-skipped{background:var(--amber)}.empty{text-align:center;color:var(--muted);padding:32px}.limitations{display:grid;grid-template-columns:1fr 1fr;gap:16px}.panel{border:1px solid var(--line);border-radius:10px;padding:18px;background:var(--surface)}.panel ul{margin:8px 0;padding-left:20px}.footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
-    @media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}.limitations{grid-template-columns:1fr}.masthead-inner,.page{padding-left:18px;padding-right:18px}h1{font-size:31px}.result-count{width:100%;margin-left:0}}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--ink);background:#fff;font:15px/1.55 Arial,"Helvetica Neue",sans-serif}a{color:var(--blue-dark);text-underline-offset:2px}a:hover{text-decoration-thickness:2px}:focus-visible{outline:3px solid #8ab4f8;outline-offset:3px}.skip{position:absolute;left:16px;top:-60px;background:#fff;padding:12px 16px;border:2px solid var(--blue);z-index:10}.skip:focus{top:12px}.masthead{border-bottom:1px solid var(--line);background:#fff}.masthead-inner,.page{max-width:1440px;margin:auto;padding-left:32px;padding-right:32px}.masthead-inner{height:72px;display:flex;align-items:center;gap:14px}.mark{width:36px;height:36px;border-radius:9px;background:var(--blue);color:#fff;display:grid;place-items:center;font-weight:700}.brand{font-size:18px;font-weight:600}.brand span{display:block;color:var(--muted);font-size:12px;font-weight:400}.page{padding-top:38px;padding-bottom:64px}.eyebrow{color:var(--blue-dark);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}h1{font-size:38px;line-height:1.15;letter-spacing:-.6px;margin:8px 0 12px}h2{font-size:24px;margin:42px 0 14px;letter-spacing:-.2px}h3{font-size:14px;margin:16px 0 4px}.lede{font-size:17px;color:var(--muted);max-width:850px}.meta{display:flex;flex-wrap:wrap;gap:10px 26px;color:var(--muted);margin:20px 0 24px}.meta strong{color:var(--ink)}.notice{border-left:4px solid var(--blue);background:#e8f0fe;border-radius:0 8px 8px 0;padding:15px 18px;margin:26px 0}.notice.warning{border-color:var(--amber);background:#fef7e0}.metrics{display:grid;grid-template-columns:repeat(6,minmax(135px,1fr));gap:14px;margin:22px 0}.comparison-metrics{grid-template-columns:repeat(5,minmax(135px,1fr))}.metric{border:1px solid var(--line);border-radius:12px;padding:18px;background:#fff;box-shadow:var(--shadow)}.metric strong{display:block;font-size:28px;line-height:1.1;margin-top:6px}.metric span{color:var(--muted);font-size:13px}.metric.attention strong{color:var(--red)}.executive-summary{border:1px solid #aecbfa;border-radius:14px;background:#f8fbff;padding:22px 24px;margin:24px 0;box-shadow:var(--shadow)}.executive-summary h2{font-size:20px;margin:0}.executive-headline{font-size:19px;max-width:950px;margin:10px 0 18px}.executive-panels{display:grid;grid-template-columns:1fr 1fr;gap:16px}.executive-panels .panel{background:#fff}.executive-panels .panel h3{margin-top:0}.summary-links{display:flex;flex-wrap:wrap;gap:10px 22px;margin-top:18px;padding-top:15px;border-top:1px solid #d2e3fc}.summary-links a{font-weight:700}.top-actions{margin:30px 0}.top-actions h2{margin-bottom:4px}.top-action-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;list-style:none;margin:16px 0 0;padding:0}.top-action{background:#fff;box-shadow:var(--shadow)}.top-action h3{font-size:16px;line-height:1.35;margin:12px 0 8px}.top-action h3 a{text-decoration-thickness:1px}.top-action p{margin:8px 0}.top-action-badges{display:flex;flex-wrap:wrap;gap:6px}.top-action-meta{color:var(--muted);font-size:13px}.top-action-count{color:var(--muted)}nav{position:sticky;top:0;z-index:5;background:rgba(255,255,255,.96);border-bottom:1px solid var(--line);margin:28px calc(50% - 50vw);padding:0 max(32px,calc((100vw - 1440px)/2 + 32px));display:flex;gap:22px;overflow:auto}nav a{display:block;padding:14px 0;color:var(--muted);font-weight:600;text-decoration:none;white-space:nowrap}nav a:hover,nav a:focus{color:var(--blue-dark);border-bottom:2px solid var(--blue)}.toolbar{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:16px 0}.field{display:grid;gap:5px}.field label{font-size:12px;font-weight:700;color:var(--muted)}input,select{min-height:42px;border:1px solid #9aa0a6;border-radius:6px;background:#fff;color:var(--ink);padding:8px 11px;font:inherit}input{width:min(420px,80vw)}input:focus,select:focus{outline:3px solid #d2e3fc;border-color:var(--blue)}.result-count{margin-left:auto;color:var(--muted);padding-bottom:10px}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}table{width:100%;border-collapse:collapse;min-width:900px}caption{text-align:left;padding:14px 16px;background:var(--surface);font-weight:600}th{position:sticky;top:0;background:#f1f3f4;text-align:left;font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:#3c4043}th,td{padding:13px 14px;border-bottom:1px solid var(--line);vertical-align:top}tr:last-child td{border-bottom:0}tbody tr:hover{background:#f8fbff}td p{margin:5px 0}td ul{margin:0;padding-left:18px}.finding-id{font-weight:700;white-space:nowrap}.finding-guidance{border-left:3px solid var(--blue);background:#f8fbff;padding:10px 12px;margin:12px 0}.finding-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:16px}.copy-ticket{min-height:40px;border:1px solid var(--blue-dark);border-radius:6px;background:#fff;color:var(--blue-dark);padding:7px 12px;font:inherit;font-weight:700;cursor:pointer}.copy-ticket:hover{background:#e8f0fe}.copy-ticket:disabled{cursor:wait;opacity:.7}.copy-status{color:var(--muted);font-size:13px}.muted{color:var(--muted);font-size:13px}.badge,.criterion,.coverage{display:inline-block;border-radius:999px;font-size:12px;font-weight:700;line-height:1.4;padding:3px 8px;white-space:nowrap}.badge-confirmed,.severity-critical,.severity-serious,.coverage-confirmed-failed,.coverage-failed,.comparison-new{color:#a50e0e;background:#fce8e6}.badge-review,.severity-moderate,.coverage-tested-inconclusive,.coverage-manual-review-required,.coverage-not-tested,.coverage-inconclusive,.comparison-indeterminate-current{color:#8a4b00;background:#fef7e0}.badge-blocker{color:#fff;background:var(--red)}.badge-manual,.severity-minor,.severity-advisory,.coverage-not-applicable,.comparison-unobserved-baseline{color:#3c4043;background:#f1f3f4}.coverage-confirmed-passed,.coverage-passed,.comparison-resolved{color:#0d652d;background:#e6f4ea}.comparison-unchanged{color:#174ea6;background:#e8f0fe}.comparison-meta{display:flex;flex-wrap:wrap;gap:8px 28px}.comparison-meta p{margin:0}.comparison-limitations{margin-top:18px}.comparison-limitations h3{margin-top:0}.criterion{margin:1px;color:#174ea6;background:#e8f0fe}details{margin-top:9px}summary{cursor:pointer;color:var(--blue-dark);font-weight:600}code{white-space:normal;overflow-wrap:anywhere;background:#f1f3f4;border-radius:3px;padding:1px 4px}.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:#9aa0a6}.status-audited{background:var(--green)}.status-partial,.status-skipped{background:var(--amber)}.empty{text-align:center;color:var(--muted);padding:32px}.limitations{display:grid;grid-template-columns:1fr 1fr;gap:16px}.panel{border:1px solid var(--line);border-radius:10px;padding:18px;background:var(--surface)}.panel ul{margin:8px 0;padding-left:20px}.footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+    @media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}.limitations,.executive-panels,.top-action-list{grid-template-columns:1fr}.masthead-inner,.page{padding-left:18px;padding-right:18px}h1{font-size:31px}.result-count{width:100%;margin-left:0}}
     @media print{nav,.toolbar,.skip{display:none}.page{max-width:none;padding:20px}.metrics{grid-template-columns:repeat(3,1fr)}.metric{box-shadow:none}details{display:block}details>summary{display:none}.table-wrap{overflow:visible}table{min-width:0;font-size:10px}th{position:static}a{color:inherit;text-decoration:none}}
   </style>
 </head>
@@ -158693,8 +161227,22 @@ function renderReport(summary, outputPath) {
     <p class="eyebrow">Audit status · ${escapeHtml(summary.status)}</p>
     <h1>Accessibility audit report</h1>
     <p class="lede">A structured review of ${html_link(target)} against ${escapeHtml(conformance)}, combining automated browser evidence with a defined manual-assessment plan.</p>
-    <div class="meta"><span><strong>Generated:</strong> ${escapeHtml(generated)} UTC</span><span><strong>Auditor:</strong> ${escapeHtml(summary.auditor)}</span><span><strong>Source:</strong> ${escapeHtml(sourceLabel(summary.source))}</span></div>
-    <div class="notice warning"><strong>Conformance decision: ${escapeHtml(summary.conformanceDecision === 'not-determined' || !summary.conformanceDecision ? 'Not determined' : summary.conformanceDecision)}.</strong> Automated evidence cannot certify WCAG conformance. A qualified human assessment and sign-off remain mandatory; failures require remediation and unresolved outcomes are not passes.</div>
+    <div class="meta"><span><strong>Generated:</strong> ${escapeHtml(generated)} UTC</span><span><strong>Auditor:</strong> ${escapeHtml(summary.auditor)}</span><span><strong>Source:</strong> ${escapeHtml(sourceLabel(summary.source))}</span>${summary.browserEngine ? `<span><strong>Browser:</strong> ${escapeHtml(summary.browserEngine)}</span>` : ''}</div>
+    <section id="executive-summary" class="executive-summary" aria-labelledby="executive-summary-title">
+      <h2 id="executive-summary-title">Executive summary</h2>
+      <p class="executive-headline"><strong>${escapeHtml(executiveSummary.headline)}</strong></p>
+      <div class="executive-panels">
+        <div class="panel"><h3>Current position</h3><p>${escapeHtml(executiveSummary.currentPosition)}</p></div>
+        <div class="panel"><h3>Recommended next step</h3><p>${escapeHtml(executiveSummary.nextStep)}</p></div>
+      </div>
+      <div class="summary-links" aria-label="Start reviewing this report"><a href="#top-actions">Start with top actions</a>${comparisonSummaryLink}${historySummaryLink}<a href="#findings">Review findings</a><a href="#criteria">Check WCAG criteria</a><a href="#pages">Inspect page coverage</a></div>
+    </section>
+    <section id="top-actions" class="top-actions" aria-labelledby="top-actions-title">
+      <h2 id="top-actions-title">Top actions</h2>
+      <p class="lede">Ordered by restoring audit coverage, confirmed user impact, human validation, then manual evidence.</p>
+      ${topActionContent}
+    </section>
+    ${blockers ? `<div class="notice"><strong>${blockers} audit blocker${blockers === 1 ? '' : 's'}:</strong> review the findings before treating coverage as complete.</div>` : ''}
     <section class="metrics" aria-label="Audit summary">
       <div class="metric"><span>Pages audited</span><strong>${summary.auditedUrls.length}</strong></div>
       <div class="metric"><span>Report items</span><strong>${summary.findings.length}</strong></div>
@@ -158703,10 +161251,13 @@ function renderReport(summary, outputPath) {
       <div class="metric"><span>Needs review</span><strong>${reviews}</strong></div>
       <div class="metric"><span>Unresolved AA criteria</span><strong>${unresolvedCriteria}</strong></div>
     </section>
-    ${blockers ? `<div class="notice"><strong>${blockers} audit blocker${blockers === 1 ? '' : 's'}:</strong> review the findings before treating coverage as complete.</div>` : ''}
-    <nav aria-label="Report sections"><a href="#findings">Findings</a><a href="#criteria">WCAG criteria</a><a href="#pages">Pages</a><a href="#coverage">Coverage</a><a href="#journeys">Task journeys</a><a href="#manual">Manual checks</a><a href="#method">Method and limitations</a></nav>
+    <div class="notice warning"><strong>Conformance decision: ${escapeHtml(summary.conformanceDecision === 'not-determined' || !summary.conformanceDecision ? 'Not determined' : summary.conformanceDecision)}.</strong> Automated evidence cannot certify WCAG conformance. A qualified human assessment and sign-off remain mandatory; failures require remediation and unresolved outcomes are not passes.</div>
+    <nav aria-label="Report sections"><a href="#top-actions">Top actions</a>${comparisonNavLink}${historyNavLink}<a href="#findings">Findings</a><a href="#criteria">WCAG criteria</a><a href="#pages">Pages</a><a href="#coverage">Coverage</a><a href="#journeys">Task journeys</a><a href="#manual">Manual checks</a><a href="#method">Method and limitations</a></nav>
 
-    <section id="findings" aria-labelledby="findings-title"><h2 id="findings-title">Findings</h2><p class="lede">Confirmed rows are evidence-backed barriers and use impact severity. Review rows are candidates that require human validation; their label is review priority, not a confirmed impact rating. Expand a row for verification steps, remediation and linked evidence.</p>
+    ${comparison}
+    ${history}
+
+    <section id="findings" aria-labelledby="findings-title"><h2 id="findings-title">Findings</h2><p class="lede">Confirmed rows are reproduced barriers to assign and retest. Review rows need a documented human decision before they become failures. Blockers mean the affected scope must be restored and rerun; manual rows require a person to complete the procedure. Ratings on non-confirmed rows are review priority, not confirmed impact severity. Expand a row for plain-language impact, assessment steps, remediation and linked evidence.</p>
       <div class="toolbar"><div class="field"><label for="finding-search">Search findings</label><input id="finding-search" type="search" placeholder="Rule, issue, page or WCAG criterion"></div><div class="field"><label for="classification-filter">Classification</label><select id="classification-filter"><option value="">All classifications</option><option value="confirmed">Confirmed</option><option value="review">Review</option><option value="blocker">Blocker</option><option value="manual">Manual</option></select></div><div class="field"><label for="severity-filter">Severity</label><select id="severity-filter"><option value="">All severities</option><option>Critical</option><option>Serious</option><option>Moderate</option><option>Minor</option><option>Advisory</option></select></div><div id="result-count" class="result-count" aria-live="polite"></div></div>
       <div class="table-wrap"><table><caption>Findings and evidence requiring action or validation</caption><thead><tr><th scope="col">ID / rule</th><th scope="col">Class</th><th scope="col">Impact / priority</th><th scope="col">Finding</th><th scope="col">Standards / rule source</th><th scope="col">Pages</th></tr></thead><tbody id="finding-rows">${findingRows(summary, outputPath)}</tbody></table></div>
     </section>
@@ -158717,7 +161268,7 @@ function renderReport(summary, outputPath) {
     <section id="coverage" aria-labelledby="coverage-title"><h2 id="coverage-title">Test execution coverage</h2><p class="lede">This records which checks ran and the evidence they produced; it is not a conformance percentage. “Manual review”, “inconclusive” and “not tested” are unresolved outcomes—not passes.</p><div class="table-wrap"><table><caption>Execution evidence by page, viewport and audit area</caption><thead><tr><th scope="col">Page</th><th scope="col">Viewport</th><th scope="col">Area</th><th scope="col">Outcome</th><th scope="col">Evidence note</th></tr></thead><tbody>${coverageRows(summary)}</tbody></table></div></section>
     <section id="journeys" aria-labelledby="journeys-title"><h2 id="journeys-title">Configured task journeys</h2><p class="lede">Repeatable keyboard, form, interaction and live-region assertions supplied for this site. A DOM live-region result does not prove the quality of a screen-reader announcement.</p><div class="table-wrap"><table><caption>Site-specific task journey evidence</caption><thead><tr><th scope="col">Page</th><th scope="col">Viewport</th><th scope="col">Journey</th><th scope="col">Areas</th><th scope="col">Outcome</th><th scope="col">Result</th><th scope="col">Completed steps</th></tr></thead><tbody>${configuredJourneyRows(summary)}</tbody></table></div></section>
     <section id="manual" aria-labelledby="manual-title"><h2 id="manual-title">WCAG 2.2 A/AA human verification</h2><p class="lede">All 55 Level A and AA success criteria have a criterion-specific procedure and evidence prompt. Record an explicit verdict for each applicable criterion; “not tested” is unresolved, not a pass.</p><div class="table-wrap"><table><caption>Criterion-specific human assessment plan</caption><thead><tr><th scope="col">ID</th><th scope="col">Check</th><th scope="col">WCAG</th><th scope="col">Applies to</th><th scope="col">Procedure</th><th scope="col">Evidence to record</th><th scope="col">Status</th></tr></thead><tbody>${manualRows(summary)}</tbody></table></div></section>
-    <section id="method" aria-labelledby="method-title"><h2 id="method-title">Method and limitations</h2><div class="limitations"><div class="panel"><h3>Audit scope</h3><ul><li>${escapeHtml(conformance)}</li>${summary.qualityContract ? `<li>Audit Quality Contract ${escapeHtml(summary.qualityContract.version)}; ${summary.qualityContract.criterionCount} Level A/AA criteria; ${escapeHtml(summary.qualityContract.findingPolicy)} finding policy</li>` : ''}<li>${summary.requestedUrls.length} requested URL${summary.requestedUrls.length === 1 ? '' : 's'}; ${summary.auditedUrls.length} audited</li><li>${summary.pages.flatMap((page) => page.viewports).length} page-and-viewport runs</li><li>Automated axe rules plus DOM, generic and configured keyboard journeys, 200% root-text resizing, text spacing, responsive/reflow, disclosure, tab and link checks</li><li>Native screen-reader transcripts, when supplied, are supporting evidence and do not replace expert assessment</li></ul></div><div class="panel"><h3>Known limitations</h3>${list([...summary.limitations, `${summary.manualChecks.length} guided manual check(s) require human completion.`, 'A qualified human must complete applicable checks and make the final conformance decision.'], 'No limitations recorded.')}</div></div></section>
+    <section id="method" aria-labelledby="method-title"><h2 id="method-title">Method and limitations</h2><div class="limitations"><div class="panel"><h3>Audit scope</h3><ul><li>${escapeHtml(conformance)}</li>${summary.qualityContract ? `<li>Audit Quality Contract ${escapeHtml(summary.qualityContract.version)}; ${summary.qualityContract.criterionCount} Level A/AA criteria; ${escapeHtml(summary.qualityContract.findingPolicy)} finding policy</li>` : ''}<li>${escapeHtml(AUDIT_SCOPE_LABEL)}; links are never added as audit targets</li><li>${summary.requestedUrls.length} requested URL${summary.requestedUrls.length === 1 ? '' : 's'}; ${summary.auditedUrls.length} audited</li><li>${summary.pages.flatMap((page) => page.viewports).length} page-and-viewport runs</li><li>Automated axe rules plus DOM, generic and configured keyboard journeys, 200% root-text resizing, text spacing, responsive/reflow, disclosure, tab and link checks</li><li>Native screen-reader transcripts, when supplied, are supporting evidence and do not replace expert assessment</li></ul></div><div class="panel"><h3>Known limitations</h3>${list([...summary.limitations, `${summary.manualChecks.length} guided manual check(s) require human completion.`, 'A qualified human must complete applicable checks and make the final conformance decision.'], 'No limitations recorded.')}</div></div></section>
     <footer class="footer">Generated by CarlasHub Accessibility Audit. Keep this file beside the <code>screenshots</code> folder so evidence links continue to work.</footer>
   </main>
   <script>
@@ -158741,6 +161292,54 @@ function renderReport(summary, outputPath) {
       classification.addEventListener('change', filter);
       severity.addEventListener('change', filter);
       filter();
+      const copyText = async (value) => {
+        try {
+          if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('Clipboard API unavailable');
+          await navigator.clipboard.writeText(value);
+        } catch {
+          const textarea = document.createElement('textarea');
+          textarea.value = value;
+          textarea.setAttribute('readonly', '');
+          textarea.setAttribute('data-copy-fallback-buffer', '');
+          textarea.style.position = 'fixed';
+          textarea.style.left = '-9999px';
+          document.body.append(textarea);
+          textarea.select();
+          const copied = document.execCommand('copy');
+          textarea.remove();
+          if (!copied) throw new Error('Copy command failed');
+        }
+      };
+      for (const button of document.querySelectorAll('.copy-ticket')) {
+        button.addEventListener('click', async () => {
+          const statusId = button.getAttribute('aria-describedby');
+          const status = statusId ? document.getElementById(statusId) : null;
+          const restoreFocus = document.activeElement === button;
+          let userMovedFocus = false;
+          const noteFocusMove = (event) => {
+            const target = event.target;
+            if (target !== button && !(target instanceof Element && target.hasAttribute('data-copy-fallback-buffer'))) userMovedFocus = true;
+          };
+          const notePointerMove = (event) => {
+            if (event.target !== button) userMovedFocus = true;
+          };
+          document.addEventListener('focusin', noteFocusMove, true);
+          document.addEventListener('pointerdown', notePointerMove, true);
+          button.disabled = true;
+          if (status) status.textContent = 'Copying ticket…';
+          try {
+            await copyText(button.dataset.ticket || '');
+            if (status) status.textContent = 'Copied ' + button.dataset.findingId + ' ticket.';
+          } catch {
+            if (status) status.textContent = 'Could not copy this ticket. Select the finding details and copy them manually.';
+          } finally {
+            document.removeEventListener('focusin', noteFocusMove, true);
+            document.removeEventListener('pointerdown', notePointerMove, true);
+            button.disabled = false;
+            if (restoreFocus && !userMovedFocus && (document.activeElement === document.body || document.activeElement === document.documentElement)) button.focus();
+          }
+        });
+      }
     })();
   </script>
 </body>
@@ -158752,7 +161351,937 @@ async function writeHtmlReport(summary, outputPath) {
     return outputPath;
 }
 //# sourceMappingURL=html.js.map
+;// CONCATENATED MODULE: ./dist/reporting/csv.js
+
+
+
+const CSV_COLUMNS = [
+    'id',
+    'fingerprint',
+    'classification',
+    'severity',
+    'rule_id',
+    'wcag',
+    'summary',
+    'issue',
+    'impact',
+    'testing',
+    'remediation',
+    'component',
+    'component_name',
+    'component_location',
+    'urls',
+    'viewports',
+    'selectors',
+    'assignment',
+    'effort',
+    'translation_required',
+    'evidence_count'
+];
+function safeSpreadsheetText(value) {
+    let firstMeaningful = 0;
+    while (firstMeaningful < value.length && value.charCodeAt(firstMeaningful) <= 0x20)
+        firstMeaningful += 1;
+    return '=+-@'.includes(value[firstMeaningful] ?? '') ? `'${value}` : value;
+}
+function csvCell(value) {
+    const safe = safeSpreadsheetText(String(value));
+    return `"${safe.replaceAll('"', '""')}"`;
+}
+function findingRow(finding) {
+    return [
+        finding.id ?? '',
+        finding.fingerprint ?? '',
+        finding.classification,
+        finding.severity,
+        finding.ruleId,
+        finding.wcag.join(' | '),
+        finding.summary,
+        finding.issue,
+        finding.impact,
+        finding.testing,
+        finding.remediation,
+        finding.component,
+        finding.componentName ?? '',
+        finding.componentLocation ?? '',
+        finding.urls.join(' | '),
+        finding.viewports.join(' | '),
+        finding.selectors.join(' | '),
+        finding.assignment,
+        finding.effort,
+        finding.translationRequired,
+        finding.evidence.length
+    ];
+}
+function csvReport(summary) {
+    assertCanonicalAuditSummary(summary);
+    const findings = assignFindingIds(summary.findings);
+    const rows = [
+        CSV_COLUMNS.map(csvCell).join(','),
+        ...findings.map((finding) => findingRow(finding).map(csvCell).join(','))
+    ];
+    return `${rows.join('\r\n')}\r\n`;
+}
+async function writeCsvReport(summary, outputPath) {
+    await (0,promises_.writeFile)(outputPath, csvReport(summary), 'utf8');
+    return outputPath;
+}
+//# sourceMappingURL=csv.js.map
+;// CONCATENATED MODULE: ./dist/reporting/sarif.js
+
+
+
+const SARIF_SCHEMA = 'https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json';
+function sarifLevel(finding) {
+    if (finding.classification !== 'confirmed') {
+        return finding.classification === 'blocker' ? 'warning' : 'note';
+    }
+    const levels = {
+        Critical: 'error',
+        Serious: 'error',
+        Moderate: 'warning',
+        Minor: 'note',
+        Advisory: 'note'
+    };
+    return levels[finding.severity];
+}
+function resultKind(finding) {
+    return finding.classification === 'confirmed' ? 'fail' : 'review';
+}
+function sarifReport(summary) {
+    assertCanonicalAuditSummary(summary);
+    const findings = assignFindingIds(summary.findings);
+    const ruleFindings = new Map();
+    for (const finding of findings) {
+        if (!ruleFindings.has(finding.ruleId))
+            ruleFindings.set(finding.ruleId, finding);
+    }
+    return {
+        $schema: SARIF_SCHEMA,
+        version: '2.1.0',
+        runs: [{
+                tool: {
+                    driver: {
+                        name: 'CarlasHub Accessibility Audit',
+                        informationUri: 'https://github.com/CarlasHub/accessibility-audit-plugin',
+                        rules: [...ruleFindings.values()].map((finding) => ({
+                            id: finding.ruleId,
+                            name: finding.ruleId,
+                            shortDescription: { text: finding.summary },
+                            fullDescription: { text: finding.issue },
+                            defaultConfiguration: { level: sarifLevel(finding) },
+                            properties: {
+                                tags: ['accessibility', ...finding.wcag.map((criterion) => `WCAG ${criterion}`)]
+                            }
+                        }))
+                    }
+                },
+                properties: {
+                    auditStatus: summary.status,
+                    generatedAt: summary.generatedAt,
+                    conformanceDecision: summary.conformanceDecision ?? 'not-determined'
+                },
+                artifacts: [...new Set(summary.requestedUrls)].map((url) => ({ location: { uri: url } })),
+                results: findings.map((finding) => ({
+                    ruleId: finding.ruleId,
+                    kind: resultKind(finding),
+                    level: sarifLevel(finding),
+                    message: { text: `${finding.summary}: ${finding.issue}` },
+                    locations: finding.urls.map((url, index) => ({
+                        physicalLocation: { artifactLocation: { uri: url } },
+                        ...(finding.selectors[index] || finding.selectors[0]
+                            ? { logicalLocations: [{ name: finding.selectors[index] ?? finding.selectors[0], kind: 'element' }] }
+                            : {})
+                    })),
+                    partialFingerprints: { 'accessibility-audit/v1': finding.fingerprint },
+                    properties: {
+                        auditFindingId: finding.id,
+                        classification: finding.classification,
+                        severity: finding.severity,
+                        wcag: finding.wcag,
+                        component: finding.component,
+                        selectors: finding.selectors,
+                        viewports: finding.viewports,
+                        remediation: finding.remediation,
+                        testing: finding.testing,
+                        assignment: finding.assignment,
+                        effort: finding.effort,
+                        evidenceCount: finding.evidence.length
+                    }
+                }))
+            }]
+    };
+}
+async function writeSarifReport(summary, outputPath) {
+    const report = sarifReport(summary);
+    await (0,promises_.writeFile)(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+    return outputPath;
+}
+//# sourceMappingURL=sarif.js.map
+;// CONCATENATED MODULE: ./dist/comparison.js
+
+
+
+const fingerprintPattern = /^a11y-fp-v[1-9][0-9]*:[a-f0-9]{64}$/;
+const classifications = new Set(['confirmed', 'review', 'blocker', 'manual']);
+const severities = new Set(['Critical', 'Serious', 'Moderate', 'Minor', 'Advisory']);
+function effectiveBrowserEngine(value, auditLabel) {
+    if (value === undefined)
+        return 'chromium';
+    if (value === 'chromium' || value === 'firefox' || value === 'webkit')
+        return value;
+    throw new Error(`${auditLabel} has an invalid browserEngine field.`);
+}
+function isRecord(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+function requiredString(value, field, index) {
+    if (typeof value !== 'string' || !value.trim()) {
+        throw new Error(`Baseline finding ${index + 1} has an invalid ${field} field.`);
+    }
+    return value;
+}
+function optionalString(value, field, index) {
+    if (value !== undefined)
+        requiredString(value, field, index);
+}
+function canonicalStringArray(value, field, index) {
+    if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !item.trim())) {
+        throw new Error(`Baseline finding ${index + 1} has an invalid ${field} field.`);
+    }
+    return [...new Set(value)].sort((left, right) => left.localeCompare(right));
+}
+function legacyFingerprint(value, index) {
+    requiredString(value.ruleId, 'ruleId', index);
+    requiredString(value.component, 'component', index);
+    requiredString(value.issue, 'issue', index);
+    requiredString(value.remediation, 'remediation', index);
+    canonicalStringArray(value.wcag, 'wcag', index);
+    canonicalStringArray(value.urls, 'urls', index);
+    optionalString(value.sharedComponentKey, 'sharedComponentKey', index);
+    optionalString(value.componentName, 'componentName', index);
+    optionalString(value.componentLocation, 'componentLocation', index);
+    return findingFingerprint(value);
+}
+function fingerprintFor(value, index) {
+    if (value.fingerprint === undefined)
+        return legacyFingerprint(value, index);
+    const fingerprint = requiredString(value.fingerprint, 'fingerprint', index);
+    if (!fingerprintPattern.test(fingerprint)) {
+        throw new Error(`Baseline finding ${index + 1} has an unsupported fingerprint.`);
+    }
+    return fingerprint;
+}
+function comparisonRecord(value, index) {
+    if (!isRecord(value))
+        throw new Error(`Baseline finding ${index + 1} must be an object.`);
+    const classification = requiredString(value.classification, 'classification', index);
+    const severity = requiredString(value.severity, 'severity', index);
+    if (!classifications.has(classification)) {
+        throw new Error(`Baseline finding ${index + 1} has an unsupported classification.`);
+    }
+    if (!severities.has(severity)) {
+        throw new Error(`Baseline finding ${index + 1} has an unsupported severity.`);
+    }
+    const urls = canonicalStringArray(value.urls, 'urls', index);
+    if (urls.length === 0)
+        throw new Error(`Baseline finding ${index + 1} has an invalid urls field.`);
+    const viewports = value.viewports === undefined
+        ? []
+        : canonicalStringArray(value.viewports, 'viewports', index);
+    return {
+        fingerprint: fingerprintFor(value, index),
+        ...(typeof value.id === 'string' && value.id ? { id: value.id } : {}),
+        classification: classification,
+        severity: severity,
+        summary: requiredString(value.summary, 'summary', index),
+        urls,
+        viewports
+    };
+}
+function findingRecord(finding) {
+    return {
+        fingerprint: finding.fingerprint ?? findingFingerprint(finding),
+        ...(finding.id ? { id: finding.id } : {}),
+        classification: finding.classification,
+        severity: finding.severity,
+        summary: finding.summary,
+        urls: [...new Set(finding.urls)].sort((left, right) => left.localeCompare(right)),
+        viewports: [...new Set(finding.viewports)].sort((left, right) => left.localeCompare(right))
+    };
+}
+function uniqueRecords(records, source) {
+    const unique = new Map();
+    for (const record of records) {
+        if (unique.has(record.fingerprint)) {
+            throw new Error(`${source} contains duplicate finding fingerprint ${record.fingerprint}.`);
+        }
+        unique.set(record.fingerprint, record);
+    }
+    return unique;
+}
+function derivedScope(records) {
+    const urls = new Set(records.flatMap((record) => record.urls));
+    const viewportsByUrl = new Map();
+    for (const record of records) {
+        for (const url of record.urls) {
+            const viewports = viewportsByUrl.get(url) ?? new Set();
+            record.viewports.forEach((viewport) => viewports.add(viewport));
+            viewportsByUrl.set(url, viewports);
+        }
+    }
+    return {
+        requestedUrls: urls,
+        requestedViewportsByUrl: viewportsByUrl,
+        successfullyAuditedViewportsByUrl: new Map([...viewportsByUrl].map(([url, viewports]) => [url, new Set(viewports)])),
+        incompleteUrls: new Set()
+    };
+}
+function viewportName(value) {
+    if (!isRecord(value))
+        return undefined;
+    if (typeof value.viewport === 'string' && value.viewport.trim())
+        return value.viewport;
+    if (isRecord(value.viewport) && typeof value.viewport.name === 'string' && value.viewport.name.trim()) {
+        return value.viewport.name;
+    }
+    return undefined;
+}
+function viewportWasSuccessfullyAudited(value) {
+    if (!isRecord(value) || value.cancelled === true || value.partial === true)
+        return false;
+    if (value.interactionBlocker !== undefined && value.interactionBlocker !== null)
+        return false;
+    if (!isRecord(value.axeRun) || value.axeRun.completed !== true)
+        return false;
+    const statusSucceeded = typeof value.status === 'number'
+        && Number.isFinite(value.status)
+        && value.status < 400;
+    const localDocumentSucceeded = typeof value.finalUrl === 'string' && /^(?:data|file):/iu.test(value.finalUrl);
+    return statusSucceeded || localDocumentSucceeded;
+}
+function summaryScope(value, label) {
+    const scopeFields = ['status', 'requestedUrls', 'auditedUrls', 'pages'];
+    if (!scopeFields.some((field) => field in value))
+        return undefined;
+    if (value.status !== 'completed' && value.status !== 'cancelled') {
+        throw new Error(`${label} has an invalid status field.`);
+    }
+    if (!Array.isArray(value.requestedUrls) || value.requestedUrls.some((url) => typeof url !== 'string' || !url.trim())) {
+        throw new Error(`${label} has an invalid requestedUrls field.`);
+    }
+    if (!Array.isArray(value.auditedUrls) || value.auditedUrls.some((url) => typeof url !== 'string' || !url.trim())) {
+        throw new Error(`${label} has an invalid auditedUrls field.`);
+    }
+    if (!Array.isArray(value.pages) || value.pages.some((page) => !isRecord(page))) {
+        throw new Error(`${label} has an invalid pages field.`);
+    }
+    const auditedUrls = new Set(value.auditedUrls);
+    const requestedViewportsByUrl = new Map();
+    const successfullyAuditedViewportsByUrl = new Map();
+    const incompleteUrls = new Set();
+    for (const pageValue of value.pages) {
+        const page = pageValue;
+        if (typeof page.url !== 'string' || !page.url.trim() || !Array.isArray(page.viewports)) {
+            throw new Error(`${label} contains invalid page coverage metadata.`);
+        }
+        const viewportNames = page.viewports.map(viewportName);
+        requestedViewportsByUrl.set(page.url, new Set(viewportNames.filter((name) => Boolean(name))));
+        const successfulViewports = new Set();
+        if (auditedUrls.has(page.url)) {
+            page.viewports.forEach((viewport, index) => {
+                const name = viewportNames[index];
+                if (name !== undefined && viewportWasSuccessfullyAudited(viewport))
+                    successfulViewports.add(name);
+            });
+        }
+        successfullyAuditedViewportsByUrl.set(page.url, successfulViewports);
+        if (page.partial === true
+            || page.viewports.length === 0
+            || viewportNames.some((name) => name === undefined)
+            || successfulViewports.size !== page.viewports.length)
+            incompleteUrls.add(page.url);
+    }
+    return {
+        requestedUrls: new Set(value.requestedUrls),
+        requestedViewportsByUrl,
+        successfullyAuditedViewportsByUrl,
+        incompleteUrls
+    };
+}
+function sameValues(left, right) {
+    return left.size === right.size && [...left].every((value) => right.has(value));
+}
+function scopeCovers(scope, record) {
+    return record.viewports.length > 0 && record.urls.every((url) => {
+        const successfulViewports = scope.successfullyAuditedViewportsByUrl.get(url);
+        return successfulViewports !== undefined
+            && record.viewports.every((viewport) => successfulViewports.has(viewport));
+    });
+}
+function scopeIsComplete(scope) {
+    return [...scope.requestedUrls].every((url) => {
+        const requestedViewports = scope.requestedViewportsByUrl.get(url);
+        const successfulViewports = scope.successfullyAuditedViewportsByUrl.get(url);
+        return !scope.incompleteUrls.has(url)
+            && requestedViewports !== undefined
+            && requestedViewports.size > 0
+            && successfulViewports !== undefined
+            && sameValues(requestedViewports, successfulViewports);
+    });
+}
+function sameViewportScope(left, right) {
+    return sameValues(left.requestedUrls, right.requestedUrls)
+        && [...left.requestedUrls].every((url) => sameValues(left.requestedViewportsByUrl.get(url) ?? new Set(), right.requestedViewportsByUrl.get(url) ?? new Set()));
+}
+function compareRecords(currentRecords, baselineRecords, currentScope, baselineScope, baseline, baselineSource, currentBrowserEngine) {
+    const baselineByFingerprint = uniqueRecords(baselineRecords, 'Baseline audit');
+    const currentByFingerprint = uniqueRecords(currentRecords, 'Current audit');
+    const byFingerprint = (left, right) => (left.fingerprint.localeCompare(right.fingerprint));
+    const unmatchedCurrent = currentRecords.filter((record) => !baselineByFingerprint.has(record.fingerprint));
+    const unmatchedBaseline = baselineRecords.filter((record) => !currentByFingerprint.has(record.fingerprint));
+    const baselineBrowserEngine = effectiveBrowserEngine(baseline.browserEngine, 'Baseline audit');
+    const effectiveCurrentBrowserEngine = effectiveBrowserEngine(currentBrowserEngine, 'Current audit');
+    const equivalentBrowserEngine = effectiveCurrentBrowserEngine === baselineBrowserEngine;
+    const newFindings = equivalentBrowserEngine
+        ? unmatchedCurrent.filter((record) => scopeCovers(baselineScope, record)).sort(byFingerprint)
+        : [];
+    const indeterminateCurrentFindings = unmatchedCurrent
+        .filter((record) => !equivalentBrowserEngine || !scopeCovers(baselineScope, record))
+        .sort(byFingerprint);
+    const resolvedFindings = equivalentBrowserEngine
+        ? unmatchedBaseline.filter((record) => scopeCovers(currentScope, record)).sort(byFingerprint)
+        : [];
+    const unobservedBaselineFindings = unmatchedBaseline
+        .filter((record) => !equivalentBrowserEngine || !scopeCovers(currentScope, record))
+        .sort(byFingerprint);
+    const currentScopeComplete = scopeIsComplete(currentScope);
+    const baselineScopeComplete = scopeIsComplete(baselineScope);
+    const equivalentUrlScope = sameValues(currentScope.requestedUrls, baselineScope.requestedUrls);
+    const equivalentScope = sameViewportScope(currentScope, baselineScope);
+    const coverage = equivalentBrowserEngine && currentScopeComplete && baselineScopeComplete && equivalentScope ? 'complete' : 'partial';
+    const limitations = [
+        ...(!equivalentUrlScope ? ['The current and baseline audits cover different requested URL scopes.'] : []),
+        ...(equivalentUrlScope && !equivalentScope
+            ? ['The current and baseline audits cover different requested viewport scopes.']
+            : []),
+        ...(!equivalentBrowserEngine
+            ? [`The current and baseline audits used different browser engines (${effectiveCurrentBrowserEngine} and ${baselineBrowserEngine}), so unmatched findings are not claimed as new or resolved.`]
+            : []),
+        ...(!currentScopeComplete ? ['Some current audit URLs were not completely observed, so unmatched baseline findings in that scope are not reported as resolved.'] : []),
+        ...(!baselineScopeComplete ? ['Some baseline audit URLs were not completely observed, so unmatched current findings in that scope are not reported as new.'] : [])
+    ];
+    return {
+        kind: 'baseline-comparison',
+        coverage,
+        baselineSource,
+        ...(typeof baseline.generatedAt === 'string' && baseline.generatedAt
+            ? { baselineGeneratedAt: baseline.generatedAt }
+            : {}),
+        baselineFindingCount: baselineRecords.length,
+        currentFindingCount: currentRecords.length,
+        newFindings,
+        unchangedFindings: currentRecords
+            .filter((record) => baselineByFingerprint.has(record.fingerprint))
+            .sort(byFingerprint),
+        resolvedFindings,
+        indeterminateCurrentFindings,
+        unobservedBaselineFindings,
+        limitations
+    };
+}
+function compareAuditFindings(currentFindings, baseline, baselineSource = 'baseline audit') {
+    if (!isRecord(baseline) || !Array.isArray(baseline.findings)) {
+        throw new Error('Baseline must be a CarlasHub audit JSON object with a findings array.');
+    }
+    const baselineRecords = baseline.findings.map(comparisonRecord);
+    const currentRecords = currentFindings.map(findingRecord);
+    return compareRecords(currentRecords, baselineRecords, derivedScope(currentRecords), summaryScope(baseline, 'Baseline audit') ?? derivedScope(baselineRecords), baseline, baselineSource);
+}
+function compareAuditSummaries(current, baseline, baselineSource = 'baseline audit') {
+    if (!isRecord(baseline) || !Array.isArray(baseline.findings)) {
+        throw new Error('Baseline must be a CarlasHub audit JSON object with a findings array.');
+    }
+    const baselineRecords = baseline.findings.map(comparisonRecord);
+    const currentRecords = current.findings.map(findingRecord);
+    return compareRecords(currentRecords, baselineRecords, summaryScope(current, 'Current audit') ?? derivedScope(currentRecords), summaryScope(baseline, 'Baseline audit') ?? derivedScope(baselineRecords), baseline, baselineSource, current.browserEngine);
+}
+function safeBaselineSource(value) {
+    const stripControlCharacters = (input) => [...input].filter((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return codePoint > 31 && codePoint !== 127;
+    }).join('');
+    const decodeEscapes = (input) => {
+        try {
+            return decodeURIComponent(input);
+        }
+        catch {
+            return input.replace(/(?:%[0-9a-f]{2})+/giu, (encoded) => {
+                try {
+                    return decodeURIComponent(encoded);
+                }
+                catch {
+                    return encoded.replace(/%(25|2f|5c|3f|23|00|0a|0d)/giu, (_match, hex) => (String.fromCodePoint(Number.parseInt(hex, 16))));
+                }
+            });
+        }
+    };
+    let decoded = stripControlCharacters(value);
+    for (let pass = 0; pass < 5; pass += 1) {
+        const next = decodeEscapes(decoded);
+        if (next === decoded)
+            break;
+        decoded = next;
+    }
+    const normalized = stripControlCharacters(decoded).replaceAll('\\', '/');
+    const withoutSuffix = normalized.split(/[?#]/u, 1)[0] ?? '';
+    const candidate = withoutSuffix.split('/').filter(Boolean).at(-1) ?? '';
+    const safe = stripControlCharacters(candidate).replace(/[/\\]/g, '').trim();
+    return safe && safe !== '.' && safe !== '..' ? safe : 'baseline.json';
+}
+async function compareAuditWithBaseline(current, baselinePath) {
+    const path = (0,external_node_path_.resolve)(baselinePath);
+    const source = safeBaselineSource(baselinePath);
+    let baseline;
+    try {
+        baseline = JSON.parse(await (0,promises_.readFile)(path, 'utf8'));
+    }
+    catch (error) {
+        const message = error instanceof SyntaxError ? 'the file is not valid JSON' : 'the file could not be read';
+        throw new Error(`Could not load baseline audit JSON ${source}: ${message}.`);
+    }
+    return compareAuditSummaries(current, baseline, source);
+}
+//# sourceMappingURL=comparison.js.map
+;// CONCATENATED MODULE: ./dist/history.js
+
+
+
+const maximumHistoryFiles = 50;
+function history_effectiveBrowserEngine(summary) {
+    const value = summary.browserEngine;
+    if (value === undefined)
+        return 'chromium';
+    if (value === 'chromium' || value === 'firefox' || value === 'webkit')
+        return value;
+    throw new Error('Audit summary has an invalid browserEngine field.');
+}
+function history_isRecord(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+function validGeneratedAt(value) {
+    return typeof value === 'string'
+        && value.trim().length > 0
+        && Number.isFinite(Date.parse(value));
+}
+function validateHistorySummary(current, value, source) {
+    if (!history_isRecord(value)) {
+        throw new Error(`History audit ${source} must be a CarlasHub audit JSON object.`);
+    }
+    if (!validGeneratedAt(value.generatedAt)) {
+        throw new Error(`History audit ${source} has an invalid generatedAt field.`);
+    }
+    if (value.status !== 'completed' && value.status !== 'cancelled') {
+        throw new Error(`History audit ${source} has an invalid status field.`);
+    }
+    try {
+        compareAuditSummaries(current, value, source);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'the report is invalid';
+        throw new Error(`History audit ${source} is invalid: ${message}`);
+    }
+    return value;
+}
+async function loadHistorySummary(current, historyPath) {
+    const path = (0,external_node_path_.resolve)(historyPath);
+    const source = safeBaselineSource(historyPath);
+    let value;
+    try {
+        value = JSON.parse(await (0,promises_.readFile)(path, 'utf8'));
+    }
+    catch (error) {
+        const message = error instanceof SyntaxError ? 'the file is not valid JSON' : 'the file could not be read';
+        throw new Error(`Could not load history audit JSON ${source}: ${message}.`);
+    }
+    return { path, source, summary: validateHistorySummary(current, value, source) };
+}
+function delta(comparison) {
+    return {
+        coverage: comparison.coverage,
+        newCount: comparison.newFindings.length,
+        unchangedCount: comparison.unchangedFindings.length,
+        resolvedCount: comparison.resolvedFindings.length,
+        indeterminateCurrentCount: comparison.indeterminateCurrentFindings.length,
+        unobservedPreviousCount: comparison.unobservedBaselineFindings.length
+    };
+}
+function point(summary, source, comparison) {
+    const findings = summary.findings;
+    return {
+        source,
+        browserEngine: history_effectiveBrowserEngine(summary),
+        generatedAt: summary.generatedAt,
+        status: summary.status,
+        requestedPageCount: summary.requestedUrls.length,
+        auditedPageCount: summary.auditedUrls.length,
+        findingCount: findings.length,
+        confirmedCount: findings.filter((finding) => finding.classification === 'confirmed').length,
+        reviewCount: findings.filter((finding) => finding.classification === 'review').length,
+        blockerCount: findings.filter((finding) => finding.classification === 'blocker').length,
+        manualCount: findings.filter((finding) => finding.classification === 'manual').length,
+        criticalConfirmedCount: findings.filter((finding) => (finding.classification === 'confirmed' && finding.severity === 'Critical')).length,
+        seriousConfirmedCount: findings.filter((finding) => (finding.classification === 'confirmed' && finding.severity === 'Serious')).length,
+        ...(comparison ? { comparisonToPrevious: delta(comparison) } : {})
+    };
+}
+async function createAuditHistory(current, historyPaths) {
+    if (historyPaths.length === 0) {
+        throw new Error('Audit history requires at least one prior audit JSON path.');
+    }
+    if (historyPaths.length > maximumHistoryFiles) {
+        throw new Error(`Audit history accepts at most ${maximumHistoryFiles} prior audit JSON files.`);
+    }
+    const loaded = await Promise.all(historyPaths.map((historyPath) => loadHistorySummary(current, historyPath)));
+    const duplicatePath = loaded.find((entry, index) => loaded.findIndex((other) => other.path === entry.path) !== index);
+    if (duplicatePath)
+        throw new Error(`History audit ${duplicatePath.source} was supplied more than once.`);
+    const duplicateSource = loaded.find((entry, index) => loaded.findIndex((other) => other.source === entry.source) !== index);
+    if (duplicateSource) {
+        throw new Error(`History audit filename ${duplicateSource.source} is ambiguous; use unique filenames.`);
+    }
+    const currentTime = Date.parse(current.generatedAt);
+    if (!Number.isFinite(currentTime))
+        throw new Error('Current audit has an invalid generatedAt field.');
+    for (const entry of loaded) {
+        if (Date.parse(entry.summary.generatedAt) > currentTime) {
+            throw new Error(`History audit ${entry.source} is newer than the current audit.`);
+        }
+    }
+    loaded.sort((left, right) => (Date.parse(left.summary.generatedAt) - Date.parse(right.summary.generatedAt)
+        || left.source.localeCompare(right.source)));
+    const ordered = [
+        ...loaded,
+        { source: 'Current audit', path: '', summary: current }
+    ];
+    const points = [];
+    const limitations = [];
+    ordered.forEach((entry, index) => {
+        if (index === 0) {
+            points.push(point(entry.summary, entry.source));
+            return;
+        }
+        const previous = ordered[index - 1];
+        if (!previous)
+            return;
+        const comparison = compareAuditSummaries(entry.summary, previous.summary, previous.source);
+        points.push(point(entry.summary, entry.source, comparison));
+        if (comparison.coverage === 'partial') {
+            const previousBrowserEngine = history_effectiveBrowserEngine(previous.summary);
+            const currentBrowserEngine = history_effectiveBrowserEngine(entry.summary);
+            const browserEngineChanged = previousBrowserEngine !== currentBrowserEngine;
+            limitations.push(browserEngineChanged
+                ? `The trend from ${previous.source} to ${entry.source} is partial because the browser engine changed from ${previousBrowserEngine} to ${currentBrowserEngine}; unmatched findings are not claimed as new or resolved.`
+                : `The trend from ${previous.source} to ${entry.source} is partial; unmatched findings outside equivalently observed browser, URL, and viewport scope are not claimed as new or resolved.`);
+        }
+    });
+    return { kind: 'audit-history', points, limitations };
+}
+//# sourceMappingURL=history.js.map
+;// CONCATENATED MODULE: external "node:net"
+const external_node_net_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:net");
+// EXTERNAL MODULE: ./node_modules/tldts/dist/cjs/index.js
+var cjs = __nccwpck_require__(20935);
+;// CONCATENATED MODULE: ./dist/auth-preflight.js
+
+
+
+
+
+
+const MAX_STORAGE_STATE_BYTES = 10 * 1024 * 1024;
+const MAX_COOKIE_EXPIRES_SECONDS = 253402300799;
+const COOKIE_KEYS = new Set(['name', 'value', 'domain', 'path', 'expires', 'httpOnly', 'secure', 'sameSite']);
+const ORIGIN_KEYS = new Set(['origin', 'localStorage']);
+const LOCAL_STORAGE_KEYS = new Set(['name', 'value']);
+const ROOT_KEYS = new Set(['cookies', 'origins']);
+class AuthenticationConfirmationStaleError extends Error {
+    constructor() {
+        super('The saved browser state changed after confirmation. No audit was started; review the updated pre-audit summary and confirm it again.');
+        this.name = 'AuthenticationConfirmationStaleError';
+    }
+}
+function isAuthenticationConfirmationStaleError(error) {
+    return error instanceof AuthenticationConfirmationStaleError;
+}
+function failure(reason) {
+    return new Error(`Authentication preflight failed: ${reason}`);
+}
+function auth_preflight_isRecord(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+function hasOnlyKeys(value, allowed) {
+    return Object.keys(value).every((key) => allowed.has(key));
+}
+function containsCookieControlCharacter(value) {
+    return [...value].some((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return codePoint <= 31 || codePoint === 127;
+    });
+}
+function normalizeHost(value) {
+    const candidate = value.trim().replace(/^\.+|\.+$/g, '');
+    if (!candidate || candidate.includes('*') || /[\s/@]/.test(candidate))
+        return null;
+    const unwrappedIp = candidate.replace(/^\[|\]$/g, '');
+    if ((0,external_node_net_namespaceObject.isIP)(unwrappedIp) !== 0)
+        return unwrappedIp.toLowerCase();
+    try {
+        const parsed = new URL(`http://${candidate}`);
+        return parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '') || null;
+    }
+    catch {
+        return null;
+    }
+}
+function normalizeConfiguredHost(value) {
+    const candidate = value.trim();
+    try {
+        const parsed = new URL(candidate.includes('://') ? candidate : `http://${candidate}`);
+        if (!['http:', 'https:'].includes(parsed.protocol)
+            || parsed.username
+            || parsed.password
+            || parsed.pathname !== '/'
+            || parsed.search
+            || parsed.hash)
+            return null;
+        return normalizeHost(parsed.hostname);
+    }
+    catch {
+        return null;
+    }
+}
+function approvedOriginHost(host, approved) {
+    if (approved.exact.has(host))
+        return true;
+    return [...approved.descendants].some((scope) => host === scope || host.endsWith(`.${scope}`));
+}
+function isRegistrableCookieDomain(domain) {
+    if ((0,external_node_net_namespaceObject.isIP)(domain) !== 0 || domain === 'localhost')
+        return true;
+    return (0,cjs/* getDomain */.FB)(domain, { allowPrivateDomains: true }) !== null;
+}
+function approvedCookieDomain(domain, approved) {
+    if (!isRegistrableCookieDomain(domain))
+        return false;
+    if ((0,external_node_net_namespaceObject.isIP)(domain) !== 0 || domain === 'localhost') {
+        return approved.exact.has(domain) || approved.descendants.has(domain);
+    }
+    if ([...approved.exact].some((host) => domain === host || host.endsWith(`.${domain}`)))
+        return true;
+    return [...approved.descendants].some((scope) => (domain === scope || domain.endsWith(`.${scope}`) || scope.endsWith(`.${domain}`)));
+}
+function approvedHostsFor(pages, options) {
+    const exact = new Set();
+    const descendants = new Set();
+    for (const page of pages) {
+        const host = normalizeHost(new URL(page).hostname);
+        if (host)
+            exact.add(host);
+    }
+    for (const configured of options.exactHosts) {
+        const host = normalizeConfiguredHost(configured);
+        if (host)
+            exact.add(host);
+    }
+    for (const configured of options.allowedHosts) {
+        const host = normalizeConfiguredHost(configured);
+        if (host)
+            descendants.add(host);
+    }
+    return { exact, descendants };
+}
+async function canonicalPotentialPath(path) {
+    let cursor = (0,external_node_path_.resolve)(path);
+    const missing = [];
+    while (true) {
+        try {
+            return (0,external_node_path_.resolve)(await (0,promises_.realpath)(cursor), ...missing.reverse());
+        }
+        catch (error) {
+            const code = auth_preflight_isRecord(error) && typeof error.code === 'string' ? error.code : '';
+            if (code !== 'ENOENT' && code !== 'ENOTDIR')
+                throw error;
+            const parent = (0,external_node_path_.dirname)(cursor);
+            if (parent === cursor)
+                throw error;
+            missing.push((0,external_node_path_.basename)(cursor));
+            cursor = parent;
+        }
+    }
+}
+function isWithin(path, directory) {
+    const offset = (0,external_node_path_.relative)(directory, path);
+    return offset === '' || (!offset.startsWith('..') && !(0,external_node_path_.isAbsolute)(offset));
+}
+async function assertOutsideArtifacts(statePath, outputDir) {
+    const canonicalState = await (0,promises_.realpath)(statePath);
+    const canonicalOutput = await canonicalPotentialPath(outputDir);
+    const canonicalArchive = await canonicalPotentialPath(auditArchivePath(outputDir));
+    if (isWithin(canonicalState, canonicalOutput) || canonicalState === canonicalArchive) {
+        throw failure('the saved browser state overlaps generated audit artifacts. Move it outside the output directory and portable archive path, then retry.');
+    }
+}
+function deepFreezeStorageState(state) {
+    for (const cookie of state.cookies)
+        Object.freeze(cookie);
+    for (const origin of state.origins) {
+        for (const entry of origin.localStorage)
+            Object.freeze(entry);
+        Object.freeze(origin.localStorage);
+        Object.freeze(origin);
+    }
+    Object.freeze(state.cookies);
+    Object.freeze(state.origins);
+    return Object.freeze(state);
+}
+/**
+ * Validates an opt-in Playwright storage-state file without exposing its path
+ * or secret values. This runs before browser launch and report creation.
+ */
+async function preflightAuthentication(options, resolvedPages) {
+    if (!options.storageState)
+        return { configured: false, scopedHostCount: 0 };
+    let contents;
+    try {
+        await assertOutsideArtifacts(options.storageState, options.outputDir);
+        const metadata = await (0,promises_.stat)(options.storageState);
+        if (!metadata.isFile()) {
+            throw failure('the saved browser state must be a regular file. Choose a valid Playwright storage-state file, then retry.');
+        }
+        if (metadata.size > MAX_STORAGE_STATE_BYTES) {
+            throw failure('the saved browser state exceeds the 10 MiB safety limit. Create a minimal, least-privilege state file, then retry.');
+        }
+        if (process.platform !== 'win32' && (metadata.mode & 0o077) !== 0) {
+            throw failure('the saved browser state is accessible to other local users. Restrict it to its owner (for example, chmod 600), then retry.');
+        }
+        contents = await (0,promises_.readFile)(options.storageState);
+    }
+    catch (error) {
+        if (error instanceof Error && error.message.startsWith('Authentication preflight failed:'))
+            throw error;
+        throw failure('the saved browser state could not be read. Check that it exists and is readable only by the audit operator, then retry.');
+    }
+    if (contents.byteLength > MAX_STORAGE_STATE_BYTES) {
+        throw failure('the saved browser state exceeds the 10 MiB safety limit. Create a minimal, least-privilege state file, then retry.');
+    }
+    let state;
+    try {
+        state = JSON.parse(contents.toString('utf8'));
+    }
+    catch {
+        throw failure('the saved browser state is not valid JSON. Create a fresh Playwright storage-state file, then retry.');
+    }
+    if (!auth_preflight_isRecord(state) || !hasOnlyKeys(state, ROOT_KEYS) || !Array.isArray(state.cookies) || !Array.isArray(state.origins)) {
+        throw failure('the saved browser state does not have the supported Playwright cookies and origins shape. Create a fresh state file, then retry.');
+    }
+    const approvedHosts = approvedHostsFor(resolvedPages, options);
+    const scopedHosts = new Set();
+    const cookies = [];
+    for (const cookie of state.cookies) {
+        if (!auth_preflight_isRecord(cookie)
+            || !hasOnlyKeys(cookie, COOKIE_KEYS)
+            || typeof cookie.name !== 'string'
+            || cookie.name.length === 0
+            || typeof cookie.value !== 'string'
+            || typeof cookie.domain !== 'string'
+            || typeof cookie.path !== 'string'
+            || !cookie.path.startsWith('/')
+            || containsCookieControlCharacter(cookie.name)
+            || containsCookieControlCharacter(cookie.value)
+            || containsCookieControlCharacter(cookie.path)
+            || typeof cookie.expires !== 'number'
+            || !Number.isFinite(cookie.expires)
+            || (cookie.expires !== -1 && (cookie.expires < 0 || cookie.expires > MAX_COOKIE_EXPIRES_SECONDS))
+            || typeof cookie.httpOnly !== 'boolean'
+            || typeof cookie.secure !== 'boolean'
+            || !['Strict', 'Lax', 'None'].includes(String(cookie.sameSite))) {
+            throw failure('the saved browser state contains an invalid cookie entry. Create a fresh state file, then retry.');
+        }
+        const domain = normalizeHost(cookie.domain);
+        if (!domain) {
+            throw failure('the saved browser state contains an invalid cookie scope. Create a fresh state file, then retry.');
+        }
+        if (!approvedCookieDomain(domain, approvedHosts)) {
+            throw failure('the saved browser state contains a cookie outside the approved audit hosts or on a public suffix. Use a host-scoped, least-privilege state file, then retry.');
+        }
+        cookies.push({
+            name: cookie.name,
+            value: cookie.value,
+            domain: cookie.domain,
+            path: cookie.path,
+            expires: cookie.expires,
+            httpOnly: cookie.httpOnly,
+            secure: cookie.secure,
+            sameSite: cookie.sameSite
+        });
+        scopedHosts.add(domain);
+    }
+    const origins = [];
+    for (const originEntry of state.origins) {
+        if (!auth_preflight_isRecord(originEntry) || !hasOnlyKeys(originEntry, ORIGIN_KEYS) || typeof originEntry.origin !== 'string' || !Array.isArray(originEntry.localStorage)) {
+            throw failure('the saved browser state contains an invalid origin entry. Create a fresh state file, then retry.');
+        }
+        let origin;
+        try {
+            origin = new URL(originEntry.origin);
+        }
+        catch {
+            throw failure('the saved browser state contains an invalid origin scope. Create a fresh state file, then retry.');
+        }
+        if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password || origin.origin !== originEntry.origin) {
+            throw failure('the saved browser state contains an unsupported origin scope. Use a canonical HTTP(S) origin without embedded credentials, then retry.');
+        }
+        const localStorage = [];
+        for (const entry of originEntry.localStorage) {
+            if (!auth_preflight_isRecord(entry) || !hasOnlyKeys(entry, LOCAL_STORAGE_KEYS) || typeof entry.name !== 'string' || typeof entry.value !== 'string') {
+                throw failure('the saved browser state contains an invalid local-storage entry. Create a fresh state file, then retry.');
+            }
+            localStorage.push({ name: entry.name, value: entry.value });
+        }
+        const host = normalizeHost(origin.hostname);
+        if (!host || !approvedOriginHost(host, approvedHosts)) {
+            throw failure('the saved browser state contains an origin outside the approved audit hosts. Use a host-scoped, least-privilege state file, then retry.');
+        }
+        origins.push({ origin: origin.origin, localStorage });
+        scopedHosts.add(host);
+    }
+    if (scopedHosts.size === 0) {
+        throw failure('the saved browser state contains no host-scoped session data. Create a fresh authenticated state file, then retry.');
+    }
+    return {
+        configured: true,
+        scopedHostCount: scopedHosts.size,
+        stateDigest: (0,external_node_crypto_namespaceObject.createHash)('sha256').update(contents).digest('hex'),
+        storageState: deepFreezeStorageState({ cookies, origins })
+    };
+}
+async function resolveAuthenticationForExecution(options, resolvedPages, approved) {
+    const current = await preflightAuthentication(options, resolvedPages);
+    if (!approved)
+        return current;
+    if (approved.configured !== current.configured || approved.stateDigest !== current.stateDigest) {
+        throw new AuthenticationConfirmationStaleError();
+    }
+    return approved;
+}
+//# sourceMappingURL=auth-preflight.js.map
 ;// CONCATENATED MODULE: ./dist/service.js
+
+
+
+
+
 
 
 
@@ -158791,25 +162320,39 @@ async function executeAudit(request) {
     if (!request.inputs.length)
         throw new Error('At least one URL or input file is required.');
     const execution = request.execution ?? {};
-    const options = resolveOptions(request.options ?? {});
-    await service_emitProgress(execution, { phase: 'preparing', message: `Preparing audit output in ${options.outputDir}.` });
-    await (0,promises_.mkdir)(options.outputDir, { recursive: true });
+    const options = config_resolveOptions(request.options ?? {});
     await service_emitProgress(execution, { phase: 'targets', message: 'Reading and validating the authorized page targets.' });
     const collected = await collectUrls(request.inputs, {
         allowedHosts: options.allowedHosts,
+        exactHosts: options.exactHosts,
+        ...(options.maxPages !== undefined ? { maxPages: options.maxPages } : {}),
         stagingOnly: options.stagingOnly
     });
+    if (options.storageState) {
+        await service_emitProgress(execution, { phase: 'preparing', message: 'Running the authentication safety preflight.' });
+    }
+    const authentication = await resolveAuthenticationForExecution(options, collected.urls, request.authentication);
+    await service_emitProgress(execution, { phase: 'preparing', message: `Preparing audit output in ${options.outputDir}.` });
+    await (0,promises_.mkdir)(options.outputDir, { recursive: true });
     await service_emitProgress(execution, {
         phase: 'targets',
         message: `Resolved ${collected.urls.length} page${collected.urls.length === 1 ? '' : 's'} for testing.`,
         current: collected.urls.length,
         total: collected.urls.length
     });
-    const summary = await runAudit(collected.urls, collected.source, collected.skipped, options, execution);
+    const summary = await runAudit(collected.urls, collected.source, collected.skipped, options, execution, authentication);
+    if (request.baselinePath) {
+        summary.comparison = await compareAuditWithBaseline(summary, request.baselinePath);
+    }
+    if (request.historyPaths?.length) {
+        summary.history = await createAuditHistory(summary, request.historyPaths);
+    }
     const reportName = cleanReportName(request.reportName ?? DEFAULT_REPORT_NAME);
     const reportPath = outputArtifactPath(options.outputDir, reportName);
     const htmlPath = outputArtifactPath(options.outputDir, reportName.replace(/\.xlsx$/i, '.html'));
     const jsonPath = outputArtifactPath(options.outputDir, 'audit-results.json');
+    const csvPath = outputArtifactPath(options.outputDir, 'audit-findings.csv');
+    const sarifPath = outputArtifactPath(options.outputDir, 'audit-results.sarif');
     const applyLateCancellation = async () => {
         if (!execution.signal?.aborted || summary.status === 'cancelled')
             return false;
@@ -158821,6 +162364,9 @@ async function executeAudit(request) {
         return true;
     };
     await applyLateCancellation();
+    // runAudit saves early JSON evidence; persist service-level enrichments before
+    // rendering or packaging any downstream artifact.
+    await writeJsonReport(summary, jsonPath);
     await service_emitProgress(execution, {
         phase: 'reporting',
         message: `${summary.status === 'cancelled' ? 'Writing partial' : 'Writing'} Excel report to ${reportPath}.`
@@ -158849,11 +162395,16 @@ async function executeAudit(request) {
     }
     await service_emitProgress(execution, { phase: 'reporting', message: `Writing accessible HTML report to ${htmlPath}.` });
     await writeHtmlReport(summary, htmlPath);
+    await service_emitProgress(execution, { phase: 'reporting', message: 'Writing portable CSV findings and SARIF 2.1.0 results.' });
+    await Promise.all([
+        writeCsvReport(summary, csvPath),
+        writeSarifReport(summary, sarifPath)
+    ]);
     await service_emitProgress(execution, {
         phase: 'reporting',
-        message: 'Packaging the HTML report, workbook, JSON evidence, and linked screenshots as a portable ZIP archive.'
+        message: 'Packaging the HTML report, workbook, JSON, CSV, SARIF, and linked screenshots as a portable ZIP archive.'
     });
-    const archivePath = await createAuditArchive(options.outputDir, reportPath, htmlPath, jsonPath);
+    const archivePath = await createAuditArchive(options.outputDir, reportPath, htmlPath, jsonPath, [csvPath, sarifPath]);
     const completedPageCount = summary.pages.filter((page) => page.viewports.length === options.viewports.length &&
         !page.partial &&
         page.viewports.every((viewport) => (!viewport.cancelled
@@ -158868,6 +162419,8 @@ async function executeAudit(request) {
         reportPath,
         htmlPath,
         jsonPath,
+        csvPath,
+        sarifPath,
         archivePath,
         requestedPageCount: collected.urls.length,
         auditedPageCount: summary.auditedUrls.length,
@@ -158885,19 +162438,829 @@ async function executeAudit(request) {
     await service_emitProgress(execution, {
         phase: summary.status === 'cancelled' ? 'cancelled' : 'completed',
         message: summary.status === 'cancelled'
-            ? `Stopped safely. Partial HTML, Excel, and JSON output is in ${options.outputDir}; the portable ZIP is ${archivePath}.`
-            : `Audit completed. HTML, Excel, JSON, and linked screenshots are in ${options.outputDir}; the portable ZIP is ${archivePath}.`
+            ? `Stopped safely. Partial HTML, Excel, JSON, CSV, and SARIF output is in ${options.outputDir}; the portable ZIP is ${archivePath}.`
+            : `Audit completed. HTML, Excel, JSON, CSV, SARIF, and linked screenshots are in ${options.outputDir}; the portable ZIP is ${archivePath}.`
     });
     return result;
 }
 //# sourceMappingURL=service.js.map
+;// CONCATENATED MODULE: ./dist/journey-validation.js
+
+
+
+class journey_validation_JourneyValidationError extends Error {
+    code;
+    issues;
+    constructor(code, message, issues = []) {
+        super(message);
+        this.name = 'JourneyValidationError';
+        this.code = code;
+        this.issues = issues;
+    }
+}
+function issuePath(path) {
+    return path.reduce((result, part) => {
+        if (typeof part === 'number')
+            return `${result}[${part}]`;
+        return result ? `${result}.${String(part)}` : String(part);
+    }, 'journeys');
+}
+function jsonErrorLocation(message) {
+    return message.match(/(?:at position \d+)(?: \(line \d+ column \d+\))?/i)?.[0]
+        ?? message.match(/(?:at line \d+ column \d+)/i)?.[0];
+}
+function journey_validation_parseJourneyDocument(source) {
+    let parsed;
+    try {
+        parsed = JSON.parse(source);
+    }
+    catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        const location = jsonErrorLocation(detail);
+        throw new journey_validation_JourneyValidationError('invalid-json', `The journey file is not valid JSON${location ? ` (${location})` : ''}.`);
+    }
+    if (parsed
+        && typeof parsed === 'object'
+        && 'kind' in parsed
+        && parsed.kind === 'accessibility-audit-journey-draft') {
+        throw new journey_validation_JourneyValidationError('invalid-schema', 'Journey drafts are non-runnable. Approve the draft before using it as a journey file.');
+    }
+    let journeys;
+    if (Array.isArray(parsed)) {
+        journeys = parsed;
+    }
+    else if (parsed && typeof parsed === 'object' && 'journeys' in parsed) {
+        const wrapper = parsed;
+        const unknownKeys = Object.keys(wrapper).filter((key) => key !== 'journeys');
+        if (unknownKeys.length > 0) {
+            const issues = unknownKeys.map((key) => `$.${key}: Unrecognized field.`);
+            throw new journey_validation_JourneyValidationError('invalid-schema', `Found ${issues.length} journey document schema ${issues.length === 1 ? 'issue' : 'issues'}:\n${issues.map((issue) => `- ${issue}`).join('\n')}`, issues);
+        }
+        journeys = wrapper.journeys;
+    }
+    if (!Array.isArray(journeys)) {
+        throw new journey_validation_JourneyValidationError('invalid-schema', 'Expected a JSON array of journeys or an object containing a journeys array.');
+    }
+    const result = strictAuditJourneySchema.array().max(100).safeParse(journeys);
+    if (!result.success) {
+        const issues = result.error.issues.flatMap((issue) => issue.code === 'unrecognized_keys'
+            ? issue.keys.map((key) => `${issuePath([...issue.path, key])}: Unrecognized field.`)
+            : [`${issuePath(issue.path)}: ${issue.message}`]);
+        throw new journey_validation_JourneyValidationError('invalid-schema', `Found ${issues.length} journey schema ${issues.length === 1 ? 'issue' : 'issues'}:\n${issues.map((issue) => `- ${issue}`).join('\n')}`, issues);
+    }
+    return resolveOptions({ journeys: result.data }).journeys;
+}
+async function loadJourneyFile(path) {
+    let source;
+    try {
+        source = await readFile(path, 'utf8');
+    }
+    catch {
+        throw new journey_validation_JourneyValidationError('file-read', `Could not read the journey file "${path}". Check that the path exists and is readable.`);
+    }
+    return journey_validation_parseJourneyDocument(source);
+}
+async function validateJourneyFile(path) {
+    const journeys = await loadJourneyFile(path);
+    const summaries = journeys.map((journey) => ({
+        id: journey.id,
+        title: journey.title,
+        stepCount: journey.steps.length
+    }));
+    return {
+        valid: true,
+        path,
+        journeyCount: journeys.length,
+        stepCount: summaries.reduce((total, journey) => total + journey.stepCount, 0),
+        journeys: summaries
+    };
+}
+function formatJourneyValidationSummary(summary) {
+    const count = `${summary.journeyCount} ${summary.journeyCount === 1 ? 'journey' : 'journeys'}`;
+    const steps = `${summary.stepCount} ${summary.stepCount === 1 ? 'step' : 'steps'}`;
+    const details = summary.journeys.length > 0
+        ? `\n${summary.journeys.map((journey) => `  - ${singleLineText(journey.id)}: ${singleLineText(journey.title)} (${journey.stepCount} ${journey.stepCount === 1 ? 'step' : 'steps'})`).join('\n')}`
+        : '';
+    return `Valid journey file: ${singleLineText(summary.path)}\n${count}, ${steps}.${details}\n`;
+}
+function toJourneyValidationFailure(error) {
+    return {
+        valid: false,
+        code: error.code,
+        message: error.message,
+        issues: error.issues
+    };
+}
+//# sourceMappingURL=journey-validation.js.map
+;// CONCATENATED MODULE: ./dist/journey-drafts.js
+
+
+
+
+const journey_drafts_JOURNEY_DRAFT_KIND = 'accessibility-audit-journey-draft';
+const journey_drafts_JOURNEY_DRAFT_SCHEMA_VERSION = 1;
+class journey_drafts_JourneyDraftError extends Error {
+    code;
+    name = 'JourneyDraftError';
+    constructor(code, message) {
+        super(message);
+        this.code = code;
+    }
+}
+function isJourneyDraftDocument(value) {
+    return Boolean(value
+        && typeof value === 'object'
+        && value.kind === journey_drafts_JOURNEY_DRAFT_KIND);
+}
+function parseDraftSource(source) {
+    let parsed;
+    try {
+        parsed = JSON.parse(source);
+    }
+    catch {
+        throw new journey_drafts_JourneyDraftError('invalid-json', 'The journey draft source is not valid JSON.');
+    }
+    if (Array.isArray(parsed))
+        return parsed;
+    if (parsed && typeof parsed === 'object') {
+        const record = parsed;
+        if (isJourneyDraftDocument(record)) {
+            throw new journey_drafts_JourneyDraftError('invalid-schema', 'This file is already a journey draft. Edit its candidateJourneys array directly instead of nesting it in another draft.');
+        }
+        if (Array.isArray(record.journeys))
+            return record.journeys;
+        return [parsed];
+    }
+    throw new journey_drafts_JourneyDraftError('invalid-schema', 'A journey draft source must be a journey object, a journey array, or an object containing a journeys array.');
+}
+function validationSnapshot(candidateJourneys) {
+    try {
+        parseJourneyDocument(JSON.stringify(candidateJourneys));
+        return { valid: true, issues: [] };
+    }
+    catch (error) {
+        if (error instanceof JourneyValidationError && error.code === 'invalid-schema') {
+            return {
+                valid: false,
+                issues: error.issues.length > 0 ? error.issues : [error.message]
+            };
+        }
+        throw error;
+    }
+}
+function createJourneyDraft(candidateJourneys = [{}], timestamp = new Date().toISOString()) {
+    return {
+        kind: journey_drafts_JOURNEY_DRAFT_KIND,
+        schemaVersion: journey_drafts_JOURNEY_DRAFT_SCHEMA_VERSION,
+        status: 'draft',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        candidateJourneys,
+        validation: validationSnapshot(candidateJourneys)
+    };
+}
+function createJourneyDraftFromSource(source, timestamp = new Date().toISOString()) {
+    return createJourneyDraft(parseDraftSource(source), timestamp);
+}
+function defaultJourneyDraftPath(inputPath) {
+    if (!inputPath)
+        return resolve('journey-draft.json');
+    const absolute = resolve(inputPath);
+    const extension = extname(absolute);
+    const stem = extension ? basename(absolute, extension) : basename(absolute);
+    return join(dirname(absolute), `${stem}.draft.json`);
+}
+async function saveJourneyDraft(draft, outputPath) {
+    const path = resolve(outputPath);
+    try {
+        await writeFile(path, `${JSON.stringify(draft, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+    }
+    catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code === 'EEXIST') {
+            throw new journey_drafts_JourneyDraftError('file-exists', `Refusing to overwrite the existing journey draft "${path}". Choose a different --output path.`);
+        }
+        throw new journey_drafts_JourneyDraftError('file-write', `Could not write the journey draft "${path}". Check that its parent directory exists and is writable.`);
+    }
+    return {
+        path,
+        journeyCount: draft.candidateJourneys.length,
+        valid: draft.validation.valid,
+        issueCount: draft.validation.issues.length
+    };
+}
+async function createJourneyDraftFile(inputPath, outputPath = defaultJourneyDraftPath(inputPath), timestamp = new Date().toISOString()) {
+    let draft;
+    if (!inputPath) {
+        draft = createJourneyDraft(undefined, timestamp);
+    }
+    else {
+        let source;
+        try {
+            source = await readFile(resolve(inputPath), 'utf8');
+        }
+        catch {
+            throw new journey_drafts_JourneyDraftError('file-read', `Could not read the journey draft source "${inputPath}". Check that the path exists and is readable.`);
+        }
+        draft = createJourneyDraftFromSource(source, timestamp);
+    }
+    return saveJourneyDraft(draft, outputPath);
+}
+function formatJourneyDraftSummary(summary) {
+    const validation = summary.valid
+        ? 'Its current contents pass strict journey validation and are ready for the approval step.'
+        : `${summary.issueCount} validation ${summary.issueCount === 1 ? 'issue is' : 'issues are'} recorded for later correction.`;
+    return `Journey draft saved: ${singleLineText(summary.path)}\n` +
+        `${summary.journeyCount} candidate ${summary.journeyCount === 1 ? 'journey' : 'journeys'}. ${validation}\n` +
+        'Drafts are never run by an audit; edit candidateJourneys until the work is ready for approval.\n';
+}
+//# sourceMappingURL=journey-drafts.js.map
+;// CONCATENATED MODULE: ./dist/journey-approval.js
+
+
+
+
+
+class journey_approval_JourneyApprovalError extends Error {
+    code;
+    issues;
+    name = 'JourneyApprovalError';
+    constructor(code, message, issues = []) {
+        super(message);
+        this.code = code;
+        this.issues = issues;
+    }
+}
+function validValidationSnapshot(value) {
+    if (!value || typeof value !== 'object')
+        return false;
+    const snapshot = value;
+    return typeof snapshot.valid === 'boolean'
+        && Array.isArray(snapshot.issues)
+        && snapshot.issues.every((issue) => typeof issue === 'string');
+}
+function validDraftTimestamp(value) {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value))
+        return false;
+    try {
+        return new Date(value).toISOString() === value;
+    }
+    catch {
+        return false;
+    }
+}
+function parseJourneyDraftForApproval(source) {
+    let parsed;
+    try {
+        parsed = JSON.parse(source);
+    }
+    catch {
+        throw new journey_approval_JourneyApprovalError('invalid-json', 'The journey draft is not valid JSON.');
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new journey_approval_JourneyApprovalError('invalid-draft', 'Expected a versioned accessibility-audit journey draft.');
+    }
+    const draft = parsed;
+    if (draft.kind !== JOURNEY_DRAFT_KIND
+        || draft.schemaVersion !== JOURNEY_DRAFT_SCHEMA_VERSION
+        || draft.status !== 'draft'
+        || !validDraftTimestamp(draft.createdAt)
+        || !validDraftTimestamp(draft.updatedAt)
+        || !Array.isArray(draft.candidateJourneys)
+        || !validValidationSnapshot(draft.validation)) {
+        throw new journey_approval_JourneyApprovalError('invalid-draft', `Expected a ${JOURNEY_DRAFT_KIND} draft with schemaVersion ${JOURNEY_DRAFT_SCHEMA_VERSION}.`);
+    }
+    return draft;
+}
+function approveJourneyDraft(source) {
+    const draft = parseJourneyDraftForApproval(source);
+    try {
+        return { journeys: parseJourneyDocument(JSON.stringify(draft.candidateJourneys)) };
+    }
+    catch (error) {
+        if (error instanceof JourneyValidationError) {
+            throw new journey_approval_JourneyApprovalError(error.code === 'invalid-json' ? 'invalid-json' : 'invalid-schema', error.message, error.issues);
+        }
+        throw error;
+    }
+}
+function defaultApprovedJourneyPath(inputPath) {
+    const absolute = resolve(inputPath);
+    const extension = extname(absolute);
+    const stem = extension ? basename(absolute, extension) : basename(absolute);
+    const approvedStem = stem.endsWith('.draft')
+        ? `${stem.slice(0, -'.draft'.length)}.journeys`
+        : `${stem}.approved`;
+    return join(dirname(absolute), `${approvedStem}.json`);
+}
+async function approveJourneyDraftFile(inputPath, outputPath = defaultApprovedJourneyPath(inputPath)) {
+    let source;
+    try {
+        source = await readFile(resolve(inputPath), 'utf8');
+    }
+    catch {
+        throw new journey_approval_JourneyApprovalError('file-read', `Could not read the journey draft "${inputPath}". Check that the path exists and is readable.`);
+    }
+    const approved = approveJourneyDraft(source);
+    const path = resolve(outputPath);
+    try {
+        await writeFile(path, `${JSON.stringify(approved, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+    }
+    catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code === 'EEXIST') {
+            throw new journey_approval_JourneyApprovalError('file-exists', `Refusing to overwrite the existing approved journey file "${path}". Choose a different --output path.`);
+        }
+        throw new journey_approval_JourneyApprovalError('file-write', `Could not write the approved journey file "${path}". Check that its parent directory exists and is writable.`);
+    }
+    return {
+        path,
+        journeyCount: approved.journeys.length,
+        stepCount: approved.journeys.reduce((total, journey) => total + journey.steps.length, 0)
+    };
+}
+function formatJourneyApprovalSummary(summary) {
+    return `Journey draft approved: ${singleLineText(summary.path)}\n`
+        + `${summary.journeyCount} ${summary.journeyCount === 1 ? 'journey' : 'journeys'}, `
+        + `${summary.stepCount} ${summary.stepCount === 1 ? 'step' : 'steps'}.\n`
+        + 'No audit was started. Use this file with --config or the GitHub Action journeys-file input.\n';
+}
+//# sourceMappingURL=journey-approval.js.map
+;// CONCATENATED MODULE: ./dist/errors.js
+
+
+
+
+function recoveryBrowserEngine(message) {
+    const normalized = message.toLowerCase();
+    if (/\bno supported firefox browser\b/.test(normalized)
+        || /\bplaywright firefox installation\b/.test(normalized)
+        || /\bplaywright install firefox\b/.test(normalized))
+        return 'firefox';
+    if (/\bno supported webkit browser\b/.test(normalized)
+        || /\bplaywright webkit installation\b/.test(normalized)
+        || /\bplaywright install webkit\b/.test(normalized))
+        return 'webkit';
+    if (/\bno supported chromium browser\b/.test(normalized)
+        || /\bplaywright chromium installation\b/.test(normalized)
+        || /\bplaywright install chromium\b/.test(normalized)
+        || /\bchromium-based browser\b/.test(normalized))
+        return 'chromium';
+    return undefined;
+}
+function recoveryBrowserLabel(engine) {
+    if (engine === 'firefox')
+        return 'Firefox';
+    if (engine === 'webkit')
+        return 'WebKit';
+    return 'Chromium';
+}
+function browserInstallNextSteps(engine) {
+    const label = recoveryBrowserLabel(engine);
+    return [
+        'Check network access and write permission for the plugin-owned browser directory.',
+        `Run "npx playwright install ${engine}" in the plugin directory, or configure a supported browser executable.`,
+        `Retry the same audit after ${label} is available.`
+    ];
+}
+function browserUnavailableNextSteps(engine) {
+    if (!engine) {
+        return [
+            'Enable automatic browser installation or install the selected Playwright browser in the plugin directory.',
+            'If an executable path was supplied, confirm it points to a compatible installed browser.',
+            'Retry the audit.'
+        ];
+    }
+    const label = recoveryBrowserLabel(engine);
+    return [
+        `Enable automatic browser installation or run "npx playwright install ${engine}" in the plugin directory.`,
+        engine === 'chromium'
+            ? 'If an executable path or browser channel was supplied, confirm it points to an installed Chromium-based browser.'
+            : `If an executable path was supplied, confirm it points to an installed ${label} browser.`,
+        'Retry the audit.'
+    ];
+}
+const SENSITIVE_FIELD = String.raw `(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|api[_-]?key|client[_-]?secret|password|passwd|secret|authorization|proxy[_-]?authorization|cookie|set[_-]?cookie|session(?:[_-]?id)?)`;
+const SENSITIVE_URL_PARAMETER = String.raw `(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|api[_-]?key|key|client[_-]?secret|password|passwd|secret|authorization|session(?:[_-]?id)?|code|signature|sig)`;
+const SENSITIVE_URL_PARAMETER_PATTERN = new RegExp(`^${SENSITIVE_URL_PARAMETER}$`, 'i');
+function isSensitiveUrlParameter(value) {
+    let decoded = value.replace(/\+/g, ' ');
+    for (let pass = 0; pass < 4; pass += 1) {
+        if (SENSITIVE_URL_PARAMETER_PATTERN.test(decoded))
+            return true;
+        try {
+            const next = decodeURIComponent(decoded);
+            if (next === decoded)
+                return false;
+            decoded = next;
+        }
+        catch {
+            // A malformed encoded key cannot be classified safely, so hide its value.
+            return decoded.includes('%');
+        }
+    }
+    // If decoding is still changing the key after the bounded work limit, treat
+    // it as sensitive instead of allowing arbitrary encoding depth to bypass us.
+    return SENSITIVE_URL_PARAMETER_PATTERN.test(decoded) || decoded.includes('%');
+}
+function findInlineHeaderBoundary(value) {
+    let quote;
+    let escapedQuoteDelimiter = false;
+    let escaped = false;
+    for (let index = 0; index < value.length; index += 1) {
+        const character = value[index];
+        if (quote) {
+            if (escapedQuoteDelimiter) {
+                if (character === '\\') {
+                    let quoteIndex = index;
+                    while (value[quoteIndex] === '\\')
+                        quoteIndex += 1;
+                    if (value[quoteIndex] === quote) {
+                        // A serialized outer delimiter has one backslash. Longer runs
+                        // represent escaped quote content and must stay protected.
+                        if (quoteIndex - index === 1) {
+                            quote = undefined;
+                            escapedQuoteDelimiter = false;
+                        }
+                        index = quoteIndex;
+                    }
+                }
+            }
+            else if (escaped) {
+                escaped = false;
+            }
+            else if (character === '\\') {
+                escaped = true;
+            }
+            else if (character === quote) {
+                quote = undefined;
+            }
+            continue;
+        }
+        if (character === '\\' && (value[index + 1] === '"' || value[index + 1] === "'")) {
+            quote = value[index + 1];
+            escapedQuoteDelimiter = true;
+            index += 1;
+            continue;
+        }
+        if (character === '"' || character === "'") {
+            quote = character;
+            continue;
+        }
+        const remainder = value.slice(index);
+        if (/^(?:;\s+|,\s+|\s+\|\s+|\s+->\s+)(?=(?:request|response|status|url|retry|failed|failure|error|at|see|then|public|next)\b)/i.test(remainder)
+            || /^,\s+(?=["']?[a-z][\w-]*["']?\s*:)/i.test(remainder)
+            || /^\s+(?=\((?:status|request|response|error)\b)/i.test(remainder)
+            || /^\.\s+(?:[A-Z][A-Za-z]*|request|response|status|retry|failed|error)\b/.test(remainder)) {
+            return index;
+        }
+    }
+    return -1;
+}
+function redactInlineHeaderValue(value) {
+    const boundary = findInlineHeaderBoundary(value);
+    return boundary < 0 ? '[redacted]' : `[redacted]${value.slice(boundary)}`;
+}
+/**
+ * Removes common authentication material from text crossing a user-visible
+ * error or diagnostic boundary. This is defense in depth; callers must still
+ * avoid putting secrets in URLs, configuration, filenames, and artifacts.
+ */
+function redactSensitiveText(value) {
+    let redacted = value;
+    // Keep the useful public URL while removing embedded user information and
+    // sensitive OAuth/API query or fragment values.
+    redacted = redacted.replace(/\b(https?:\/\/)([^/@\s]+)@/gi, '$1[redacted]@');
+    redacted = redacted.replace(/([?&#])([^=&#\s"']+)=([^&#\s"']*)/g, (match, separator, parameter) => (isSensitiveUrlParameter(parameter) ? `${separator}${parameter}=[redacted]` : match));
+    // Environment-style quoted assignments often contain spaces and escaped
+    // punctuation. Replace the whole quoted value before token-based fallbacks.
+    redacted = redacted.replace(new RegExp(`(\\b${SENSITIVE_FIELD}\\b\\s*[=:]\\s*)"(?:\\\\.|[^"\\\\])*"`, 'gi'), '$1"[redacted]"');
+    redacted = redacted.replace(new RegExp(`(\\b${SENSITIVE_FIELD}\\b\\s*[=:]\\s*)'(?:\\\\.|[^'\\\\])*'`, 'gi'), "$1'[redacted]'");
+    // Keep adjacent request/status context while removing complete header values,
+    // including multi-pair Cookie and Set-Cookie values.
+    redacted = redacted.replace(/\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key)(\s*:\s*)([^\r\n]+)/gi, (_match, header, separator, headerValue) => (`${header}${separator}${redactInlineHeaderValue(headerValue)}`));
+    // Cover JSON, JavaScript-like objects, environment-style assignments, and
+    // standalone authentication schemes commonly surfaced by client libraries.
+    redacted = redacted.replace(new RegExp(`("${SENSITIVE_FIELD}"\\s*:\\s*")([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"`, 'gi'), '$1[redacted]"');
+    redacted = redacted.replace(new RegExp(`('${SENSITIVE_FIELD}'\\s*:\\s*')([^'\\\\]*(?:\\\\.[^'\\\\]*)*)'`, 'gi'), "$1[redacted]'");
+    redacted = redacted.replace(new RegExp(`(\\b${SENSITIVE_FIELD}\\b\\s*[=:]\\s*)(?!\\[redacted\\]|["'])[^\\s,;}&]+`, 'gi'), '$1[redacted]');
+    redacted = redacted.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{4,}/gi, '$1 [redacted]');
+    // Playwright storage state stores cookie and local-storage secrets under a
+    // generic "value" field. Only apply this wider rule when state-shaped data
+    // is present, avoiding needless redaction in unrelated validation messages.
+    if (/['"](?:cookies|origins|localStorage)['"]\s*:/i.test(redacted)) {
+        redacted = redacted.replace(/("value"\s*:\s*")([^"\\]*(?:\\.[^"\\]*)*)"/gi, '$1[redacted]"');
+        redacted = redacted.replace(/('value'\s*:\s*')([^'\\]*(?:\\.[^'\\]*)*)'/gi, "$1[redacted]'");
+    }
+    return redacted;
+}
+/** Sanitizes both prose and structured URL fields before progress is emitted. */
+function redactAuditProgressEvent(event) {
+    return {
+        ...event,
+        message: redactSensitiveText(event.message),
+        ...(event.url === undefined ? {} : { url: redactSensitiveText(event.url) })
+    };
+}
+function rawErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return text_singleLineText(redactSensitiveText(raw), 1_000) || 'The accessibility audit failed unexpectedly.';
+}
+function debugErrorDetails(error) {
+    const raw = error instanceof Error ? error.stack ?? error.message : String(error);
+    return singleLineText(redactSensitiveText(raw), 5_000) || 'No debug details were available.';
+}
+function redactAbsolutePaths(message) {
+    const webUrlRanges = [...message.matchAll(/https?:\/\/\S+/gi)].map((match) => ({
+        start: match.index,
+        end: match.index + match[0].length
+    }));
+    const firstUnprotectedMatch = (pattern, boundaryGroup) => {
+        for (const match of message.matchAll(pattern)) {
+            const index = match.index + (boundaryGroup === undefined ? 0 : (match[boundaryGroup] ?? '').length);
+            if (!webUrlRanges.some((range) => index >= range.start && index < range.end))
+                return index;
+        }
+        return -1;
+    };
+    const starts = [
+        firstUnprotectedMatch(/file:\/\//gi),
+        firstUnprotectedMatch(/(^|[\s'"(=,:])\\\\(?=[^\\])/g, 1),
+        firstUnprotectedMatch(/\b[A-Za-z]:[\\/]/g),
+        firstUnprotectedMatch(/(^|[\s'"(=,:])\/(?!\/)/g, 1)
+    ].filter((index) => index >= 0);
+    if (starts.length === 0)
+        return message;
+    let start = Math.min(...starts);
+    if (start > 0 && /['"]/.test(message[start - 1] ?? ''))
+        start -= 1;
+    const prefix = message.slice(0, start).trimEnd();
+    return `${prefix}${prefix ? ' ' : ''}[local path]`;
+}
+function systemErrorCode(error) {
+    if (!error || typeof error !== 'object' || !('code' in error))
+        return '';
+    return typeof error.code === 'string' ? error.code.toUpperCase() : '';
+}
+function classify(message, systemCode) {
+    const normalized = message.toLowerCase();
+    if (normalized.includes('authentication preflight failed')) {
+        return {
+            code: 'authentication-preflight-failed',
+            nextSteps: [
+                'Create a fresh Playwright storage-state file using a dedicated, least-privilege test account.',
+                'Restrict the file to the audit operator and ensure every cookie and origin belongs to an approved audit host.',
+                'Review the authenticated-page security guide, then retry the same confirmed scope.'
+            ],
+            retryable: true
+        };
+    }
+    if (normalized.includes('journey drafts are non-runnable')) {
+        return {
+            code: 'invalid-input',
+            nextSteps: [
+                'Keep incomplete work in candidateJourneys inside the draft file.',
+                'Approve the draft only after every candidate passes strict journey validation.',
+                'Use the approved runnable journey JSON in audit configuration or the GitHub Action.'
+            ],
+            retryable: true
+        };
+    }
+    if (normalized.includes('playwright') && normalized.includes('install') && normalized.includes('failed')) {
+        const engine = recoveryBrowserEngine(message) ?? 'chromium';
+        return {
+            code: 'browser-install-failed',
+            nextSteps: browserInstallNextSteps(engine),
+            retryable: true
+        };
+    }
+    if (/no supported (?:chromium|firefox|webkit) browser/.test(normalized)
+        || normalized.includes('configured browser executable is unavailable')
+        || /executable (?:doesn['’]t|does not) exist|browser executable|could not find.+(?:chrome|edge|chromium|firefox|webkit)|(?:browser|channel|chromium distribution|firefox|webkit).+not found|(?:please\s+)?run.+playwright install/i.test(message)) {
+        return {
+            code: 'browser-unavailable',
+            nextSteps: browserUnavailableNextSteps(recoveryBrowserEngine(message)),
+            retryable: true
+        };
+    }
+    if (normalized.includes('generated workbook validation failed')
+        || normalized.includes('report validation failed')) {
+        return {
+            code: 'report-validation-failed',
+            nextSteps: [
+                'Keep the generated output and validation details for diagnosis.',
+                'Retry once to rule out an interrupted write.',
+                'If the failure repeats, report the validation message with the plugin version.'
+            ],
+            retryable: true
+        };
+    }
+    if (normalized.includes('template') && (normalized.includes('byte-identical')
+        || normalized.includes('does not match')
+        || normalized.includes('missing worksheet')
+        || normalized.includes('invalid'))) {
+        return {
+            code: 'template-invalid',
+            nextSteps: [
+                'Remove the custom template setting to use the bundled report template.',
+                'If a custom path is required, provide a byte-identical copy of the bundled template.',
+                'Retry the audit after correcting the template.'
+            ],
+            retryable: true
+        };
+    }
+    if (normalized.includes('allowed host')
+        || normalized.includes('allowed-host list')
+        || normalized.includes('allowlist')
+        || normalized.includes('staging-only')
+        || normalized.includes('staging only')
+        || normalized.includes('all urls were excluded')
+        || normalized.includes('all resolved urls were excluded')
+        || normalized.includes('all discovered urls were excluded by the host restrictions')
+        || normalized.includes('exact-host list')
+        || normalized.includes('does not look like a staging host')) {
+        return {
+            code: 'scope-restricted',
+            nextSteps: [
+                'Review the exact target hosts, host allowlist, and staging-only setting.',
+                'Authorize only the intended hosts, then confirm the updated pre-audit scope.',
+                'Retry with the corrected scope.'
+            ],
+            retryable: true
+        };
+    }
+    if (systemCode === 'ENOENT'
+        || normalized.includes('at least one url')
+        || normalized.includes('no urls')
+        || normalized.includes('unsupported input')
+        || normalized.includes('unsupported url')
+        || normalized.includes('unsupported or invalid target url')
+        || normalized.includes('invalid url')
+        || normalized.includes('explicit url list')
+        || normalized.includes('json url list')
+        || normalized.includes('credentials in urls')
+        || normalized.includes('embedded usernames or passwords')
+        || normalized.includes('embedded credentials')
+        || normalized.includes('no http(s) urls were found')
+        || normalized.includes('navigation resolved to an invalid url')
+        || normalized.includes('quick audit requires one valid http(s) url')) {
+        return {
+            code: 'invalid-input',
+            nextSteps: [
+                'Provide at least one complete HTTP(S) URL, a pasted URL list, or a readable XLSX, CSV, TXT, JSON, or local URL-set XML sitemap page-list path.',
+                'Remove credentials from URLs and confirm that every input file exists and is readable.',
+                'Review the command help or pre-audit summary, then retry.'
+            ],
+            retryable: true
+        };
+    }
+    if (['EACCES', 'EPERM', 'ENOSPC', 'EROFS'].includes(systemCode)
+        || normalized.includes('permission denied')
+        || normalized.includes('no space left')
+        || normalized.includes('read-only file system')) {
+        return {
+            code: 'output-unavailable',
+            nextSteps: [
+                'Choose an output directory that exists, is writable, and has enough free space.',
+                'Confirm the input files are readable and no report file is locked by another application.',
+                'Retry the audit.'
+            ],
+            retryable: true
+        };
+    }
+    return {
+        code: 'audit-failed',
+        nextSteps: [
+            'Retry the audit once with the same confirmed scope.',
+            'If it fails again, enable debug output and report the message with the plugin version.'
+        ],
+        retryable: true
+    };
+}
+function toActionableAuditError(error) {
+    const rawMessage = rawErrorMessage(error);
+    return {
+        message: redactAbsolutePaths(rawMessage),
+        ...classify(rawMessage, systemErrorCode(error))
+    };
+}
+function formatCliError(error, includeDebugDetails = false) {
+    if (error instanceof JourneyApprovalError) {
+        const message = error.code === 'file-read'
+            ? 'The journey draft could not be read.'
+            : error.code === 'file-exists'
+                ? 'The requested approved journey output already exists.'
+                : error.code === 'file-write'
+                    ? 'The approved journey file could not be written.'
+                    : error.code === 'invalid-schema' && error.issues.length > 0
+                        ? `Found ${error.issues.length} journey schema ${error.issues.length === 1 ? 'issue' : 'issues'}:\n${error.issues.map((issue) => `  - ${singleLineText(redactSensitiveText(issue), 500)}`).join('\n')}`
+                        : redactAbsolutePaths(rawErrorMessage(error));
+        const nextStep = error.code === 'file-read'
+            ? 'Correct the draft path or its read permissions, then run "accessibility-audit journeys approve <draft-path> [--output <path>]" again.'
+            : error.code === 'invalid-json'
+                ? 'Correct the draft JSON syntax, then run "accessibility-audit journeys approve <draft-path> [--output <path>]" again.'
+                : error.code === 'invalid-draft'
+                    ? 'Use a draft created by "accessibility-audit journeys draft", then run the approval command again.'
+                    : error.code === 'invalid-schema'
+                        ? 'Correct every reported candidateJourneys field, then run "accessibility-audit journeys approve <draft-path> [--output <path>]" again.'
+                        : error.code === 'file-exists'
+                            ? 'Choose a different --output path, then run the approval command again.'
+                            : 'Create a writable parent directory or choose a writable --output path, then run the approval command again.';
+        const debugDetails = includeDebugDetails
+            ? `\n\nDebug details:\n${debugErrorDetails(error)}`
+            : '\n\nSet ACCESSIBILITY_AUDIT_DEBUG=1 to include a stack trace.';
+        return `Journey draft could not be approved (${error.code}).\n${message}\n\nTry this next:\n  1. ${nextStep}${debugDetails}`;
+    }
+    if (error instanceof JourneyDraftError) {
+        const message = error.code === 'file-read'
+            ? 'The journey draft source could not be read.'
+            : error.code === 'file-exists'
+                ? 'The requested journey draft output already exists.'
+                : error.code === 'file-write'
+                    ? 'The journey draft could not be written.'
+                    : redactAbsolutePaths(rawErrorMessage(error));
+        const nextStep = error.code === 'file-read'
+            ? 'Correct the source path or its read permissions, then run "accessibility-audit journeys draft [path] [--output <path>]" again.'
+            : error.code === 'invalid-json'
+                ? 'Correct the source JSON syntax, then run "accessibility-audit journeys draft [path] [--output <path>]" again.'
+                : error.code === 'invalid-schema'
+                    ? 'Use a journey object, a journey array, or an object containing a journeys array, then run "accessibility-audit journeys draft [path] [--output <path>]" again.'
+                    : error.code === 'file-exists'
+                        ? 'Choose a different --output path, then run "accessibility-audit journeys draft [path] [--output <path>]" again.'
+                        : 'Create a writable parent directory or choose a writable --output path, then run "accessibility-audit journeys draft [path] [--output <path>]" again.';
+        const debugDetails = includeDebugDetails
+            ? `\n\nDebug details:\n${debugErrorDetails(error)}`
+            : '\n\nSet ACCESSIBILITY_AUDIT_DEBUG=1 to include a stack trace.';
+        return `Journey draft could not be saved (${error.code}).\n${message}\n\nTry this next:\n  1. ${nextStep}${debugDetails}`;
+    }
+    if (error instanceof JourneyValidationError) {
+        const message = error.issues.length > 0
+            ? `Found ${error.issues.length} journey schema ${error.issues.length === 1 ? 'issue' : 'issues'}:\n${error.issues.map((issue) => `  - ${singleLineText(redactSensitiveText(issue), 500)}`).join('\n')}`
+            : redactAbsolutePaths(rawErrorMessage(error));
+        const nextStep = error.code === 'file-read'
+            ? 'Check the file path and permissions, then run "accessibility-audit journeys validate <path>" again.'
+            : error.code === 'invalid-json'
+                ? 'Correct the JSON syntax, then run "accessibility-audit journeys validate <path>" again.'
+                : 'Correct the reported journey fields, then run "accessibility-audit journeys validate <path>" again.';
+        const debugDetails = includeDebugDetails
+            ? `\n\nDebug details:\n${debugErrorDetails(error)}`
+            : '\n\nSet ACCESSIBILITY_AUDIT_DEBUG=1 to include a stack trace.';
+        return `Journey validation failed (${error.code}).\n${message}\n\nTry this next:\n  1. ${nextStep}${debugDetails}`;
+    }
+    if (error instanceof Error && error.name === 'JourneyBuilderInputError') {
+        const message = redactAbsolutePaths(rawErrorMessage(error));
+        const debugDetails = includeDebugDetails
+            ? `\n\nDebug details:\n${debugErrorDetails(error)}`
+            : '\n\nSet ACCESSIBILITY_AUDIT_DEBUG=1 to include a stack trace.';
+        return `Journey could not be created (invalid-input).\n${message}\n\nTry this next:\n  1. Correct the named journey field and run "accessibility-audit journeys build" again.${debugDetails}`;
+    }
+    const actionable = toActionableAuditError(error);
+    const nextSteps = actionable.nextSteps
+        .map((step, index) => `  ${index + 1}. ${step}`)
+        .join('\n');
+    const debugDetails = includeDebugDetails
+        ? `\n\nDebug details:\n${debugErrorDetails(error)}`
+        : '\n\nSet ACCESSIBILITY_AUDIT_DEBUG=1 to include a stack trace.';
+    return `Accessibility audit failed (${actionable.code}).\n${actionable.message}\n\nTry this next:\n${nextSteps}${debugDetails}`;
+}
+function cliDebugEnabled(value = process.env.ACCESSIBILITY_AUDIT_DEBUG) {
+    return value !== undefined && ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+//# sourceMappingURL=errors.js.map
 ;// CONCATENATED MODULE: ./dist/github-action.js
 
 
 
 
 
-const FAILURE_POLICIES = ['none', 'blockers', 'confirmed', 'critical', 'serious', 'moderate', 'minor'];
+
+const FAILURE_POLICIES = ['none', 'new', 'blockers', 'confirmed', 'critical', 'serious', 'moderate', 'minor'];
+function markdownText(value) {
+    return value.replace(/[\\`*_[\]<>|]/g, '\\$&');
+}
+function historyMarkdown(history) {
+    if (!history)
+        return [];
+    const current = history.points.at(-1);
+    const change = current?.comparisonToPrevious;
+    if (!current || !change)
+        return [];
+    return [
+        '',
+        '### Latest history trend',
+        '',
+        `Compared with ${markdownText(history.points.at(-2)?.source ?? 'the previous audit')} (${change.coverage} scope coverage):`,
+        '',
+        '| Change | Count |',
+        '| --- | ---: |',
+        `| New findings | ${change.newCount} |`,
+        `| Persistent findings | ${change.unchangedCount} |`,
+        `| Resolved findings | ${change.resolvedCount} |`,
+        ...(change.coverage === 'partial'
+            ? ['', `${change.indeterminateCurrentCount} current and ${change.unobservedPreviousCount} previous finding${change.unobservedPreviousCount === 1 ? '' : 's'} remain indeterminate outside equivalent scope.`]
+            : [])
+    ];
+}
 const severityRank = {
     Advisory: 0,
     Minor: 1,
@@ -158915,15 +163278,9 @@ function parseListInput(value, allowCommas = false) {
     const trimmed = value.trim();
     if (!trimmed)
         return [];
-    if (trimmed.startsWith('[')) {
-        const parsed = JSON.parse(trimmed);
-        if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== 'string')) {
-            throw new Error('List inputs using JSON must contain only strings.');
-        }
-        return parsed.flatMap((item) => splitUrlListValue(item));
-    }
-    const separator = allowCommas ? /[\r\n,]+/ : /[\r\n]+/;
-    return trimmed.split(separator).flatMap((item) => splitUrlListValue(item));
+    if (!allowCommas || trimmed.startsWith('['))
+        return splitUrlListValue(trimmed);
+    return trimmed.split(/[\r\n,]+/).flatMap((item) => splitUrlListValue(item));
 }
 function resolveAllowedHosts(inputs, configuredHosts) {
     if (configuredHosts.length > 0)
@@ -158966,6 +163323,13 @@ function parseWcagLevel(value) {
     }
     return normalized;
 }
+function parseBrowserEngine(value) {
+    const normalized = value.trim().toLowerCase() || 'chromium';
+    if (normalized === 'chromium' || normalized === 'firefox' || normalized === 'webkit') {
+        return normalized;
+    }
+    throw new Error('browser must be one of: chromium, firefox, webkit.');
+}
 function parsePositiveInteger(value, fallback, name, maximum) {
     if (!value.trim())
         return fallback;
@@ -158980,6 +163344,11 @@ function parseJourneysInput(value) {
     if (!value.trim())
         return [];
     const parsed = JSON.parse(value);
+    if (parsed
+        && typeof parsed === 'object'
+        && parsed.kind === 'accessibility-audit-journey-draft') {
+        throw new Error('Journey drafts are non-runnable and cannot be used as the Action journeys input. Approve the draft before using it in an audit.');
+    }
     const journeys = Array.isArray(parsed)
         ? parsed
         : parsed && typeof parsed === 'object' && 'journeys' in parsed
@@ -158988,11 +163357,15 @@ function parseJourneysInput(value) {
     if (!Array.isArray(journeys)) {
         throw new Error('journeys must be a JSON array or an object containing a journeys array.');
     }
-    return resolveOptions({ journeys: journeys }).journeys;
+    return config_resolveOptions({ journeys: journeys }).journeys;
 }
-function evaluateGate(policy, findings = []) {
+function evaluateGate(policy, findings = [], comparison) {
     if (policy === 'none')
         return { policy, failed: false, matchedCount: 0, label: 'Informational only' };
+    if (policy === 'new') {
+        const matchedCount = comparison?.newFindings.length ?? 0;
+        return { policy, failed: matchedCount > 0, matchedCount, label: 'New findings since baseline' };
+    }
     if (policy === 'blockers') {
         const matchedCount = findings.filter((finding) => finding.classification === 'blocker').length;
         return { policy, failed: matchedCount > 0, matchedCount, label: 'Audit blockers' };
@@ -159019,6 +163392,9 @@ function resolveOutputDirectory(environment, value) {
         return (0,external_node_path_.resolve)(requested);
     return (0,external_node_path_.resolve)(environment.GITHUB_WORKSPACE || process.cwd(), requested);
 }
+function resolveWorkspacePath(environment, value) {
+    return (0,external_node_path_.isAbsolute)(value) ? (0,external_node_path_.resolve)(value) : (0,external_node_path_.resolve)(environment.GITHUB_WORKSPACE || process.cwd(), value);
+}
 async function loadActionJourneys(environment) {
     const inline = getInput(environment, 'JOURNEYS');
     const file = getInput(environment, 'JOURNEYS-FILE');
@@ -159033,8 +163409,10 @@ async function loadActionJourneys(environment) {
         return parseJourneysInput(await (0,promises_.readFile)(path, 'utf8'));
     }
     catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Could not load journeys-file ${file}: ${message}`);
+        const message = toActionableAuditError(error).message;
+        // Put the actionable cause before the source path. Default error rendering
+        // intentionally collapses an absolute path and anything after it.
+        throw new Error(`Could not load journeys-file: ${message} Source: ${file}`);
     }
 }
 async function setOutput(environment, name, value) {
@@ -159047,8 +163425,9 @@ async function setOutput(environment, name, value) {
     await (0,promises_.appendFile)(outputFile, `${name}=${normalized}\n`, 'utf8');
 }
 function formatProgress(event) {
-    const count = event.current !== undefined && event.total !== undefined ? ` (${event.current}/${event.total})` : '';
-    return `[accessibility-audit:${event.phase}]${count} ${event.message}`;
+    const safeEvent = redactAuditProgressEvent(event);
+    const count = safeEvent.current !== undefined && safeEvent.total !== undefined ? ` (${safeEvent.current}/${safeEvent.total})` : '';
+    return `[accessibility-audit:${safeEvent.phase}]${count} ${safeEvent.message}`;
 }
 function runUrl(environment) {
     const repository = environment.GITHUB_REPOSITORY;
@@ -159057,7 +163436,28 @@ function runUrl(environment) {
         return undefined;
     return `${environment.GITHUB_SERVER_URL || 'https://github.com'}/${repository}/actions/runs/${runId}`;
 }
-function reportMarkdown(result, gate, environment) {
+function comparisonMarkdown(comparison) {
+    if (!comparison)
+        return [];
+    const currentIndeterminate = comparison.indeterminateCurrentFindings.length;
+    const baselineIndeterminate = comparison.unobservedBaselineFindings.length;
+    const coverage = comparison.coverage === 'complete'
+        ? 'Comparison coverage is complete for the equivalent requested URL and viewport scope.'
+        : `Comparison coverage is partial. ${currentIndeterminate} current finding${currentIndeterminate === 1 ? '' : 's'} and ${baselineIndeterminate} baseline finding${baselineIndeterminate === 1 ? '' : 's'} remain indeterminate because their scope was not equivalently observed.`;
+    return [
+        '',
+        '### Changes since baseline',
+        '',
+        '| Comparison | Count |',
+        '| --- | ---: |',
+        `| New findings | ${comparison.newFindings.length} |`,
+        `| Persistent findings | ${comparison.unchangedFindings.length} |`,
+        `| Resolved findings | ${comparison.resolvedFindings.length} |`,
+        '',
+        `${coverage} Persistent findings have the same stable fingerprint in both audits.`
+    ];
+}
+function reportMarkdown(result, gate, environment, comparison, history) {
     const gateResult = gate.policy === 'none' ? 'Not evaluated' : gate.failed ? 'Failed' : 'Passed';
     const workflowRun = runUrl(environment);
     return [
@@ -159075,10 +163475,12 @@ function reportMarkdown(result, gate, environment) {
         `| Review findings | ${result.reviewCount} |`,
         `| Audit blockers | ${result.blockerCount} |`,
         `| Manual checks | ${result.manualCheckCount} |`,
+        ...comparisonMarkdown(comparison),
+        ...historyMarkdown(history),
         '',
         `**Policy:** ${gate.label}  `,
         `**Gate result:** ${gateResult}`,
-        ...(workflowRun ? ['', `[Open the workflow run](${workflowRun}) to download the accessible HTML report, Excel workbook, JSON, screenshots, and ZIP evidence.`] : []),
+        ...(workflowRun ? ['', `[Open the workflow run](${workflowRun}) to download the accessible HTML report, Excel workbook, JSON, CSV, SARIF, screenshots, and ZIP evidence.`] : []),
         '',
         '_Automated results are evidence, not a declaration of WCAG conformance; complete the listed manual checks._'
     ].join('\n');
@@ -159132,17 +163534,25 @@ async function upsertPullRequestComment(environment, token, markdown) {
     }
     return true;
 }
-async function readStoredFindings(jsonPath) {
-    const stored = JSON.parse(await (0,promises_.readFile)(jsonPath, 'utf8'));
-    return stored.findings ?? [];
+async function readStoredSummary(jsonPath) {
+    return JSON.parse(await (0,promises_.readFile)(jsonPath, 'utf8'));
 }
 async function runGitHubAction(environment = process.env, signal) {
-    const inputs = parseListInput(getInput(environment, 'URLS'));
+    const inputs = normalizeExplicitUrlEntries(parseListInput(getInput(environment, 'URLS')));
     if (!inputs.length)
         throw new Error('The urls input must include at least one URL, with one URL per line.');
     const outputDir = resolveOutputDirectory(environment, getInput(environment, 'OUTPUT-DIR'));
     const allowedHosts = resolveAllowedHosts(inputs, parseListInput(getInput(environment, 'ALLOWED-HOSTS'), true));
+    const exactHosts = parseListInput(getInput(environment, 'EXACT-HOSTS'), true);
+    const maxPagesInput = getInput(environment, 'MAX-PAGES');
     const failurePolicy = parseFailurePolicy(getInput(environment, 'FAIL-ON'));
+    const baselineInput = getInput(environment, 'BASELINE-PATH');
+    if (failurePolicy === 'new' && !baselineInput) {
+        throw new Error('fail-on new requires baseline-path to identify regressions.');
+    }
+    const baselinePath = baselineInput ? resolveWorkspacePath(environment, baselineInput) : undefined;
+    const historyPaths = parseListInput(getInput(environment, 'HISTORY-PATHS'))
+        .map((historyPath) => resolveWorkspacePath(environment, historyPath));
     const journeys = await loadActionJourneys(environment);
     const templatePath = environment.GITHUB_ACTION_PATH
         ? (0,external_node_path_.resolve)(environment.GITHUB_ACTION_PATH, 'assets', 'accessibility-report-template.xlsx')
@@ -159150,6 +163560,8 @@ async function runGitHubAction(environment = process.env, signal) {
     const result = await executeAudit({
         inputs,
         ...(getInput(environment, 'REPORT-NAME') ? { reportName: getInput(environment, 'REPORT-NAME') } : {}),
+        ...(baselinePath ? { baselinePath } : {}),
+        ...(historyPaths.length ? { historyPaths } : {}),
         options: {
             auditor: getInput(environment, 'AUDITOR') || 'GitHub Actions',
             wcagLevel: parseWcagLevel(getInput(environment, 'WCAG-LEVEL')),
@@ -159157,9 +163569,12 @@ async function runGitHubAction(environment = process.env, signal) {
             outputDir,
             ...(getInput(environment, 'LANDING-PAGE-URL') ? { landingPageUrl: getInput(environment, 'LANDING-PAGE-URL') } : {}),
             allowedHosts,
+            exactHosts,
+            ...(maxPagesInput ? { maxPages: parsePositiveInteger(maxPagesInput, 1, 'max-pages', 50_000) } : {}),
             stagingOnly: parseBooleanInput(getInput(environment, 'STAGING-ONLY'), false),
             headless: true,
             autoInstallBrowser: parseBooleanInput(getInput(environment, 'AUTO-INSTALL-BROWSER'), true),
+            browserEngine: parseBrowserEngine(getInput(environment, 'BROWSER')),
             timeoutMs: parsePositiveInteger(getInput(environment, 'TIMEOUT-MS'), 30_000, 'timeout-ms'),
             concurrency: parsePositiveInteger(getInput(environment, 'CONCURRENCY'), 2, 'concurrency', 8),
             captureScreenshots: parseBooleanInput(getInput(environment, 'CAPTURE-SCREENSHOTS'), true),
@@ -159172,14 +163587,16 @@ async function runGitHubAction(environment = process.env, signal) {
             onProgress: (event) => { process.stdout.write(`${formatProgress(event)}\n`); }
         }
     });
-    const findings = await readStoredFindings(result.jsonPath);
-    const gate = evaluateGate(failurePolicy, findings);
-    const markdown = reportMarkdown(result, gate, environment);
+    const stored = await readStoredSummary(result.jsonPath);
+    const gate = evaluateGate(failurePolicy, stored.findings, stored.comparison);
+    const markdown = reportMarkdown(result, gate, environment, stored.comparison, stored.history);
     for (const [name, value] of [
         ['output-dir', outputDir],
         ['report-path', result.reportPath],
         ['html-path', result.htmlPath],
         ['json-path', result.jsonPath],
+        ['csv-path', result.csvPath],
+        ['sarif-path', result.sarifPath],
         ['archive-path', result.archivePath],
         ['confirmed-findings', result.confirmedCount],
         ['review-findings', result.reviewCount],
@@ -159204,7 +163621,7 @@ async function runGitHubAction(environment = process.env, signal) {
                 writeWorkflowAnnotation('notice', 'Accessibility audit', 'Updated the pull request with the audit summary.');
         }
         catch (error) {
-            writeWorkflowAnnotation('warning', 'Pull request comment skipped', error instanceof Error ? error.message : String(error));
+            writeWorkflowAnnotation('warning', 'Pull request comment skipped', toActionableAuditError(error).message);
         }
     }
     else if (shouldComment && environment.GITHUB_EVENT_NAME?.startsWith('pull_request')) {
@@ -159216,7 +163633,7 @@ async function runGitHubAction(environment = process.env, signal) {
     return result;
 }
 function reportActionFailure(error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = toActionableAuditError(error).message;
     writeWorkflowAnnotation('error', 'CarlasHub accessibility audit failed', message);
     process.exitCode = 1;
 }

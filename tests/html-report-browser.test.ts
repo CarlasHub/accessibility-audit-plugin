@@ -101,6 +101,22 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('rendered HTML repo
       expect(await page.locator('table:not(:has(caption))').count()).toBe(0);
       expect(await page.locator('th:not([scope="col"])').count()).toBe(0);
 
+      const topActionLinks = await page.locator('#top-actions .top-action h3 a').evaluateAll((links) => (
+        links.map((link) => link.getAttribute('href'))
+      ));
+      expect(topActionLinks).toEqual(['#finding-A11Y001', '#finding-A11Y002']);
+      await page.locator('#top-actions .top-action h3 a').first().click();
+      expect(new URL(page.url()).hash).toBe('#finding-A11Y001');
+      expect(await page.locator('#finding-A11Y001').count()).toBe(1);
+
+      await page.setViewportSize({ width: 320, height: 800 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      expect(await page.locator('#top-actions .top-action').evaluateAll((cards) => cards.every((card) => {
+        const bounds = card.getBoundingClientRect();
+        return bounds.left >= 0 && bounds.right <= document.documentElement.clientWidth;
+      }))).toBe(true);
+      await page.setViewportSize({ width: 1280, height: 720 });
+
       const resultCount = page.locator('#result-count');
       expect(await resultCount.textContent()).toBe('2 of 2 findings');
       await page.locator('#finding-search').fill('image');
@@ -110,6 +126,111 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('rendered HTML repo
       await page.locator('#classification-filter').selectOption('review');
       expect(await resultCount.textContent()).toBe('1 of 2 findings');
       expect(await page.locator('#finding-rows tr[hidden]').count()).toBe(1);
+      await page.locator('#classification-filter').selectOption('');
+
+      await page.evaluate(() => {
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: {
+            writeText: (value: string) => {
+              (globalThis as typeof globalThis & { copiedTicket?: string }).copiedTicket = value;
+              return Promise.resolve();
+            }
+          }
+        });
+      });
+      const firstDetails = page.locator('#finding-rows details').first();
+      await firstDetails.locator('summary').click();
+      await firstDetails.locator('.copy-ticket').click();
+      expect(await page.evaluate(() => (
+        globalThis as typeof globalThis & { copiedTicket?: string }
+      ).copiedTicket)).toContain('[A11Y001] Image is missing alternative text');
+      expect(await page.locator('#copy-status-A11Y001').textContent()).toBe('Copied A11Y001 ticket.');
+
+      await page.evaluate(() => {
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+        Object.defineProperty(document, 'execCommand', {
+          configurable: true,
+          value: (command: string) => {
+            (globalThis as typeof globalThis & { fallbackTicket?: string }).fallbackTicket =
+              document.querySelector('textarea')?.value ?? '';
+            return command === 'copy';
+          }
+        });
+      });
+      const secondDetails = page.locator('#finding-rows details').nth(1);
+      await secondDetails.locator('summary').click();
+      await secondDetails.locator('.copy-ticket').click();
+      expect(await page.evaluate(() => (
+        globalThis as typeof globalThis & { fallbackTicket?: string }
+      ).fallbackTicket)).toContain('Evidence type: Requires human validation');
+      expect(await page.locator('#copy-status-A11Y002').textContent()).toBe('Copied A11Y002 ticket.');
+
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'execCommand', {
+          configurable: true,
+          value: () => false
+        });
+      });
+      await secondDetails.locator('.copy-ticket').click();
+      expect(await page.locator('#copy-status-A11Y002').textContent()).toBe(
+        'Could not copy this ticket. Select the finding details and copy them manually.',
+      );
+
+      await page.evaluate(() => {
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: {
+            writeText: () => new Promise<void>((resolve, reject) => {
+              (globalThis as typeof globalThis & {
+                settleClipboard?: (outcome: 'resolve' | 'reject') => void;
+              }).settleClipboard = (outcome) => outcome === 'resolve' ? resolve() : reject(new Error('Denied'));
+            })
+          }
+        });
+      });
+      const firstButton = firstDetails.locator('.copy-ticket');
+      await firstButton.focus();
+      await page.keyboard.press('Enter');
+      expect(await firstButton.isDisabled()).toBe(true);
+      expect(await page.locator('#copy-status-A11Y001').textContent()).toBe('Copying ticket…');
+      await firstButton.evaluate((button) => (button as HTMLButtonElement).blur());
+      expect(await page.evaluate(() => document.activeElement?.tagName)).toBe('BODY');
+      await page.evaluate(() => (
+        globalThis as typeof globalThis & {
+          settleClipboard?: (outcome: 'resolve' | 'reject') => void;
+        }
+      ).settleClipboard?.('resolve'));
+      await expect.poll(() => firstButton.isDisabled()).toBe(false);
+      expect(await page.locator('#copy-status-A11Y001').textContent()).toBe('Copied A11Y001 ticket.');
+      expect(await page.locator(':focus').getAttribute('data-finding-id')).toBe('A11Y001');
+
+      await firstButton.focus();
+      await page.keyboard.press('Enter');
+      expect(await firstButton.isDisabled()).toBe(true);
+      await firstButton.evaluate((button) => (button as HTMLButtonElement).blur());
+      expect(await page.evaluate(() => document.activeElement?.tagName)).toBe('BODY');
+      await page.evaluate(() => (
+        globalThis as typeof globalThis & {
+          settleClipboard?: (outcome: 'resolve' | 'reject') => void;
+        }
+      ).settleClipboard?.('reject'));
+      await expect.poll(() => firstButton.isDisabled()).toBe(false);
+      expect(await page.locator('#copy-status-A11Y001').textContent()).toBe(
+        'Could not copy this ticket. Select the finding details and copy them manually.',
+      );
+      expect(await page.locator(':focus').getAttribute('data-finding-id')).toBe('A11Y001');
+
+      await firstButton.focus();
+      await page.keyboard.press('Enter');
+      await page.locator('#finding-search').focus();
+      await page.evaluate(() => (
+        globalThis as typeof globalThis & {
+          settleClipboard?: (outcome: 'resolve' | 'reject') => void;
+        }
+      ).settleClipboard?.('resolve'));
+      await expect.poll(() => firstButton.isDisabled()).toBe(false);
+      expect(await page.locator(':focus').getAttribute('id')).toBe('finding-search');
     } finally {
       await browser.close();
     }

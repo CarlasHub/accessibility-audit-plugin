@@ -41,6 +41,10 @@ for (const harness of harnesses) {
   const manifest = await jsonFile(join(harnessRoot, harness.manifest));
   const install = await jsonFile(join(harnessRoot, 'install-manifest.json'));
   const mcp = await jsonFile(join(harnessRoot, '.mcp.json'));
+  const readme = await readFile(join(harnessRoot, 'README.md'), 'utf8').catch((error) => {
+    failures.push(`${harness.directory}: README.md could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    return '';
+  });
   check(manifest?.name === harness.name, `${harness.directory}: plugin name must be ${harness.name}.`);
   check(manifest?.version === packageJson.version, `${harness.directory}: plugin version must match package.json.`);
   check(manifest?.skills === './skills/', `${harness.directory}: skills path is missing or invalid.`);
@@ -51,6 +55,9 @@ for (const harness of harnesses) {
   if (install?.tarball) runtimeTarballs.push(install.tarball);
   check(mcp?.mcpServers?.['accessibility-audit']?.command === 'node', `${harness.directory}: MCP server must use Node.`);
   check(mcp?.mcpServers?.['accessibility-audit']?.args?.some((argument) => String(argument).includes('launch-mcp.mjs')), `${harness.directory}: MCP server must use the isolated launcher.`);
+  check(readme.includes('pasted whitespace- or newline-separated URL list'), `${harness.directory}: README must document pasted URL-list input.`);
+  check(readme.includes('a JSON string array'), `${harness.directory}: README must document JSON URL-list input.`);
+  check(readme.includes('validated by position'), `${harness.directory}: README must document positional URL-list validation.`);
 
   if (!install?.tarball) continue;
   const tarball = join(harnessRoot, '_install-source', install.tarball);

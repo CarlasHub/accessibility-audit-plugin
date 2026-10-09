@@ -1,6 +1,6 @@
 # GitHub Action usage
 
-`CarlasHub/accessibility-audit-plugin` is a free JavaScript Action that runs an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA in CI. It uses the same site-independent engine as the editor plugins and exports an accessible self-contained HTML report, a validated Excel workbook, structured JSON, screenshots, and a portable ZIP.
+`CarlasHub/accessibility-audit-plugin` is a free JavaScript Action that runs an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA in CI. It uses the same site-independent engine as the editor plugins and exports an accessible self-contained HTML report, a validated Excel workbook, structured JSON, CSV, SARIF 2.1.0, screenshots, and a portable ZIP.
 
 It is an automated testing aid, not a WCAG certification. WCAG 2.2 Level AA is the conformance target; optional AAA checks are advisory. Complete the report's human assessment before making a conformance claim.
 
@@ -24,6 +24,8 @@ jobs:
       urls: |-
         https://example.com/
         https://example.com/contact
+      exact-hosts: example.com
+      max-pages: '2'
 ```
 
 List every page under `urls`, one per line, then open **Actions → Accessibility audit → Run workflow** and start the run. Its summary links directly to one combined downloadable report. No checkout, browser installation, artifact step, token, or hostname field is required.
@@ -47,29 +49,35 @@ steps:
       comment-on-pr: 'true'
 ```
 
-The Action uses the GitHub REST API only to list, create, or update its marked pull-request comment. A missing or read-only token does not discard the audit; it emits a warning and continues. Workflows triggered from forks commonly receive a read-only token.
+The Action uses the GitHub REST API only to list, create, or update its marked pull-request comment. When `baseline-path` is set, that comment also shows new, persistent, and resolved finding counts. Persistent means the same stable fingerprint appears in both audits; partial comparisons call out findings whose browser engine, URL, or viewport scope was not equivalently observed. A missing or read-only token does not discard the audit; it emits a warning and continues. Workflows triggered from forks commonly receive a read-only token.
 
 ## Inputs
 
 | Input | Default | Purpose |
 | --- | --- | --- |
-| `urls` | Required | One explicit HTTP(S) URL per line, or a JSON string array. The Action does not crawl. |
+| `urls` | Required | Explicit HTTP(S) URLs, one per line (plain, bulleted, or numbered), or a JSON string array. Every entry is validated; the Action does not crawl. |
 | `auditor` | `GitHub Actions` | Auditor name written into the workbook. |
 | `wcag-level` | `AA` | WCAG 2.2 Level AA conformance target. Legacy `AAA` values enable advisory AAA automation but do not change the target. |
 | `aaa-advisory` | `false` | Run supported AAA rules as clearly separated advisory evidence. |
 | `output-dir` | `accessibility-audit-results` | Output directory, relative to the workspace unless absolute. |
 | `landing-page-url` | First URL | Report metadata and same-origin link context; it does not expand scope. |
-| `allowed-hosts` | Hosts in `urls` | Optional comma- or newline-separated hostname allowlist. The Action securely derives one from the explicit URLs when omitted. |
+| `allowed-hosts` | Hosts in `urls` | Optional comma- or newline-separated hostname allowlist. Each entry authorizes that hostname and its subdomains. The Action securely derives this list from the explicit URLs when omitted. |
+| `exact-hosts` | Empty | Optional comma- or newline-separated literal hostname allowlist. Use it when approved hosts must not authorize subdomains. |
+| `max-pages` | Unlimited | Optional hard ceiling from 1 to 50,000 authorized, deduplicated pages. An oversized scope stops before browser startup instead of being truncated. |
 | `staging-only` | `false` | Reject hosts that do not look like staging, QA, preview, test, or local hosts. |
 | `capture-screenshots` | `true` | Retain contextual screenshot evidence when reproducible. |
-| `browser-channel` | Empty | Optional installed Playwright channel such as `chrome`. |
-| `auto-install-browser` | `true` | Install Playwright Chromium when no compatible browser is available. |
+| `browser` | `chromium` | Browser engine: `chromium`, `firefox`, or `webkit`. Firefox and WebKit are opt-in; Chromium remains the default. |
+| `publish-report` | `false` | Reusable workflow only: explicitly publish the complete report folder as a public GitHub Pages site and expose `hosted-report-url`. Leave disabled for the normal access-controlled workflow artifact. |
+| `browser-channel` | Empty | Optional installed Chromium channel such as `chrome`; invalid with Firefox or WebKit. |
+| `auto-install-browser` | `true` | Install the selected Playwright browser when it is unavailable. |
 | `concurrency` | `2` | Concurrent pages, from 1 to 8. |
 | `timeout-ms` | `30000` | Per-operation timeout in milliseconds. |
 | `journeys` | Empty | JSON array of project-specific keyboard, form, interaction, and dynamic-content journeys. |
 | `journeys-file` | Empty | Workspace-relative JSON file containing the journey array. Check out the caller repository first when using the standalone Action. Mutually exclusive with `journeys`. |
 | `report-name` | `Accessibility_Audit_Report.xlsx` | Excel report filename. |
-| `fail-on` | `none` | `none`, `blockers`, `confirmed`, `critical`, `serious`, `moderate`, or `minor`. |
+| `baseline-path` | Empty | Workspace-relative path to a prior `audit-results.json`. The reusable workflow checks out the caller repository when this is set. |
+| `history-paths` | Empty | Optional prior `audit-results.json` paths, one per line, for chronological HTML and workbook trends. The reusable workflow checks out the caller repository when this is set. |
+| `fail-on` | `none` | `none`, `new`, `blockers`, `confirmed`, `critical`, `serious`, `moderate`, or `minor`. `new` requires `baseline-path`. |
 | `comment-on-pr` | `true` | Attempt the marked pull-request summary when a token is supplied. |
 | `github-token` | Empty | Token used only for the pull-request summary. |
 
@@ -112,13 +120,66 @@ Use [the maintained BuggyLand pack](../examples/buggyland-journeys.json) for com
 
 ## Quality gates
 
-`none` records evidence without failing the job. `blockers` fails when a page could not be audited. `confirmed` fails on any confirmed finding. A severity policy fails on confirmed findings at that severity or higher. Review and manual items never fail a severity gate because automation has not established that they are defects.
+The gate boundaries are explicit and stable:
+
+| Policy | The job fails when |
+| --- | --- |
+| `none` | Never; the audit records evidence only. |
+| `new` | The baseline comparison identifies at least one new finding in equivalently observed scope. |
+| `blockers` | At least one audit blocker prevented complete coverage. |
+| `confirmed` | At least one finding has confirmed evidence, including an Advisory finding. |
+| `critical` | At least one confirmed finding is Critical. |
+| `serious` | At least one confirmed finding is Serious or Critical. |
+| `moderate` | At least one confirmed finding is Moderate, Serious, or Critical. |
+| `minor` | At least one confirmed finding is Minor, Moderate, Serious, or Critical. |
+
+Review and manual items never fail a severity gate because automation has not established that they are defects. Blockers fail only the `blockers` gate, and Advisory findings fail `confirmed` but do not satisfy a severity threshold. Supplying `baseline-path` does not change any existing gate; comparison results affect only `fail-on: new`.
 
 Start with `none` while establishing a baseline. Move to a severity policy after the audited URLs are stable and the team has reviewed the evidence model.
 
+To prevent regressions without making teams fix the complete backlog at once, commit a reviewed prior JSON report and enable the differential gate:
+
+```yaml
+jobs:
+  audit:
+    uses: CarlasHub/accessibility-audit-plugin/.github/workflows/reusable-accessibility-audit.yml@v1
+    with:
+      urls: https://preview.example.test/
+      baseline-path: .github/accessibility-baseline.json
+      history-paths: |-
+        reports/august/audit-results.json
+        reports/september/audit-results.json
+      fail-on: new
+```
+
+The comparison qualifies incomplete or unmatched browser-engine, URL, and viewport scope as indeterminate instead of reporting it as new or resolved. History is optional and reporting-only: paths may be listed in any order, the report sorts audits chronologically, and it does not change the existing baseline gate.
+
 ## Outputs
 
-The Action exposes `output-dir`, `html-path`, `report-path`, `json-path`, `archive-path`, `confirmed-findings`, `review-findings`, `blockers`, `requested-pages`, `audited-pages`, `completed-pages`, `partial-pages`, `not-started-pages`, `skipped-pages`, and `gate-result`. An `if: always()` upload step preserves evidence even when the configured gate fails. Download the workflow artifact, extract it, and open `Accessibility_Audit_Report.html` first; the workbook and raw JSON remain beside it for deeper analysis.
+The Action exposes `output-dir`, `html-path`, `report-path`, `json-path`, `csv-path`, `sarif-path`, `archive-path`, `confirmed-findings`, `review-findings`, `blockers`, `requested-pages`, `audited-pages`, `completed-pages`, `partial-pages`, `not-started-pages`, `skipped-pages`, and `gate-result`. An `if: always()` upload step preserves evidence even when the configured gate fails. Upload both `output-dir` and `archive-path`: the first supports direct artifact browsing, while the ZIP is the portable package to share. Download the workflow artifact and open `Accessibility_Audit_Report.html` first; keep the workbook, raw JSON, CSV register, SARIF results, and screenshots together for deeper analysis and automation.
+
+## Optional hosted report
+
+Local CLI and plugin runs never upload reports. The reusable workflow normally keeps its report in the workflow artifact, governed by repository access and the configured retention period. For an audit that contains only content approved for public disclosure, it can instead publish a directly browsable GitHub Pages copy:
+
+```yaml
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  audit:
+    uses: CarlasHub/accessibility-audit-plugin/.github/workflows/reusable-accessibility-audit.yml@v1
+    with:
+      urls: https://example.com/
+      exact-hosts: example.com
+      publish-report: true
+```
+
+Before enabling it, configure the caller repository's Pages source as **GitHub Actions**. The workflow stages a copy of the established report folder, makes its HTML report the site index, deploys it with permissions confined to the opt-in publish job, writes the public URL to the run summary, and returns it as the reusable workflow's `hosted-report-url` output. A later deployment to the same Pages site replaces the prior one.
+
+GitHub Pages visibility depends on the caller repository and organization plan; do not assume the URL is private. Never enable `publish-report` for authenticated audits, private URLs, personal data, confidential screenshots, or any report not explicitly approved for its resulting Pages audience. Disabling the input again prevents future deployments but does not itself remove an already published site; unpublish or disable Pages in the repository settings when the public copy must be withdrawn.
 
 ## Native screen-reader evidence
 
@@ -132,10 +193,11 @@ Each job uploads JSON, Markdown, HTML, and Playwright artifacts containing the s
 ## Security and privacy
 
 - Pin third-party Actions to complete commit SHAs and grant the workflow only the permissions it needs.
-- The Action derives `allowed-hosts` from `urls`; set it explicitly when a stricter or deliberately different boundary is required. Use `staging-only: 'true'` where naming conventions make it reliable.
+- The Action derives `allowed-hosts` from `urls`; set `exact-hosts` when every approved hostname must match literally, or set `allowed-hosts` explicitly when parent-domain-and-subdomain authorization is intended. Use `max-pages` to reject unexpectedly large explicit scopes before browser startup. Use `staging-only: 'true'` where naming conventions make it reliable.
 - Main-page redirects are checked against the same host and staging restrictions; out-of-scope destinations are rejected and are not accepted as audit results.
 - Do not put credentials, session tokens, private URLs, or secrets in `urls` or workflow logs.
 - Treat reports and screenshots as potentially sensitive. Set an appropriate artifact retention period and restrict repository access.
+- `publish-report` is deliberately off by default. Enable it only after approving the complete report for the repository's GitHub Pages audience, and disable or unpublish Pages when the hosted copy is no longer needed.
 - Do not run untrusted pull-request changes with production credentials or network access to private targets.
 - Keep manual review in the release process; no automated result proves complete WCAG conformance.
 

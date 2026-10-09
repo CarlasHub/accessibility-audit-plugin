@@ -2,6 +2,8 @@ export type FindingClassification = 'confirmed' | 'review' | 'manual' | 'blocker
 export type Severity = 'Critical' | 'Serious' | 'Moderate' | 'Minor' | 'Advisory';
 export type AuditStatus = 'completed' | 'cancelled';
 export type WcagConformanceLevel = 'AA' | 'AAA';
+export type { AuditScopeMode } from './scope.js';
+import type { AuditScopeMode } from './scope.js';
 export type AuditProgressPhase =
   | 'preparing'
   | 'targets'
@@ -98,8 +100,10 @@ export interface ConsentHandlingResult {
 }
 
 export interface Finding {
-  /** Stable report identity shared by JSON, HTML, XLSX, and WCAG criterion links. */
+  /** Stable report identity shared by JSON, HTML, XLSX, CSV, SARIF, and WCAG criterion links. */
   id?: string;
+  /** Order-independent identity used to match the same finding across audit runs. */
+  fingerprint?: string;
   key: string;
   ruleId: string;
   classification: FindingClassification;
@@ -568,12 +572,73 @@ export interface RegressionSummary {
   generatedBy: string;
 }
 
+export interface FindingComparisonRecord {
+  fingerprint: string;
+  id?: string;
+  classification: FindingClassification;
+  severity: Severity;
+  summary: string;
+  urls: string[];
+  viewports: string[];
+}
+
+export interface AuditComparison {
+  kind: 'baseline-comparison';
+  coverage: 'complete' | 'partial';
+  baselineSource: string;
+  baselineGeneratedAt?: string;
+  baselineFindingCount: number;
+  currentFindingCount: number;
+  newFindings: FindingComparisonRecord[];
+  unchangedFindings: FindingComparisonRecord[];
+  resolvedFindings: FindingComparisonRecord[];
+  indeterminateCurrentFindings: FindingComparisonRecord[];
+  unobservedBaselineFindings: FindingComparisonRecord[];
+  limitations: string[];
+}
+
+export interface AuditHistoryDelta {
+  coverage: 'complete' | 'partial';
+  newCount: number;
+  unchangedCount: number;
+  resolvedCount: number;
+  indeterminateCurrentCount: number;
+  unobservedPreviousCount: number;
+}
+
+export interface AuditHistoryPoint {
+  source: string;
+  browserEngine?: BrowserEngine;
+  generatedAt: string;
+  status: AuditStatus;
+  requestedPageCount: number;
+  auditedPageCount: number;
+  findingCount: number;
+  confirmedCount: number;
+  reviewCount: number;
+  blockerCount: number;
+  manualCount: number;
+  criticalConfirmedCount: number;
+  seriousConfirmedCount: number;
+  comparisonToPrevious?: AuditHistoryDelta;
+}
+
+export interface AuditHistory {
+  kind: 'audit-history';
+  points: AuditHistoryPoint[];
+  limitations: string[];
+}
+
 export interface AuditSummary {
   status: AuditStatus;
+  /** Fixed execution boundary. Linked pages may be checked but are never added as audit targets. */
+  scopeMode?: AuditScopeMode;
   cancelledAt?: string;
   generatedAt: string;
   auditor: string;
   source: string;
+  /** Browser engine used to collect this evidence. Older imported reports may omit it. */
+  browserEngine?: BrowserEngine;
   wcagLevel: WcagConformanceLevel;
   conformanceTarget?: 'AA';
   aaaAdvisory?: boolean;
@@ -581,6 +646,8 @@ export interface AuditSummary {
   conformanceDecision?: 'not-determined';
   qualityContract?: AuditQualityContractMetadata;
   regressionSummary?: RegressionSummary;
+  comparison?: AuditComparison;
+  history?: AuditHistory;
   landingPageUrl: string;
   requestedUrls: string[];
   auditedUrls: string[];
@@ -593,16 +660,23 @@ export interface AuditSummary {
   limitations: string[];
 }
 
+export type BrowserEngine = 'chromium' | 'firefox' | 'webkit';
+
 export interface AuditOptions {
+  preset: 'standard' | 'thorough' | 'debug';
   auditor: string;
   wcagLevel: WcagConformanceLevel;
   aaaAdvisory?: boolean;
   outputDir: string;
   landingPageUrl?: string;
   allowedHosts: string[];
+  exactHosts: string[];
+  maxPages?: number;
   stagingOnly: boolean;
   headless: boolean;
+  browserEngine: BrowserEngine;
   autoInstallBrowser: boolean;
+  storageState?: string;
   channel?: string;
   executablePath?: string;
   timeoutMs: number;

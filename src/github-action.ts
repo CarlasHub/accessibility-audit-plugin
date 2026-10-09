@@ -1,11 +1,12 @@
 import { appendFile, readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { resolveOptions, type AuditConfigInput } from './config.js';
-import type { AuditJourneyDefinition, AuditProgressEvent, Finding, Severity } from './types.js';
+import type { AuditComparison, AuditHistory, AuditJourneyDefinition, AuditProgressEvent, BrowserEngine, Finding, Severity } from './types.js';
 import { executeAudit, type AuditRunResult } from './service.js';
-import { splitUrlListValue } from './urls.js';
+import { normalizeExplicitUrlEntries, splitUrlListValue } from './urls.js';
+import { redactAuditProgressEvent, toActionableAuditError } from './errors.js';
 
-export const FAILURE_POLICIES = ['none', 'blockers', 'confirmed', 'critical', 'serious', 'moderate', 'minor'] as const;
+export const FAILURE_POLICIES = ['none', 'new', 'blockers', 'confirmed', 'critical', 'serious', 'moderate', 'minor'] as const;
 export type FailurePolicy = (typeof FAILURE_POLICIES)[number];
 
 interface ActionEnvironment {
@@ -14,6 +15,42 @@ interface ActionEnvironment {
 
 interface StoredAuditSummary {
   findings?: Array<Pick<Finding, 'classification' | 'severity'>>;
+  comparison?: Pick<
+    AuditComparison,
+    | 'coverage'
+    | 'newFindings'
+    | 'unchangedFindings'
+    | 'resolvedFindings'
+    | 'indeterminateCurrentFindings'
+    | 'unobservedBaselineFindings'
+  >;
+  history?: AuditHistory;
+}
+
+function markdownText(value: string): string {
+  return value.replace(/[\\`*_[\]<>|]/g, '\\$&');
+}
+
+function historyMarkdown(history: AuditHistory | undefined): string[] {
+  if (!history) return [];
+  const current = history.points.at(-1);
+  const change = current?.comparisonToPrevious;
+  if (!current || !change) return [];
+  return [
+    '',
+    '### Latest history trend',
+    '',
+    `Compared with ${markdownText(history.points.at(-2)?.source ?? 'the previous audit')} (${change.coverage} scope coverage):`,
+    '',
+    '| Change | Count |',
+    '| --- | ---: |',
+    `| New findings | ${change.newCount} |`,
+    `| Persistent findings | ${change.unchangedCount} |`,
+    `| Resolved findings | ${change.resolvedCount} |`,
+    ...(change.coverage === 'partial'
+      ? ['', `${change.indeterminateCurrentCount} current and ${change.unobservedPreviousCount} previous finding${change.unobservedPreviousCount === 1 ? '' : 's'} remain indeterminate outside equivalent scope.`]
+      : [])
+  ];
 }
 
 export interface GateEvaluation {
@@ -42,15 +79,8 @@ function writeWorkflowAnnotation(level: 'error' | 'notice' | 'warning', title: s
 export function parseListInput(value: string, allowCommas = false): string[] {
   const trimmed = value.trim();
   if (!trimmed) return [];
-  if (trimmed.startsWith('[')) {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== 'string')) {
-      throw new Error('List inputs using JSON must contain only strings.');
-    }
-    return parsed.flatMap((item) => splitUrlListValue(item));
-  }
-  const separator = allowCommas ? /[\r\n,]+/ : /[\r\n]+/;
-  return trimmed.split(separator).flatMap((item) => splitUrlListValue(item));
+  if (!allowCommas || trimmed.startsWith('[')) return splitUrlListValue(trimmed);
+  return trimmed.split(/[\r\n,]+/).flatMap((item) => splitUrlListValue(item));
 }
 
 export function resolveAllowedHosts(inputs: string[], configuredHosts: string[]): string[] {
@@ -95,6 +125,15 @@ export function parseWcagLevel(value: string): 'AA' | 'AAA' {
   return normalized;
 }
 
+export function parseBrowserEngine(value: string): BrowserEngine {
+  const normalized = value.trim().toLowerCase() || 'chromium';
+  if (normalized === 'chromium' || normalized === 'firefox' || normalized === 'webkit') {
+    return normalized;
+  }
+
+  throw new Error('browser must be one of: chromium, firefox, webkit.');
+}
+
 export function parsePositiveInteger(value: string, fallback: number, name: string, maximum?: number): number {
   if (!value.trim()) return fallback;
   const parsed = Number(value);
@@ -106,6 +145,13 @@ export function parsePositiveInteger(value: string, fallback: number, name: stri
 export function parseJourneysInput(value: string): AuditJourneyDefinition[] {
   if (!value.trim()) return [];
   const parsed: unknown = JSON.parse(value);
+  if (
+    parsed
+    && typeof parsed === 'object'
+    && (parsed as Record<string, unknown>).kind === 'accessibility-audit-journey-draft'
+  ) {
+    throw new Error('Journey drafts are non-runnable and cannot be used as the Action journeys input. Approve the draft before using it in an audit.');
+  }
   const journeys = Array.isArray(parsed)
     ? parsed
     : parsed && typeof parsed === 'object' && 'journeys' in parsed
@@ -117,8 +163,17 @@ export function parseJourneysInput(value: string): AuditJourneyDefinition[] {
   return resolveOptions({ journeys: journeys as AuditConfigInput['journeys'] }).journeys;
 }
 
-export function evaluateGate(policy: FailurePolicy, findings: StoredAuditSummary['findings'] = []): GateEvaluation {
+export function evaluateGate(
+  policy: FailurePolicy,
+  findings: StoredAuditSummary['findings'] = [],
+  comparison?: Pick<AuditComparison, 'newFindings'>
+): GateEvaluation {
   if (policy === 'none') return { policy, failed: false, matchedCount: 0, label: 'Informational only' };
+
+  if (policy === 'new') {
+    const matchedCount = comparison?.newFindings.length ?? 0;
+    return { policy, failed: matchedCount > 0, matchedCount, label: 'New findings since baseline' };
+  }
 
   if (policy === 'blockers') {
     const matchedCount = findings.filter((finding) => finding.classification === 'blocker').length;
@@ -152,6 +207,10 @@ function resolveOutputDirectory(environment: ActionEnvironment, value: string): 
   return resolve(environment.GITHUB_WORKSPACE || process.cwd(), requested);
 }
 
+function resolveWorkspacePath(environment: ActionEnvironment, value: string): string {
+  return isAbsolute(value) ? resolve(value) : resolve(environment.GITHUB_WORKSPACE || process.cwd(), value);
+}
+
 async function loadActionJourneys(environment: ActionEnvironment): Promise<AuditJourneyDefinition[]> {
   const inline = getInput(environment, 'JOURNEYS');
   const file = getInput(environment, 'JOURNEYS-FILE');
@@ -162,8 +221,10 @@ async function loadActionJourneys(environment: ActionEnvironment): Promise<Audit
   try {
     return parseJourneysInput(await readFile(path, 'utf8'));
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not load journeys-file ${file}: ${message}`);
+    const message = toActionableAuditError(error).message;
+    // Put the actionable cause before the source path. Default error rendering
+    // intentionally collapses an absolute path and anything after it.
+    throw new Error(`Could not load journeys-file: ${message} Source: ${file}`);
   }
 }
 
@@ -175,9 +236,10 @@ async function setOutput(environment: ActionEnvironment, name: string, value: st
   await appendFile(outputFile, `${name}=${normalized}\n`, 'utf8');
 }
 
-function formatProgress(event: AuditProgressEvent): string {
-  const count = event.current !== undefined && event.total !== undefined ? ` (${event.current}/${event.total})` : '';
-  return `[accessibility-audit:${event.phase}]${count} ${event.message}`;
+export function formatProgress(event: AuditProgressEvent): string {
+  const safeEvent = redactAuditProgressEvent(event);
+  const count = safeEvent.current !== undefined && safeEvent.total !== undefined ? ` (${safeEvent.current}/${safeEvent.total})` : '';
+  return `[accessibility-audit:${safeEvent.phase}]${count} ${safeEvent.message}`;
 }
 
 function runUrl(environment: ActionEnvironment): string | undefined {
@@ -187,7 +249,34 @@ function runUrl(environment: ActionEnvironment): string | undefined {
   return `${environment.GITHUB_SERVER_URL || 'https://github.com'}/${repository}/actions/runs/${runId}`;
 }
 
-function reportMarkdown(result: AuditRunResult, gate: GateEvaluation, environment: ActionEnvironment): string {
+function comparisonMarkdown(comparison: StoredAuditSummary['comparison']): string[] {
+  if (!comparison) return [];
+  const currentIndeterminate = comparison.indeterminateCurrentFindings.length;
+  const baselineIndeterminate = comparison.unobservedBaselineFindings.length;
+  const coverage = comparison.coverage === 'complete'
+    ? 'Comparison coverage is complete for the equivalent requested URL and viewport scope.'
+    : `Comparison coverage is partial. ${currentIndeterminate} current finding${currentIndeterminate === 1 ? '' : 's'} and ${baselineIndeterminate} baseline finding${baselineIndeterminate === 1 ? '' : 's'} remain indeterminate because their scope was not equivalently observed.`;
+  return [
+    '',
+    '### Changes since baseline',
+    '',
+    '| Comparison | Count |',
+    '| --- | ---: |',
+    `| New findings | ${comparison.newFindings.length} |`,
+    `| Persistent findings | ${comparison.unchangedFindings.length} |`,
+    `| Resolved findings | ${comparison.resolvedFindings.length} |`,
+    '',
+    `${coverage} Persistent findings have the same stable fingerprint in both audits.`
+  ];
+}
+
+function reportMarkdown(
+  result: AuditRunResult,
+  gate: GateEvaluation,
+  environment: ActionEnvironment,
+  comparison?: StoredAuditSummary['comparison'],
+  history?: AuditHistory
+): string {
   const gateResult = gate.policy === 'none' ? 'Not evaluated' : gate.failed ? 'Failed' : 'Passed';
   const workflowRun = runUrl(environment);
   return [
@@ -205,10 +294,12 @@ function reportMarkdown(result: AuditRunResult, gate: GateEvaluation, environmen
     `| Review findings | ${result.reviewCount} |`,
     `| Audit blockers | ${result.blockerCount} |`,
     `| Manual checks | ${result.manualCheckCount} |`,
+    ...comparisonMarkdown(comparison),
+    ...historyMarkdown(history),
     '',
     `**Policy:** ${gate.label}  `,
     `**Gate result:** ${gateResult}`,
-    ...(workflowRun ? ['', `[Open the workflow run](${workflowRun}) to download the accessible HTML report, Excel workbook, JSON, screenshots, and ZIP evidence.`] : []),
+    ...(workflowRun ? ['', `[Open the workflow run](${workflowRun}) to download the accessible HTML report, Excel workbook, JSON, CSV, SARIF, screenshots, and ZIP evidence.`] : []),
     '',
     '_Automated results are evidence, not a declaration of WCAG conformance; complete the listed manual checks._'
   ].join('\n');
@@ -272,21 +363,29 @@ async function upsertPullRequestComment(environment: ActionEnvironment, token: s
   return true;
 }
 
-async function readStoredFindings(jsonPath: string): Promise<StoredAuditSummary['findings']> {
-  const stored = JSON.parse(await readFile(jsonPath, 'utf8')) as StoredAuditSummary;
-  return stored.findings ?? [];
+async function readStoredSummary(jsonPath: string): Promise<StoredAuditSummary> {
+  return JSON.parse(await readFile(jsonPath, 'utf8')) as StoredAuditSummary;
 }
 
 export async function runGitHubAction(
   environment: ActionEnvironment = process.env,
   signal?: AbortSignal
 ): Promise<AuditRunResult> {
-  const inputs = parseListInput(getInput(environment, 'URLS'));
+  const inputs = normalizeExplicitUrlEntries(parseListInput(getInput(environment, 'URLS')));
   if (!inputs.length) throw new Error('The urls input must include at least one URL, with one URL per line.');
 
   const outputDir = resolveOutputDirectory(environment, getInput(environment, 'OUTPUT-DIR'));
   const allowedHosts = resolveAllowedHosts(inputs, parseListInput(getInput(environment, 'ALLOWED-HOSTS'), true));
+  const exactHosts = parseListInput(getInput(environment, 'EXACT-HOSTS'), true);
+  const maxPagesInput = getInput(environment, 'MAX-PAGES');
   const failurePolicy = parseFailurePolicy(getInput(environment, 'FAIL-ON'));
+  const baselineInput = getInput(environment, 'BASELINE-PATH');
+  if (failurePolicy === 'new' && !baselineInput) {
+    throw new Error('fail-on new requires baseline-path to identify regressions.');
+  }
+  const baselinePath = baselineInput ? resolveWorkspacePath(environment, baselineInput) : undefined;
+  const historyPaths = parseListInput(getInput(environment, 'HISTORY-PATHS'))
+    .map((historyPath) => resolveWorkspacePath(environment, historyPath));
   const journeys = await loadActionJourneys(environment);
   const templatePath = environment.GITHUB_ACTION_PATH
     ? resolve(environment.GITHUB_ACTION_PATH, 'assets', 'accessibility-report-template.xlsx')
@@ -294,6 +393,8 @@ export async function runGitHubAction(
   const result = await executeAudit({
     inputs,
     ...(getInput(environment, 'REPORT-NAME') ? { reportName: getInput(environment, 'REPORT-NAME') } : {}),
+    ...(baselinePath ? { baselinePath } : {}),
+    ...(historyPaths.length ? { historyPaths } : {}),
     options: {
       auditor: getInput(environment, 'AUDITOR') || 'GitHub Actions',
       wcagLevel: parseWcagLevel(getInput(environment, 'WCAG-LEVEL')),
@@ -301,9 +402,12 @@ export async function runGitHubAction(
       outputDir,
       ...(getInput(environment, 'LANDING-PAGE-URL') ? { landingPageUrl: getInput(environment, 'LANDING-PAGE-URL') } : {}),
       allowedHosts,
+      exactHosts,
+      ...(maxPagesInput ? { maxPages: parsePositiveInteger(maxPagesInput, 1, 'max-pages', 50_000) } : {}),
       stagingOnly: parseBooleanInput(getInput(environment, 'STAGING-ONLY'), false),
       headless: true,
       autoInstallBrowser: parseBooleanInput(getInput(environment, 'AUTO-INSTALL-BROWSER'), true),
+      browserEngine: parseBrowserEngine(getInput(environment, 'BROWSER')),
       timeoutMs: parsePositiveInteger(getInput(environment, 'TIMEOUT-MS'), 30_000, 'timeout-ms'),
       concurrency: parsePositiveInteger(getInput(environment, 'CONCURRENCY'), 2, 'concurrency', 8),
       captureScreenshots: parseBooleanInput(getInput(environment, 'CAPTURE-SCREENSHOTS'), true),
@@ -317,14 +421,16 @@ export async function runGitHubAction(
     }
   });
 
-  const findings = await readStoredFindings(result.jsonPath);
-  const gate = evaluateGate(failurePolicy, findings);
-  const markdown = reportMarkdown(result, gate, environment);
+  const stored = await readStoredSummary(result.jsonPath);
+  const gate = evaluateGate(failurePolicy, stored.findings, stored.comparison);
+  const markdown = reportMarkdown(result, gate, environment, stored.comparison, stored.history);
   for (const [name, value] of [
     ['output-dir', outputDir],
     ['report-path', result.reportPath],
     ['html-path', result.htmlPath],
     ['json-path', result.jsonPath],
+    ['csv-path', result.csvPath],
+    ['sarif-path', result.sarifPath],
     ['archive-path', result.archivePath],
     ['confirmed-findings', result.confirmedCount],
     ['review-findings', result.reviewCount],
@@ -348,7 +454,7 @@ export async function runGitHubAction(
       const commented = await upsertPullRequestComment(environment, token, markdown);
       if (commented) writeWorkflowAnnotation('notice', 'Accessibility audit', 'Updated the pull request with the audit summary.');
     } catch (error) {
-      writeWorkflowAnnotation('warning', 'Pull request comment skipped', error instanceof Error ? error.message : String(error));
+      writeWorkflowAnnotation('warning', 'Pull request comment skipped', toActionableAuditError(error).message);
     }
   } else if (shouldComment && environment.GITHUB_EVENT_NAME?.startsWith('pull_request')) {
     writeWorkflowAnnotation('warning', 'Pull request comment skipped', 'Pass github-token to enable the pull request summary.');
@@ -361,7 +467,7 @@ export async function runGitHubAction(
 }
 
 export function reportActionFailure(error: unknown): void {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = toActionableAuditError(error).message;
   writeWorkflowAnnotation('error', 'CarlasHub accessibility audit failed', message);
   process.exitCode = 1;
 }

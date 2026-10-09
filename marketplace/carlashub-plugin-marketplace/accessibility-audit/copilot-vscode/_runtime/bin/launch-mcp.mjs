@@ -1,10 +1,9 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { ensureInstalled, resolvePluginDataRoot, resolvePluginRoot } from '../lib/install.mjs';
+import { createSafeLogger } from '../lib/safe-log.mjs';
 
-function log(message) {
-  process.stderr.write(`[accessibility-audit] ${message}\n`);
-}
+const log = createSafeLogger();
 
 const pluginRoot = resolvePluginRoot();
 const dataRoot = resolvePluginDataRoot();
