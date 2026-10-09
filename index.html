@@ -14,8 +14,8 @@
     <meta name="twitter:card" content="summary_large_image" />
     <title>CarlasHub Accessibility Audit</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2315151a'/%3E%3Cpath d='M18 32l9 9 19-20' fill='none' stroke='%2393f6b2' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-    <script type="module" crossorigin src="./assets/index-CALPxL9Z.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-nCUt21L_.css">
+    <script type="module" crossorigin src="./assets/index-DEmesZrR.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-DBFDuqkP.css">
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to main content</a>
@@ -49,7 +49,7 @@
           />
           <p class="eyebrow">Open-source accessibility testing</p>
           <h1>Audit every page.<br /><em>Remove barriers before release.</em></h1>
-          <p class="lede">Add up to 20 public pages. Create a ready-to-run repository or add the audit to one you already own. Every run and report stays under your account.</p>
+          <p class="lede">Start with one website and choose from the unique pages we find, or enter up to 20 public pages yourself. Every audit run and report stays under your account.</p>
           <div class="trust-row" aria-label="Audit capabilities">
             <span>WCAG 2.2</span>
             <span>Keyboard</span>
@@ -80,21 +80,60 @@
             <form id="workflow-form" novalidate>
               <fieldset>
                 <legend>Pages to audit</legend>
-                <p id="url-hint" class="field-hint">Use complete public <code>https://</code> addresses. Add up to 20 pages for one combined audit.</p>
-                <div class="url-list" id="url-list">
-                  <div class="url-field">
-                    <label for="target-url-1">Page 1 URL</label>
-                    <div class="url-input-row">
-                      <input id="target-url-1" name="urls" type="url" value="https://example.com" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="url-hint" required />
-                      <button class="remove-url" type="button" aria-label="Remove page 1 URL" hidden>Remove</button>
+                <p id="page-mode-hint" class="field-hint">Choose the quickest way to build your audit list.</p>
+                <div class="page-mode-options" aria-describedby="page-mode-hint">
+                  <label class="page-mode-option">
+                    <input type="radio" name="page-mode" value="discover" checked />
+                    <span><strong>Discover pages from one URL</strong><small>We scan same-site links, remove duplicates, and let you choose pages from a checklist.</small></span>
+                  </label>
+                  <label class="page-mode-option">
+                    <input type="radio" name="page-mode" value="manual" />
+                    <span><strong>Enter page URLs myself</strong><small>Keep the original form and add up to 20 complete public page addresses.</small></span>
+                  </label>
+                </div>
+
+                <div class="page-mode-panel discovery-panel" id="discovery-panel">
+                  <label for="website-url">Website address</label>
+                  <p id="discovery-hint" class="field-hint">Enter one public <code>https://</code> address. We check unique HTML pages on the same website only. Job listings, category/tag/archive pages, utility pages, and query variants are found but left unchecked by default.</p>
+                  <div class="discovery-input-row">
+                    <input id="website-url" name="website-url" type="url" value="https://example.com" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="discovery-hint" required />
+                    <button class="secondary-button" id="discover-pages" type="button">Find pages</button>
+                  </div>
+                  <p id="discovery-status" class="discovery-status" role="status" aria-live="polite" aria-atomic="true"></p>
+                  <p id="discovery-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
+                  <section class="discovery-results" id="discovery-results" aria-labelledby="discovery-results-title" hidden>
+                    <div class="discovery-results-heading">
+                      <div>
+                        <h3 id="discovery-results-title">Choose pages to audit</h3>
+                        <p id="discovery-selection-hint">Only checked, unique URLs are added to the workflow. You can select up to 20 pages.</p>
+                      </div>
+                      <span id="discovery-count">0 of 20 selected</span>
+                    </div>
+                    <div class="discovery-selection-actions">
+                      <button class="text-button" id="select-recommended" type="button">Select recommended</button>
+                      <button class="text-button" id="clear-discovery-selection" type="button">Clear selection</button>
+                    </div>
+                    <div class="discovery-options" id="discovery-options" aria-describedby="discovery-selection-hint"></div>
+                  </section>
+                </div>
+
+                <div class="page-mode-panel manual-panel" id="manual-panel" hidden>
+                  <p id="url-hint" class="field-hint">Use complete public <code>https://</code> addresses. Add up to 20 pages for one combined audit.</p>
+                  <div class="url-list" id="url-list">
+                    <div class="url-field">
+                      <label for="target-url-1">Page 1 URL</label>
+                      <div class="url-input-row">
+                        <input id="target-url-1" name="urls" type="url" value="https://example.com" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="url-hint" required disabled />
+                        <button class="remove-url" type="button" aria-label="Remove page 1 URL" hidden>Remove</button>
+                      </div>
                     </div>
                   </div>
+                  <div class="list-controls">
+                    <button class="add-url" id="add-url" type="button"><span aria-hidden="true">＋</span> Add another page</button>
+                    <span id="url-count">1 of 20 pages</span>
+                  </div>
+                  <p id="url-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
                 </div>
-                <div class="list-controls">
-                  <button class="add-url" id="add-url" type="button"><span aria-hidden="true">＋</span> Add another page</button>
-                  <span id="url-count">1 of 20 pages</span>
-                </div>
-                <p id="url-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
               </fieldset>
               <fieldset class="destination-fieldset">
                 <legend>Where should the audit run?</legend>
@@ -129,7 +168,7 @@
               <p id="interaction-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
             </form>
 
-            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>This browser saves your page list, destination, and repository so they survive the GitHub setup step. The optional connector never runs audits or stores reports. All Actions usage, audit history, and reports belong to you—not CarlasHub.</span></p>
+            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>This browser saves your website address or manual page list, destination, and repository. Discovery temporarily checks public same-site pages and does not save its secure selection token. The connector never runs audits or stores reports. All Actions usage, history, and reports belong to you—not CarlasHub.</span></p>
             <p class="draft-note"><span id="saved-setup-status" role="status" aria-live="polite"></span><button class="text-button" id="clear-saved-setup" type="button">Clear saved setup</button></p>
           </div>
         </div>
@@ -242,7 +281,7 @@
           <p>Choose a new or existing repository, confirm the workflow on GitHub, then rerun it whenever your site changes.</p>
         </div>
         <ol class="steps">
-          <li><span aria-hidden="true">01</span><h3>Add your pages</h3><p>Enter one or several public pages that you are authorised to test.</p></li>
+          <li><span aria-hidden="true">01</span><h3>Choose your pages</h3><p>Discover unique same-site pages from one URL, or enter up to 20 public pages yourself.</p></li>
           <li><span aria-hidden="true">02</span><h3>Choose where it runs</h3><p>Create a repository from the template or add the prepared workflow to one you already use.</p></li>
           <li><span aria-hidden="true">03</span><h3>Run and review</h3><p>Start the Action and download one combined evidence pack for every page.</p></li>
         </ol>
