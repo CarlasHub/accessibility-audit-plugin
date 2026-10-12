@@ -12,7 +12,7 @@ The details below keep the Action's public identity accurate across the reposito
 - **Licence:** MIT
 - **Positioning:** An evidence-backed accessibility pre-audit for WCAG 2.2 A/AA; it does not certify conformance.
 - **Integration:** A JavaScript GitHub Action that tests explicit web pages and writes accessible HTML, validated Excel, structured JSON, screenshot, and ZIP evidence to a workflow run.
-- **Marketplace:** `https://github.com/marketplace/actions/carlashub-wcag-accessibility-audit`
+- **Marketplace:** `https://github.com/marketplace/actions/carlashub-accessibility-audit`
 - **Website:** `https://carlashub.github.io/accessibility-audit-plugin/`
 - **GitHub API use:** With an explicitly supplied `GITHUB_TOKEN`, it lists pull-request comments and creates or updates one marked audit summary through the GitHub REST API.
 - **Permissions:** `contents: read`; `pull-requests: write` only when comments are enabled.
