@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Create one GitHub Actions workflow that audits up to 20 public pages and produces review-ready WCAG 2.2 accessibility evidence." />
+    <meta name="description" content="Discover unique pages, choose up to 20, and start a GitHub Actions accessibility audit in your own repository." />
     <meta property="og:title" content="CarlasHub Accessibility Audit" />
-    <meta property="og:description" content="Add your pages, generate one workflow, and collect an evidence-rich accessibility report." />
+    <meta property="og:description" content="Discover pages, approve the exact audit scope, and start an evidence-rich accessibility audit in your own repository." />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="https://raw.githubusercontent.com/CarlasHub/accessibility-audit-plugin/main/.github/media/accessibility-audit-demo-poster.png" />
     <meta property="og:url" content="https://carlashub.github.io/accessibility-audit-plugin/" />
@@ -14,7 +14,7 @@
     <meta name="twitter:card" content="summary_large_image" />
     <title>CarlasHub Accessibility Audit</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2315151a'/%3E%3Cpath d='M18 32l9 9 19-20' fill='none' stroke='%2393f6b2' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-    <script type="module" crossorigin src="./assets/index-CSWTKDJM.js"></script>
+    <script type="module" crossorigin src="./assets/index-Cr16GK34.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-C4w-S4OS.css">
   </head>
   <body>
@@ -84,7 +84,7 @@
                 <div class="page-mode-options" aria-describedby="page-mode-hint">
                   <label class="page-mode-option">
                     <input type="radio" name="page-mode" value="discover" checked />
-                    <span><strong>Discover pages from one URL</strong><small>No sign-in needed. We scan same-site links, remove duplicates, and let you choose pages from a checklist.</small></span>
+                    <span><strong>Discover pages from one URL</strong><small>No sign-in needed. We scan exact-origin links, remove duplicates, and let you choose pages from a checklist.</small></span>
                   </label>
                   <label class="page-mode-option">
                     <input type="radio" name="page-mode" value="manual" />
@@ -94,7 +94,7 @@
 
                 <div class="page-mode-panel discovery-panel" id="discovery-panel">
                   <label for="website-url">Website address</label>
-                  <p id="discovery-hint" class="field-hint">Enter one public <code>https://</code> address and choose <strong>Find pages</strong>. No GitHub sign-in is needed. We check unique HTML pages on the same website only; job listings, category/tag/archive pages, utility pages, and query variants are found but left unchecked by default.</p>
+                  <p id="discovery-hint" class="field-hint">Enter one public <code>https://</code> address and choose <strong>Find pages</strong>. No GitHub sign-in is needed. We check unique HTML pages on the same exact origin only; job listings, category/tag/archive pages, utility pages, and query variants are found but left unchecked by default.</p>
                   <div class="discovery-input-row">
                     <input id="website-url" name="website-url" type="url" value="https://example.com" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="discovery-hint" required />
                     <button class="secondary-button" id="discover-pages" type="button">Find pages</button>
@@ -169,7 +169,7 @@
               <p id="interaction-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
             </form>
 
-            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>This browser saves your website address or manual page list, destination, and repository. Discovery temporarily checks public same-site pages and does not save its secure selection token. The connector never runs audits or stores reports. All Actions usage, history, and reports belong to you—not CarlasHub.</span></p>
+            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>This browser saves your website address or manual page list, destination, and repository. Discovery temporarily checks public pages on the starting URL's exact origin and does not save its secure selection token. The connector never runs audits or stores reports. All Actions usage, history, and reports belong to you—not CarlasHub.</span></p>
             <p class="draft-note"><span id="saved-setup-status" role="status" aria-live="polite"></span><button class="text-button" id="clear-saved-setup" type="button">Clear saved setup</button></p>
           </div>
         </div>
@@ -279,12 +279,12 @@
         <div class="section-heading">
           <p class="eyebrow"><span aria-hidden="true"></span> A shorter setup</p>
           <h2>From a page list to useful evidence.</h2>
-          <p>Choose a new or existing repository, confirm the workflow on GitHub, then rerun it whenever your site changes.</p>
+          <p>Approve the exact pages, choose a repository, and let the builder save and start the managed workflow for you.</p>
         </div>
         <ol class="steps">
-          <li><span aria-hidden="true">01</span><h3>Choose your pages</h3><p>Discover unique same-site pages from one URL, or enter up to 20 public pages yourself.</p></li>
-          <li><span aria-hidden="true">02</span><h3>Choose where it runs</h3><p>Create a repository from the template or add the prepared workflow to one you already use.</p></li>
-          <li><span aria-hidden="true">03</span><h3>Run and review</h3><p>Start the Action and download one combined evidence pack for every page.</p></li>
+          <li><span aria-hidden="true">01</span><h3>Choose your pages</h3><p>Discover unique exact-origin pages from one URL, or enter up to 20 public pages yourself.</p></li>
+          <li><span aria-hidden="true">02</span><h3>Choose where it runs</h3><p>Connect GitHub and select a repository you control, or create a starter repository first.</p></li>
+          <li><span aria-hidden="true">03</span><h3>Run and review</h3><p>The builder starts the Action immediately; download one combined evidence pack when it finishes.</p></li>
         </ol>
       </section>
 
@@ -329,7 +329,7 @@
     <footer>
       <div class="footer-copy">
         <p>Built by <a href="https://github.com/CarlasHub">CarlasHub</a> for more trustworthy accessibility work.</p>
-        <p><a href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/SECURITY.md">Security</a> · <a href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/TERMS.md">Responsible use</a></p>
+        <p><a href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/docs/public-builder.md">Builder guide</a> · <a href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/PRIVACY.md">Privacy</a> · <a href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/SECURITY.md">Security</a> · <a href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/SUPPORT.md">Support</a> · <a href="https://github.com/CarlasHub/accessibility-audit-plugin/blob/main/TERMS.md">Responsible use</a></p>
       </div>
       <nav class="social-links" aria-label="Find Carla online">
         <a class="social-link" href="https://github.com/CarlasHub" aria-label="Carla's Hub on GitHub">
