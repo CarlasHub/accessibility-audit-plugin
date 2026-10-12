@@ -96,11 +96,11 @@ jobs:
         with:
           name: attested-release-${{ github.ref_name }}
           path: |
-            artifacts/*-${{ steps.metadata.outputs.version }}.zip
-            artifacts/*-${{ steps.metadata.outputs.version }}.zip.sha256
-            artifacts/*-${{ steps.metadata.outputs.version }}.tgz
-            artifacts/*-${{ steps.metadata.outputs.version }}.tgz.sha256
-            artifacts/*-${{ steps.metadata.outputs.version }}.cdx.json
-            artifacts/*-${{ steps.metadata.outputs.version }}.cdx.json.sha256
+            artifacts/*.zip
+            artifacts/*.zip.sha256
+            artifacts/*.tgz
+            artifacts/*.tgz.sha256
+            artifacts/*.cdx.json
+            artifacts/*.cdx.json.sha256
           if-no-files-found: error
           retention-days: 90
