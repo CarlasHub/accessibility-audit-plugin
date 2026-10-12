@@ -14,8 +14,8 @@
     <meta name="twitter:card" content="summary_large_image" />
     <title>CarlasHub Accessibility Audit</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2315151a'/%3E%3Cpath d='M18 32l9 9 19-20' fill='none' stroke='%2393f6b2' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-    <script type="module" crossorigin src="./assets/index-D2L8fdVZ.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-DBFDuqkP.css">
+    <script type="module" crossorigin src="./assets/index-CQTw56uj.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-C4w-S4OS.css">
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to main content</a>
@@ -137,21 +137,21 @@
               </fieldset>
               <fieldset class="destination-fieldset">
                 <legend>Where should the audit run?</legend>
-                <p id="destination-hint" class="field-hint">Choose a new audit repository or add one workflow to a repository you can edit.</p>
+                <p id="destination-hint" class="field-hint">Recommended: use a repository in your own GitHub account. It may be public or private; your selected pages are saved in its managed workflow and the first Action starts automatically.</p>
                 <div class="destination-options">
                   <label class="destination-option">
-                    <input type="radio" name="destination" value="new" checked />
-                    <span><strong>Create a new repository</strong><small>GitHub opens the free starter in a new tab. Return here afterward; your pages stay saved for the workflow step.</small></span>
+                    <input type="radio" name="destination" value="existing" checked />
+                    <span><strong>Run in my repository (recommended)</strong><small>Connect GitHub, choose a repository you control, and we add or update the selected pages and start the Action now.</small></span>
                   </label>
                   <label class="destination-option">
-                    <input type="radio" name="destination" value="existing" />
-                    <span><strong>Use an existing repository</strong><small>GitHub opens a prepared workflow with your selected pages already saved in it.</small></span>
+                    <input type="radio" name="destination" value="new" />
+                    <span><strong>Create a repository first</strong><small>GitHub opens the free starter. After creation, return here and choose it so we can add your selected pages and start the Action.</small></span>
                   </label>
                 </div>
-                <div class="repository-field" id="repository-field" hidden>
-                  <label for="repository-name">Existing GitHub repository</label>
-                  <input id="repository-name" name="repository" type="text" placeholder="owner/project" autocomplete="off" spellcheck="false" aria-describedby="repository-hint" disabled />
-                  <p id="repository-hint" class="field-hint">Choose a repository you have allowed the GitHub App to use, or paste <code>owner/project</code> for the manual fallback.</p>
+                <div class="repository-field" id="repository-field">
+                  <label for="repository-name">GitHub repository for this audit</label>
+                  <input id="repository-name" name="repository" type="text" placeholder="owner/project" autocomplete="off" spellcheck="false" aria-describedby="repository-hint" required />
+                  <p id="repository-hint" class="field-hint">Choose a public or private repository you control and have allowed the GitHub App to use. The shared Marketplace repository supplies the Action code; your own repository safely holds your workflow, runs, and reports.</p>
                   <div class="repository-picker-actions">
                     <button class="secondary-button" id="choose-repository" type="button" hidden>Choose from my GitHub repositories</button>
                     <a id="manage-repository-access" href="https://github.com/settings/installations" target="_blank" rel="noreferrer" hidden>Manage access <span aria-hidden="true">↗</span></a>
@@ -160,11 +160,12 @@
                 </div>
               </fieldset>
               <div class="form-actions">
-                <button class="primary-button build-button" id="launch-audit" type="submit">Create my audit repository <span aria-hidden="true">→</span></button>
+                <button class="primary-button build-button" id="launch-audit" type="submit">Connect GitHub and choose a repository <span aria-hidden="true">→</span></button>
                 <button class="secondary-button build-button" id="build-workflow" type="button">Preview or download the workflow</button>
               </div>
               <p class="launch-status" id="launch-status" role="status" aria-live="polite" aria-atomic="true"></p>
               <p class="field-error launch-error" id="launch-error" role="alert" aria-atomic="true" tabindex="-1" hidden></p>
+              <a class="launch-recovery" id="launch-recovery" href="https://github.com/" target="_blank" rel="noreferrer" hidden>Open GitHub Actions and run the saved workflow <span aria-hidden="true">↗</span></a>
               <p id="interaction-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
             </form>
 
@@ -220,7 +221,7 @@
         <div class="integration-grid">
           <article class="integration-card integration-card-featured">
             <div class="integration-topline"><h3>GitHub Actions</h3><span class="availability availability-live">Marketplace</span></div>
-            <p>Create your own audit repository from the ready template, or add a prepared workflow to an existing project. Runs and reports stay in your GitHub account.</p>
+            <p>Choose a repository in your own GitHub account. We save the selected pages into its managed workflow and start the first Action immediately; runs and reports stay with you.</p>
             <div class="integration-actions">
               <a class="integration-action" href="#audit-builder">Set up GitHub Actions <span aria-hidden="true">→</span></a>
               <a class="integration-action" href="https://github.com/marketplace/actions/carlashub-accessibility-audit">View on GitHub Marketplace <span aria-hidden="true">→</span></a>
