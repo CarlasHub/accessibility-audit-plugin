@@ -312,8 +312,8 @@ npm run test:marketplace
 The release-bundle command also writes a reproducible CycloneDX 1.6 production-dependency SBOM and SHA-256 files beside both versioned archives and stable `latest/download` aliases. An exact `v<package.json version>` tag runs the full release gate; a mismatched tag stops before packaging or attestation. A valid tag retains both filename forms as the `attested-release-<tag>` workflow artifact and records GitHub build-provenance and SBOM attestations for every release archive digest. It does not publish a GitHub release or upload public assets automatically; a repository owner still reviews and publishes them explicitly. The public release must include the stable archive aliases so the documented `releases/latest/download/...` installation links continue to work. After downloading a candidate, verify its checksum and repository-backed attestation before distribution:
 
 ```sh
-sha256sum --check accessibility-audit-agent-plugin-1.8.6.tgz.sha256
-gh attestation verify accessibility-audit-agent-plugin-1.8.6.tgz --repo CarlasHub/accessibility-audit-plugin
+sha256sum --check accessibility-audit-agent-plugin-1.8.7.tgz.sha256
+gh attestation verify accessibility-audit-agent-plugin-1.8.7.tgz --repo CarlasHub/accessibility-audit-plugin
 ```
 
 For local Copilot CLI verification, install the generated CLI payload directly:

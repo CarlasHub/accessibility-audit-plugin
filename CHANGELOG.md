@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.8.7 - 2026-10-12
+
+- Added stable release archive aliases and matching checksums so every documented `releases/latest/download/...` installation URL resolves to the same bytes as its versioned artifact.
+- Limited immutable release packaging to exact semantic-version tags, preventing the movable `v1` compatibility tag from starting an invalid release run.
+- Rebuilt all committed Marketplace payloads from the same release source so their embedded package, manifest checksum, public release archive, and attestations remain aligned.
+
 ## 1.8.6 - 2026-10-12
 
 - Fixed release SBOM attestation by adding a deterministic CycloneDX UUID serial number, preserving byte-for-byte reproducible artifacts while satisfying GitHub's SBOM attestation contract.
