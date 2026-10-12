@@ -24,12 +24,12 @@ Collect the following without including secrets or private page content:
 
 ## The public builder did not start the Action
 
-1. Confirm you chose **Run in my repository**, connected GitHub, and selected a writable repository shared with the CarlasHub GitHub App. Visitors authorize the maintained App; they do not create an App of their own.
+1. Confirm you chose **Use my repository (recommended)**, connected GitHub, selected a writable repository shared with the CarlasHub GitHub App, reviewed the setup, and chose **Start accessibility audit**. Visitors authorize the maintained App; they do not create an App of their own.
 2. Check whether `.github/workflows/accessibility-audit.yml` already contains a different workflow. The builder refuses to overwrite it.
 3. Open the selected repository and choose **Actions → Accessibility audit → Run workflow**. This is the manual recovery path if GitHub saved the workflow but did not accept the automatic dispatch.
 4. If GitHub Actions is disabled or requires approval under repository or organization policy, ask that repository's administrator to enable or approve it.
 
-The builder's discovery and connector are bounded shared services on a free plan. If a rate or service limit is reached, wait for the displayed retry period or use **Enter page URLs myself** with **Preview workflow** or **Download workflow**. Audits run in the selected repository and use that repository owner's GitHub Actions allowance. See the [public builder guide](docs/public-builder.md) for limits and the complete fallback flow.
+The builder's discovery and connector are bounded shared services on a free plan. If a rate or service limit is reached, wait for the displayed retry period or use **Enter page URLs myself** with **Preview or download the workflow instead**. Audits run in the selected repository and use that repository owner's GitHub Actions allowance. See the [public builder guide](docs/public-builder.md) for limits and the complete fallback flow.
 
 ## Discovered pages or checkboxes look wrong
 

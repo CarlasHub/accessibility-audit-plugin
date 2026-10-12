@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Simplified the public builder into an accessible four-step flow for adding pages, confirming the exact audit scope, choosing a repository, and reviewing before launch. Improved keyboard focus, live progress, native page-selection controls, responsive spacing, plain-language labels, and a final privacy, permissions, and cost explanation without removing discovery, manual entry, new-repository, connected launch, or workflow-download routes.
+
 ## 1.8.7 - 2026-10-12
 
 - Added stable release archive aliases and matching checksums so every documented `releases/latest/download/...` installation URL resolves to the same bytes as its versioned artifact.

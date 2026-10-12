@@ -14,8 +14,8 @@
     <meta name="twitter:card" content="summary_large_image" />
     <title>CarlasHub Accessibility Audit</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2315151a'/%3E%3Cpath d='M18 32l9 9 19-20' fill='none' stroke='%2393f6b2' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-    <script type="module" crossorigin src="./assets/index-Cr16GK34.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-C4w-S4OS.css">
+    <script type="module" crossorigin src="./assets/index-CiNt1TbL.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BRTaqiVs.css">
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to main content</a>
@@ -48,8 +48,8 @@
             height="64"
           />
           <p class="eyebrow">Open-source accessibility testing</p>
-          <h1>Audit every page.<br /><em>Remove barriers before release.</em></h1>
-          <p class="lede">Start with one website and choose from the unique pages we find, or enter up to 20 public pages yourself. Every audit run and report stays under your account.</p>
+          <h1>Audit the pages that matter.<br /><em>Remove barriers before release.</em></h1>
+          <p class="lede">Start with one website and choose from the unique pages we find, or enter up to 20 public pages yourself. GitHub Actions runs and reports stay in your repository; local plugin reports stay on your device.</p>
           <div class="trust-row" aria-label="Audit capabilities">
             <span>WCAG 2.2</span>
             <span>Keyboard</span>
@@ -64,7 +64,7 @@
               <p class="card-kicker">Create an audit</p>
               <span class="no-login">GitHub Actions</span>
             </div>
-            <h2 id="generator-title">Which pages do you want to audit?</h2>
+            <h2 id="generator-title">Set up your accessibility audit</h2>
 
             <div class="quest" aria-labelledby="quest-label">
               <div class="quest-heading">
@@ -77,99 +77,163 @@
               </div>
             </div>
 
+            <ol class="setup-steps" aria-label="Audit setup steps">
+              <li data-step-indicator="1" aria-current="step"><span>1</span><strong>Add pages</strong></li>
+              <li data-step-indicator="2"><span>2</span><strong>Choose pages</strong></li>
+              <li data-step-indicator="3"><span>3</span><strong>Repository</strong></li>
+              <li data-step-indicator="4"><span>4</span><strong>Review</strong></li>
+            </ol>
+
             <form id="workflow-form" novalidate>
-              <fieldset>
-                <legend>Pages to audit</legend>
-                <p id="page-mode-hint" class="field-hint">Choose the quickest way to build your audit list.</p>
-                <div class="page-mode-options" aria-describedby="page-mode-hint">
-                  <label class="page-mode-option">
-                    <input type="radio" name="page-mode" value="discover" checked />
-                    <span><strong>Discover pages from one URL</strong><small>No sign-in needed. We scan exact-origin links, remove duplicates, and let you choose pages from a checklist.</small></span>
-                  </label>
-                  <label class="page-mode-option">
-                    <input type="radio" name="page-mode" value="manual" />
-                    <span><strong>Enter page URLs myself</strong><small>Keep the original form and add up to 20 complete public page addresses.</small></span>
-                  </label>
+              <section class="setup-panel" data-setup-step="1" aria-labelledby="setup-step-1-title">
+                <div class="setup-panel-heading">
+                  <p class="step-kicker">Step 1 of 4</p>
+                  <h3 id="setup-step-1-title" tabindex="-1">Add pages</h3>
+                  <p>Let us find pages from one website, or add the exact pages yourself.</p>
                 </div>
-
-                <div class="page-mode-panel discovery-panel" id="discovery-panel">
-                  <label for="website-url">Website address</label>
-                  <p id="discovery-hint" class="field-hint">Enter one public <code>https://</code> address and choose <strong>Find pages</strong>. No GitHub sign-in is needed. We check unique HTML pages on the same exact origin only; job listings, category/tag/archive pages, utility pages, and query variants are found but left unchecked by default.</p>
-                  <div class="discovery-input-row">
-                    <input id="website-url" name="website-url" type="url" value="https://example.com" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="discovery-hint" required />
-                    <button class="secondary-button" id="discover-pages" type="button">Find pages</button>
+                <fieldset>
+                  <legend class="sr-only">How to add pages</legend>
+                  <p id="page-mode-hint" class="field-hint">Choose the quickest way to build your audit list.</p>
+                  <div class="page-mode-options" aria-describedby="page-mode-hint">
+                    <label class="page-mode-option">
+                      <input type="radio" name="page-mode" value="discover" checked />
+                      <span><strong>Find pages for me</strong><small>Start with one website. We remove duplicates and recommend useful pages.</small></span>
+                    </label>
+                    <label class="page-mode-option">
+                      <input type="radio" name="page-mode" value="manual" />
+                      <span><strong>Enter page URLs myself</strong><small>Add up to 20 complete public page addresses.</small></span>
+                    </label>
                   </div>
-                  <p id="discovery-status" class="discovery-status" role="status" aria-live="polite" aria-atomic="true"></p>
-                  <p id="discovery-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
-                  <section class="discovery-results" id="discovery-results" aria-labelledby="discovery-results-title" hidden>
-                    <div class="discovery-results-heading">
-                      <div>
-                        <h3 id="discovery-results-title">Choose pages to audit</h3>
-                        <p id="discovery-selection-hint">Only checked, unique URLs are added to the workflow. You can select up to 20 pages.</p>
-                      </div>
-                      <span id="discovery-count">0 of 20 selected</span>
-                    </div>
-                    <div class="discovery-selection-actions">
-                      <button class="text-button" id="select-recommended" type="button">Select recommended</button>
-                      <button class="text-button" id="clear-discovery-selection" type="button">Clear selection</button>
-                    </div>
-                    <div class="discovery-options" id="discovery-options" aria-describedby="discovery-selection-hint"></div>
-                  </section>
-                </div>
 
-                <div class="page-mode-panel manual-panel" id="manual-panel" hidden>
-                  <p id="url-hint" class="field-hint">Use complete public <code>https://</code> addresses. Add up to 20 pages for one combined audit.</p>
-                  <div class="url-list" id="url-list">
-                    <div class="url-field">
-                      <label for="target-url-1">Page 1 URL</label>
-                      <div class="url-input-row">
-                        <input id="target-url-1" name="urls" type="url" value="https://example.com" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="url-hint" required disabled />
-                        <button class="remove-url" type="button" aria-label="Remove page 1 URL" hidden>Remove</button>
+                  <div class="page-mode-panel discovery-panel" id="discovery-panel">
+                    <label for="website-url">Website address</label>
+                    <p id="discovery-hint" class="field-hint">Enter one public <code>https://</code> address. We check unique HTML pages on that exact website. Job, tag, category, archive, utility, and query pages stay unchecked by default.</p>
+                    <div class="discovery-input-row">
+                      <input id="website-url" name="website-url" type="url" value="https://example.com" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="discovery-hint" required />
+                      <button class="primary-button compact-button" id="discover-pages" type="button">Find pages <span aria-hidden="true">→</span></button>
+                    </div>
+                    <p id="discovery-status" class="discovery-status" role="status" aria-live="polite" aria-atomic="true"></p>
+                    <p id="discovery-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
+                  </div>
+
+                  <div class="page-mode-panel manual-panel" id="manual-panel" hidden>
+                    <p id="url-hint" class="field-hint">Use complete public <code>https://</code> addresses. Add up to 20 pages for one combined audit.</p>
+                    <div class="url-list" id="url-list">
+                      <div class="url-field">
+                        <label for="target-url-1">Page 1 URL</label>
+                        <div class="url-input-row">
+                          <input id="target-url-1" name="urls" type="url" value="https://example.com" inputmode="url" autocomplete="url" spellcheck="false" aria-describedby="url-hint" required disabled />
+                          <button class="remove-url" type="button" aria-label="Remove page 1 URL" hidden>Remove</button>
+                        </div>
                       </div>
                     </div>
+                    <div class="list-controls">
+                      <button class="add-url" id="add-url" type="button"><span aria-hidden="true">＋</span> Add another page</button>
+                      <span id="url-count">1 of 20 pages</span>
+                    </div>
+                    <p id="url-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
+                    <div class="step-actions step-actions-end">
+                      <button class="primary-button" id="review-manual-pages" type="button">Review page list <span aria-hidden="true">→</span></button>
+                    </div>
                   </div>
-                  <div class="list-controls">
-                    <button class="add-url" id="add-url" type="button"><span aria-hidden="true">＋</span> Add another page</button>
-                    <span id="url-count">1 of 20 pages</span>
+                </fieldset>
+              </section>
+
+              <section class="setup-panel" data-setup-step="2" aria-labelledby="setup-step-2-title" hidden>
+                <div class="setup-panel-heading">
+                  <p class="step-kicker">Step 2 of 4</p>
+                  <h3 id="setup-step-2-title" tabindex="-1">Choose pages</h3>
+                  <p>Only the checked, unique pages will be added to your audit.</p>
+                </div>
+                <section class="discovery-results" id="discovery-results" aria-labelledby="discovery-results-title" hidden>
+                  <div class="discovery-results-heading">
+                    <div>
+                      <h4 id="discovery-results-title">Pages we found</h4>
+                      <p id="discovery-selection-hint">Recommended pages are checked. Review the list and select up to 20 pages.</p>
+                    </div>
+                    <span id="discovery-count">0 of 20 selected</span>
                   </div>
-                  <p id="url-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
-                </div>
-              </fieldset>
-              <fieldset class="destination-fieldset">
-                <legend>Where should the audit run?</legend>
-                <p id="destination-hint" class="field-hint">Recommended: use a repository in your own GitHub account. It may be public or private; your selected pages are saved in its managed workflow and the first Action starts automatically.</p>
-                <div class="destination-options">
-                  <label class="destination-option">
-                    <input type="radio" name="destination" value="existing" checked />
-                    <span><strong>Run in my repository (recommended)</strong><small>Connect GitHub, choose a repository you control, and we add or update the selected pages and start the Action now.</small></span>
-                  </label>
-                  <label class="destination-option">
-                    <input type="radio" name="destination" value="new" />
-                    <span><strong>Create a repository first</strong><small>GitHub opens the free starter. After creation, return here and choose it so we can add your selected pages and start the Action.</small></span>
-                  </label>
-                </div>
-                <div class="repository-field" id="repository-field">
-                  <label for="repository-name">GitHub repository for this audit</label>
-                  <input id="repository-name" name="repository" type="text" placeholder="owner/project" autocomplete="off" spellcheck="false" aria-describedby="repository-hint" required />
-                  <p id="repository-hint" class="field-hint">Choose a public or private repository you control and have allowed the GitHub App to use. The shared Marketplace repository supplies the Action code; your own repository safely holds your workflow, runs, and reports.</p>
-                  <div class="repository-picker-actions">
-                    <button class="secondary-button" id="choose-repository" type="button" hidden>Choose from my GitHub repositories</button>
-                    <a id="manage-repository-access" href="https://github.com/settings/installations" target="_blank" rel="noreferrer" hidden>Manage access <span aria-hidden="true">↗</span></a>
+                  <div class="discovery-selection-actions">
+                    <button class="text-button" id="select-recommended" type="button">Select recommended</button>
+                    <button class="text-button" id="clear-discovery-selection" type="button">Clear selection</button>
                   </div>
-                  <p id="repository-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
+                  <div class="discovery-options" id="discovery-options" role="group" aria-labelledby="discovery-results-title" aria-describedby="discovery-selection-hint discovery-selection-error"></div>
+                  <p id="discovery-selection-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
+                </section>
+                <section class="manual-review" id="manual-review" aria-labelledby="manual-review-title" hidden>
+                  <h4 id="manual-review-title">Your page list</h4>
+                  <ul id="manual-review-list"></ul>
+                </section>
+                <div class="step-actions">
+                  <button class="secondary-button" id="back-to-pages" type="button"><span aria-hidden="true">←</span> Back</button>
+                  <button class="primary-button" id="continue-to-repository" type="button">Continue to repository <span aria-hidden="true">→</span></button>
                 </div>
-              </fieldset>
-              <div class="form-actions">
-                <button class="primary-button build-button" id="launch-audit" type="submit">Connect GitHub and choose a repository <span aria-hidden="true">→</span></button>
-                <button class="secondary-button build-button" id="build-workflow" type="button">Preview or download the workflow</button>
-              </div>
-              <p class="launch-status" id="launch-status" role="status" aria-live="polite" aria-atomic="true"></p>
-              <p class="field-error launch-error" id="launch-error" role="alert" aria-atomic="true" tabindex="-1" hidden></p>
-              <a class="launch-recovery" id="launch-recovery" href="https://github.com/" target="_blank" rel="noreferrer" hidden>Open GitHub Actions and run the saved workflow <span aria-hidden="true">↗</span></a>
+              </section>
+
+              <section class="setup-panel" data-setup-step="3" aria-labelledby="setup-step-3-title" hidden>
+                <div class="setup-panel-heading">
+                  <p class="step-kicker">Step 3 of 4</p>
+                  <h3 id="setup-step-3-title" tabindex="-1">Choose where the audit runs</h3>
+                  <p>Your own repository keeps your workflow, Action runs, and reports under your control.</p>
+                </div>
+                <fieldset class="destination-fieldset">
+                  <legend>Repository setup</legend>
+                  <p id="destination-hint" class="field-hint">Use a repository you control, or create a free starter repository first.</p>
+                  <div class="destination-options">
+                    <label class="destination-option">
+                      <input type="radio" name="destination" value="existing" checked />
+                      <span><strong>Use my repository (recommended)</strong><small>Choose a public or private repository and start the audit there.</small></span>
+                    </label>
+                    <label class="destination-option">
+                      <input type="radio" name="destination" value="new" />
+                      <span><strong>Create a repository first</strong><small>Open GitHub’s free starter, then return here to choose it.</small></span>
+                    </label>
+                  </div>
+                  <div class="repository-field" id="repository-field">
+                    <label for="repository-name">GitHub repository for this audit</label>
+                    <input id="repository-name" name="repository" type="text" placeholder="owner/project" autocomplete="off" spellcheck="false" aria-describedby="repository-hint" required />
+                    <p id="repository-hint" class="field-hint">Enter <code>owner/project</code>, or connect GitHub and choose from repositories you allowed the GitHub App to use.</p>
+                    <div class="repository-picker-actions">
+                      <button class="secondary-button" id="choose-repository" type="button" hidden>Choose from my repositories</button>
+                      <a id="manage-repository-access" href="https://github.com/settings/installations" target="_blank" rel="noreferrer" hidden>Manage access <span aria-hidden="true">↗</span></a>
+                    </div>
+                    <p id="repository-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
+                  </div>
+                </fieldset>
+                <div class="step-actions">
+                  <button class="secondary-button" id="back-to-selection" type="button"><span aria-hidden="true">←</span> Back</button>
+                  <button class="primary-button" id="continue-to-review" type="button">Review audit <span aria-hidden="true">→</span></button>
+                </div>
+              </section>
+
+              <section class="setup-panel" data-setup-step="4" aria-labelledby="setup-step-4-title" hidden>
+                <div class="setup-panel-heading">
+                  <p class="step-kicker">Step 4 of 4</p>
+                  <h3 id="setup-step-4-title" tabindex="-1">Review and start</h3>
+                  <p>Check the setup below. Nothing starts until you use the main button.</p>
+                </div>
+                <dl class="audit-summary">
+                  <div><dt>Pages</dt><dd><strong id="review-page-count">0 pages</strong><ul id="review-page-list"></ul></dd></div>
+                  <div><dt>Runs in</dt><dd id="review-repository">Your GitHub repository</dd></div>
+                  <div><dt>Starts</dt><dd id="review-start">After the next GitHub step</dd></div>
+                </dl>
+                <div class="step-actions step-actions-review">
+                  <button class="secondary-button" id="back-to-repository" type="button"><span aria-hidden="true">←</span> Back</button>
+                  <button class="primary-button build-button" id="launch-audit" type="submit">Start accessibility audit <span aria-hidden="true">→</span></button>
+                </div>
+                <button class="text-button workflow-fallback" id="build-workflow" type="button">Preview or download the workflow instead</button>
+                <p class="launch-status" id="launch-status" role="status" aria-live="polite" aria-atomic="true"></p>
+                <p class="field-error launch-error" id="launch-error" role="alert" aria-atomic="true" tabindex="-1" hidden></p>
+                <a class="launch-recovery" id="launch-recovery" href="https://github.com/" target="_blank" rel="noreferrer" hidden>Open GitHub Actions and run the saved workflow <span aria-hidden="true">↗</span></a>
+                <details class="setup-help">
+                  <summary>Privacy, permissions, and cost</summary>
+                  <p>This browser saves your website address or manual page list, destination, and repository. Discovery temporarily checks public pages on the starting URL’s exact origin and does not save its secure selection token.</p>
+                  <p>The connector configures the workflow but never runs audits or stores reports. GitHub Actions usage, history, and reports belong to the repository owner—not CarlasHub. Public-repository runs on GitHub-hosted runners are free; private-repository usage follows the owner’s GitHub plan and limits.</p>
+                </details>
+              </section>
               <p id="interaction-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
             </form>
 
-            <p class="privacy-note"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6z" /></svg><span>This browser saves your website address or manual page list, destination, and repository. Discovery temporarily checks public pages on the starting URL's exact origin and does not save its secure selection token. The connector never runs audits or stores reports. All Actions usage, history, and reports belong to you—not CarlasHub.</span></p>
             <p class="draft-note"><span id="saved-setup-status" role="status" aria-live="polite"></span><button class="text-button" id="clear-saved-setup" type="button">Clear saved setup</button></p>
           </div>
         </div>
@@ -284,7 +348,7 @@
         <ol class="steps">
           <li><span aria-hidden="true">01</span><h3>Choose your pages</h3><p>Discover unique exact-origin pages from one URL, or enter up to 20 public pages yourself.</p></li>
           <li><span aria-hidden="true">02</span><h3>Choose where it runs</h3><p>Connect GitHub and select a repository you control, or create a starter repository first.</p></li>
-          <li><span aria-hidden="true">03</span><h3>Run and review</h3><p>The builder starts the Action immediately; download one combined evidence pack when it finishes.</p></li>
+          <li><span aria-hidden="true">03</span><h3>Run and review</h3><p>Connected setup starts the Action immediately; the manual fallback gives you the workflow to add and run yourself.</p></li>
         </ol>
       </section>
 
