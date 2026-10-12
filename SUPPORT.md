@@ -1,6 +1,6 @@
 # Support
 
-Start with [Installation](docs/installation.md), then use the [plain-language user guide](docs/user-guide.md). They cover client setup, scope, running an audit, stopping safely, opening the portable output, reading findings, and completing manual checks.
+For the public GitHub setup flow, start with the [public builder guide](docs/public-builder.md). For local clients, start with [Installation](docs/installation.md), then use the [plain-language user guide](docs/user-guide.md). These guides cover setup, scope, running an audit, opening the portable output, reading findings, and completing manual checks.
 
 ## Before requesting help
 
@@ -21,6 +21,19 @@ Collect the following without including secrets or private page content:
 - Allow the one-time automatic Chromium installation, or install it explicitly with `npx playwright install chromium` when organisational policy blocks automatic downloads.
 - Check `allowedHosts`, `stagingOnly`, redirects, and authentication when pages are skipped.
 - Keep screenshot capture enabled and use a writable output directory when Evidence is empty.
+
+## The public builder did not start the Action
+
+1. Confirm you chose **Run in my repository**, connected GitHub, and selected a writable repository shared with the CarlasHub GitHub App. Visitors authorize the maintained App; they do not create an App of their own.
+2. Check whether `.github/workflows/accessibility-audit.yml` already contains a different workflow. The builder refuses to overwrite it.
+3. Open the selected repository and choose **Actions → Accessibility audit → Run workflow**. This is the manual recovery path if GitHub saved the workflow but did not accept the automatic dispatch.
+4. If GitHub Actions is disabled or requires approval under repository or organization policy, ask that repository's administrator to enable or approve it.
+
+The builder's discovery and connector are bounded shared services on a free plan. If a rate or service limit is reached, wait for the displayed retry period or use **Enter page URLs myself** with **Preview workflow** or **Download workflow**. Audits run in the selected repository and use that repository owner's GitHub Actions allowance. See the [public builder guide](docs/public-builder.md) for limits and the complete fallback flow.
+
+## Discovered pages or checkboxes look wrong
+
+Refresh the [live builder](https://carlashub.github.io/accessibility-audit-plugin/) instead of using an older downloaded copy. Discovery returns unique same-origin pages and shows a native checkbox for each candidate. Likely jobs, categories, tags, archives, utility pages, and query variants are intentionally left unchecked but remain selectable. When a page is outside the discovery boundary, add it through **Enter page URLs myself**.
 
 ## The plugin is installed but the command or MCP server is missing
 
@@ -53,7 +66,7 @@ The report uses relative links to keep the workbook small. Extract the complete 
 
 ## Fewer pages were tested than expected
 
-The plugin never crawls a site. It tests only explicit URLs resolved from the supplied arguments or page-list file. Check `Page Inventory`, `requestedUrls`, `auditedUrls`, and `skippedUrls`. The landing-page QA URL is report metadata and does not expand the scope.
+Guided discovery crawls only the supplied seed URL's exact origin to build a unique-page selection list; it does not audit every discovered page automatically. The audit tests only the URLs the user selected or supplied manually. Check `Page Inventory`, `requestedUrls`, `auditedUrls`, and `skippedUrls`. The landing-page QA URL is report metadata and does not expand the scope.
 
 ## A finding looks incorrect
 

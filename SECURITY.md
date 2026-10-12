@@ -16,6 +16,14 @@ The local plugin does not upload audit artifacts, ask for sign-in credentials, o
 
 For protected pages, an operator may explicitly provide the path to a local Playwright storage-state file containing an already-authorized session. Treat that file as a live secret: keep it outside source control and report directories, restrict access, use least privilege, and remove or revoke it after use. Never include its contents in a prompt or public report, and never publish an authenticated audit through GitHub Pages. See [Auditing authenticated pages safely](docs/authenticated-pages.md). Same-origin link checks reuse the Playwright context for access to authorized pages and skip known logout, delete, remove, unsubscribe, and download targets.
 
+## Public builder and connector
+
+The public builder discovers candidate pages before GitHub authorization and lets the user approve the exact URL list. Discovery accepts public HTTP or HTTPS HTML on the starting URL's exact origin, blocks local, private, reserved, and otherwise non-public network addresses on every request and redirect, and enforces page, request, depth, response-size, time, selection, and per-source rate limits. Signed discovery results expire after 15 minutes and automated repository setup accepts only URLs included in that result.
+
+The owner maintains one GitHub App; visitors authorize that App for selected repositories and do not create Apps of their own. OAuth state is signed and expires after ten minutes. GitHub access tokens remain server-side behind random opaque sessions that expire after one hour. The connector exposes only non-archived repositories the user can write and has shared with the App.
+
+Repository writes are limited to `.github/workflows/accessibility-audit.yml`. The connector generates the workflow itself, updates only output marked as managed by the builder, and refuses to replace a different file at that path. It does not run audits, receive reports, or accept arbitrary repository content from the browser. See the [public builder guide](docs/public-builder.md) for the complete operating boundary.
+
 ## Dependency and release checks
 
 Before release, run:

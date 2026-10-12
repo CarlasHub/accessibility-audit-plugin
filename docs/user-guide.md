@@ -29,16 +29,22 @@ Do not put passwords, session tokens, or other secrets in URLs, configuration fi
 
 ## Step 1: choose the scope
 
-The plugin is URL-list driven. It never assumes that one URL represents an entire site.
+The plugin supports two scope paths in form-capable clients:
+
+- **Guided discovery:** provide one seed URL, let the plugin discover unique pages on that exact origin, then choose the audit targets from a checkbox list.
+- **Manual scope:** provide the exact URL or URLs, pasted list, or page-list file to audit.
 
 | Intended scope | Input to provide |
 |---|---|
-| One page | One complete HTTP(S) URL |
+| One page | One complete HTTP(S) URL, then choose manual scope |
 | A short user journey | Each page URL in the journey |
 | Selected templates | At least one representative URL for each template, plus pages with meaningful component variations |
-| A complete known site | A complete, deduplicated canonical URL list in XLSX, CSV, TXT, JSON, or a local URL-set XML sitemap |
+| Explore an unfamiliar site | One representative seed URL, then guided discovery and checkbox selection |
+| A complete known site | Guided discovery plus an explicit selection, or a complete canonical URL list in XLSX, CSV, TXT, JSON, or a local URL-set XML sitemap |
 
-Include pages that expose distinct states or content, such as search results, no-results states, form pages, error pages, localized pages, and pages with unique navigation or widgets. A component that is absent from the supplied pages cannot be tested. Every run uses the fixed `supplied-pages-only` scope mode: link checks may validate destinations, but they never add linked pages as audit targets. The confirmation data and JSON results expose this mode, and the HTML and Excel reports state it in plain language.
+Guided discovery follows links only on the seed URL's exact origin, normalizes fragments and common tracking parameters, and returns one entry per unique page. Jobs, categories, tags, archives, search, utility, and query-variant pages remain visible but unchecked by default; select them when they are genuinely in scope. Discovery does not start the audit and never selects a page on the user's behalf beyond the clearly marked recommended defaults.
+
+Include pages that expose distinct states or content, such as search results, no-results states, form pages, error pages, localized pages, and pages with unique navigation or widgets. A component absent from the selected or supplied pages cannot be tested. After selection, every run uses the fixed `supplied-pages-only` audit mode: link checks may validate destinations, but they never add linked pages as audit targets. The confirmation data and JSON results expose this mode, and the HTML and Excel reports state it in plain language.
 
 The landing-page QA URL is only the main reference link shown in `Audit Summary`. Changing it does not add pages to the audit.
 
@@ -63,6 +69,8 @@ Open a project, then use the installed command:
 ```text
 /accessibility-audit https://preview.example.test/
 ```
+
+In a form-capable plugin client, choose **Discover pages from this URL** to see the unique-page checkbox list, or **Use only my supplied URL(s) or file** to audit that URL directly. Terminal and GitHub Action runs use manual scope.
 
 For selected pages:
 
@@ -95,6 +103,8 @@ Use the Accessibility Audit plugin to audit every URL in pages.xlsx.
 ```
 
 Codex should invoke the installed `run_accessibility_audit` tool and show the same confirmation fields. In Codex CLI, `/plugins` opens the plugin browser. Start a new session after installing or updating the plugin. The Codex IDE extension does not currently support plugins; use Codex CLI or another supported Codex/ChatGPT plugin surface.
+
+When discovery is used in a client without forms, the first response is `page-selection-required`. Choose URLs from its `discovery.candidates` and retry with those `selectedUrls` plus the returned `discoveryDigest`. The digest rejects stale or modified discovery selections.
 
 ### Terminal
 
@@ -150,8 +160,9 @@ Press Enter to accept a displayed default. Use `--yes` only in trusted automatio
 
 Before accepting, verify:
 
-- the resolved page count and preview are complete, and any exclusions are expected;
-- the listed hosts and supplied-pages-only no-crawl boundary match the intended scope;
+- for discovery, the exact-origin unique-page list is complete enough and every checked page is intended; lower-value generated page classes are unchecked unless deliberately selected;
+- the resolved selected or manual page count and preview are complete, and any exclusions are expected;
+- the listed hosts and final supplied-pages-only audit boundary match the intended scope;
 - the auditor name is correct;
 - the landing-page QA URL is the project’s main QA/staging reference;
 - the output directory, report filename, and bundled or custom template are appropriate;
@@ -159,7 +170,7 @@ Before accepting, verify:
 - `stagingOnly` is enabled only when every target uses a recognizable staging, QA, preview, test, or local hostname;
 - the host allowlist includes the intended hosts and nothing broader.
 
-Page-list files are resolved before this consent step, and the landing page defaults to their first resolved URL. Interactive confirmation audits that approved in-memory page snapshot even if the source file changes afterward. If a client cannot display the confirmation form, the tool returns the same structured summary and a `confirmationDigest` so the agent can show it in chat and ask once before retrying with `confirmed: true` and that digest. A retry without that digest remains `confirmation-required` and cannot start the audit. The digest covers the resolved page snapshot and all effective settings, including the report name and template path. If any of them changed, the tool returns `confirmation-stale` and requires review of the updated summary instead of starting the audit.
+Page selection or page-list resolution happens before this consent step, and the landing page defaults to the first selected or resolved URL. Interactive confirmation audits that approved in-memory page snapshot even if the source file changes afterward. If a client cannot display the confirmation form, the tool returns the same structured summary and a `confirmationDigest` so the agent can show it in chat and ask once before retrying with `confirmed: true` and that digest. A retry without that digest remains `confirmation-required` and cannot start the audit. The digest covers the resolved page snapshot and all effective settings, including the report name and template path. If any of them changed, the tool returns `confirmation-stale` and requires review of the updated summary instead of starting the audit.
 
 ## Step 4: follow progress or stop safely
 
@@ -253,7 +264,7 @@ Use this triage sequence:
 
 ### “I supplied the home page, so the full site was tested.”
 
-No. Only supplied URLs are tested. Provide a complete page list for a complete known-site scope.
+Not automatically. Choose guided discovery, review its exact-origin unique-page list, and select the intended pages, or provide a complete page list manually. Only selected or manually supplied URLs are audited.
 
 ### “The automated audit found nothing, so the page passes WCAG.”
 

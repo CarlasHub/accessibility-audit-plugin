@@ -28,7 +28,7 @@ describe('user documentation', () => {
     ]);
 
     expect(readme).toContain('## Start here');
-    expect(readme).toContain('does not discover or crawl');
+    expect(readme).toContain('never audits a discovered page until you select it');
     expect(readme).toContain('Status = Open');
     expect(userGuide).toContain('## Step 1: choose the scope');
     expect(userGuide).toContain('Changing it does not add pages to the audit');

@@ -14,6 +14,7 @@ import {
   createAccessibilityAuditMcpServer,
   validationToolOutputContractSchema
 } from '../src/mcp.js';
+import type { PageDiscoveryResult } from '../src/page-discovery.js';
 import { PUBLIC_SURFACE_V1_8_4 } from './fixtures/public-surface-v1-8-4.js';
 
 const completedAuditResult = {
@@ -171,6 +172,45 @@ const actionableFailureResult = {
   nextAction: 'Retry the audit.'
 };
 
+const discoveredPagesResult = (): PageDiscoveryResult => ({
+  seedUrl: 'https://preview.example.test/',
+  origin: 'https://preview.example.test',
+  candidates: [
+    {
+      url: 'https://preview.example.test/',
+      title: 'Home',
+      category: 'content',
+      recommended: true
+    },
+    {
+      url: 'https://preview.example.test/about',
+      title: 'About',
+      category: 'content',
+      recommended: true
+    },
+    {
+      url: 'https://preview.example.test/jobs',
+      title: 'Jobs',
+      category: 'jobs',
+      recommended: false,
+      reason: 'Jobs or recruitment page; left unchecked by default.'
+    },
+    {
+      url: 'https://preview.example.test/category/news',
+      title: 'News',
+      category: 'taxonomy',
+      recommended: false,
+      reason: 'Category, tag, archive, filter, or paginated listing; left unchecked by default.'
+    }
+  ],
+  fetchedPageCount: 4,
+  discoveryLimit: 200,
+  maxDepth: 5,
+  truncated: false,
+  errors: [],
+  discoveryDigest: 'd'.repeat(64)
+});
+
 async function requestConfirmationDigest(client: Client, arguments_: Record<string, unknown>): Promise<string> {
   const proposal = await client.callTool({
     name: 'run_accessibility_audit',
@@ -200,6 +240,197 @@ describe('MCP server', () => {
       });
       expect(response.isError).toBe(true);
       expect(JSON.stringify(response)).toContain('Invalid explicit URL list entry 2');
+      expect(executeAudit).not.toHaveBeenCalled();
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it('guides the user from one seed URL through discovery, page selection, and final confirmation', async () => {
+    const discoverPages = vi.fn(async () => discoveredPagesResult());
+    let receivedInputs: string[] = [];
+    const executeAudit = vi.fn(async (request) => {
+      receivedInputs = [...request.inputs];
+      return completedAuditResult;
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createAccessibilityAuditMcpServer({ discoverPages, executeAudit });
+    const client = new Client(
+      { name: 'discovery-form-client', version: '1.0.0' },
+      { capabilities: { elicitation: { form: {} } } }
+    );
+    const formMessages: string[] = [];
+    let pageDefaults: unknown;
+    client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      formMessages.push(request.params.message);
+      if (!('requestedSchema' in request.params)) throw new Error('Expected a form elicitation request.');
+      const properties = request.params.requestedSchema.properties;
+      if (properties?.selectionMode) {
+        expect(properties.selectionMode).toEqual(expect.objectContaining({
+          enum: ['discover', 'manual'],
+          enumNames: ['Discover pages from this URL', 'Use only my supplied URL(s) or file']
+        }));
+        return { action: 'accept', content: { selectionMode: 'discover' } };
+      }
+      if (properties?.selectedUrls) {
+        pageDefaults = properties.selectedUrls.default;
+        return {
+          action: 'accept',
+          content: { selectedUrls: ['https://preview.example.test/', 'https://preview.example.test/about'] }
+        };
+      }
+      return {
+        action: 'accept',
+        content: { auditor: 'Discovery Auditor', landingPageUrl: 'https://preview.example.test/', confirm: true }
+      };
+    });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const response = await client.callTool({
+        name: 'run_accessibility_audit',
+        arguments: { targets: ['https://preview.example.test/'] }
+      });
+      expect(response.structuredContent).toEqual(expect.objectContaining({ status: 'completed' }));
+      expect(pageDefaults).toEqual([
+        'https://preview.example.test/',
+        'https://preview.example.test/about'
+      ]);
+      expect(receivedInputs).toEqual([
+        'https://preview.example.test/',
+        'https://preview.example.test/about'
+      ]);
+      expect(discoverPages).toHaveBeenCalledWith('https://preview.example.test/', {
+        maxPages: 200,
+        maxDepth: 5,
+        timeoutMs: 30_000
+      });
+      expect(formMessages).toHaveLength(3);
+      expect(formMessages[1]).toContain('Jobs, categories, tags, archives');
+      expect(formMessages[1]).toContain('Only the unique pages you select');
+      expect(formMessages[2]).toContain('Pre-audit summary');
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it('does not create an invalid checkbox default when a redirect leaves only an unchecked candidate', async () => {
+    const redirectedDiscovery: PageDiscoveryResult = {
+      ...discoveredPagesResult(),
+      seedUrl: 'https://preview.example.test/',
+      candidates: [{
+        url: 'https://preview.example.test/jobs',
+        title: 'Jobs',
+        category: 'jobs',
+        recommended: false,
+        reason: 'Jobs or recruitment page; left unchecked by default.'
+      }],
+      fetchedPageCount: 1
+    };
+    const discoverPages = vi.fn(async () => redirectedDiscovery);
+    const executeAudit = vi.fn(async () => completedAuditResult);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createAccessibilityAuditMcpServer({ discoverPages, executeAudit });
+    const client = new Client(
+      { name: 'redirected-discovery-form-client', version: '1.0.0' },
+      { capabilities: { elicitation: { form: {} } } }
+    );
+    let pageDefaults: unknown = 'not-inspected';
+    let pageChoices: unknown;
+    client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      if (!('requestedSchema' in request.params)) throw new Error('Expected a form elicitation request.');
+      const properties = request.params.requestedSchema.properties;
+      if (properties?.selectionMode) return { action: 'accept', content: { selectionMode: 'discover' } };
+      if (properties?.selectedUrls) {
+        pageDefaults = properties.selectedUrls.default;
+        pageChoices = 'items' in properties.selectedUrls ? properties.selectedUrls.items : undefined;
+        return { action: 'accept', content: { selectedUrls: ['https://preview.example.test/jobs'] } };
+      }
+      return {
+        action: 'accept',
+        content: { auditor: 'Redirect Reviewer', landingPageUrl: 'https://preview.example.test/jobs', confirm: true }
+      };
+    });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const response = await client.callTool({
+        name: 'run_accessibility_audit',
+        arguments: { targets: ['https://preview.example.test/'] }
+      });
+      expect(response.structuredContent).toEqual(expect.objectContaining({ status: 'completed' }));
+      expect(pageDefaults).toBeUndefined();
+      expect(pageChoices).toEqual({
+        anyOf: [expect.objectContaining({ const: 'https://preview.example.test/jobs' })]
+      });
+      expect(executeAudit).toHaveBeenCalledWith(expect.objectContaining({
+        inputs: ['https://preview.example.test/jobs']
+      }));
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it('returns discoverable pages to clients without forms and rejects stale page selections', async () => {
+    const discoverPages = vi.fn(async () => discoveredPagesResult());
+    const executeAudit = vi.fn(async () => completedAuditResult);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createAccessibilityAuditMcpServer({ discoverPages, executeAudit });
+    const client = new Client({ name: 'discovery-no-form-client', version: '1.0.0' });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const discovery = await client.callTool({
+        name: 'run_accessibility_audit',
+        arguments: {
+          targets: ['https://preview.example.test/'],
+          selectionMode: 'discover'
+        }
+      });
+      expect(discovery.structuredContent).toEqual(expect.objectContaining({
+        status: 'page-selection-required',
+        auditStarted: false,
+        discovery: expect.objectContaining({
+          discoveryDigest: 'd'.repeat(64),
+          candidates: expect.arrayContaining([
+            expect.objectContaining({ url: 'https://preview.example.test/jobs', recommended: false })
+          ])
+        })
+      }));
+
+      const stale = await client.callTool({
+        name: 'run_accessibility_audit',
+        arguments: {
+          targets: ['https://preview.example.test/'],
+          selectionMode: 'discover',
+          selectedUrls: ['https://preview.example.test/about'],
+          discoveryDigest: 'e'.repeat(64)
+        }
+      });
+      expect(stale.structuredContent).toEqual(expect.objectContaining({
+        status: 'page-selection-stale',
+        auditStarted: false,
+        discovery: expect.objectContaining({ discoveryDigest: 'd'.repeat(64) })
+      }));
+
+      const selection = await client.callTool({
+        name: 'run_accessibility_audit',
+        arguments: {
+          targets: ['https://preview.example.test/'],
+          selectionMode: 'discover',
+          selectedUrls: ['https://preview.example.test/about'],
+          discoveryDigest: 'd'.repeat(64),
+          confirmed: true
+        }
+      });
+      expect(selection.structuredContent).toEqual(expect.objectContaining({
+        status: 'confirmation-required',
+        auditStarted: false,
+        proposedRun: expect.objectContaining({
+          targets: ['https://preview.example.test/about'],
+          pages: ['https://preview.example.test/about']
+        })
+      }));
       expect(executeAudit).not.toHaveBeenCalled();
     } finally {
       await client.close();
@@ -263,6 +494,9 @@ describe('MCP server', () => {
       );
       expect(response.tools.some((tool) => /guidepup/i.test(`${tool.name} ${tool.description}`))).toBe(false);
       expect(JSON.stringify(response.tools)).not.toContain('screenReader');
+      const auditPagesTool = response.tools.find((tool) => tool.name === 'audit_pages');
+      expect(auditPagesTool?.description).toMatch(/explicitly supplied URLs/i);
+      expect(auditPagesTool?.description).not.toMatch(/discover|selection/i);
       const inputKeys = (name: string): string[] => {
         const tool = response.tools.find((candidate) => candidate.name === name);
         if (!tool) throw new Error(`Missing MCP tool ${name}.`);
@@ -286,7 +520,7 @@ describe('MCP server', () => {
         expect(validateLegacyPayload(legacyPayload), `${name}: ${legacyInputValidator.errorsText(validateLegacyPayload.errors)}`).toBe(true);
       }
       const expectedOutputKeys: Record<string, string[]> = {
-        run_accessibility_audit: ['status', 'proposedRun', 'reportPath', 'validation', 'artifacts', 'error'],
+        run_accessibility_audit: ['status', 'proposedRun', 'discovery', 'reportPath', 'validation', 'artifacts', 'error'],
         get_audit_instructions: ['instructions', 'defaults', 'supportedInputs'],
         audit_pages: ['status', 'reportPath', 'validation', 'error'],
         audit_from_file: ['status', 'reportPath', 'validation', 'error'],
@@ -321,7 +555,7 @@ describe('MCP server', () => {
       const validationOutput = response.tools.find(
         (tool) => tool.name === 'validate_accessibility_report'
       )?.outputSchema as Record<string, unknown>;
-      expect(auditOutput.oneOf).toHaveLength(6);
+      expect(auditOutput.oneOf).toHaveLength(8);
       expect(validationOutput.anyOf).toHaveLength(3);
       const validatePublishedAuditOutput = new Ajv({
         strict: false,
@@ -812,7 +1046,7 @@ describe('MCP server', () => {
     }
   });
 
-  it('uses one accessible MCP form to confirm targets and edit the default auditor', async () => {
+  it('uses accessible MCP forms to choose manual URLs, confirm targets, and edit the default auditor', async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     let receivedAuditor = '';
     let receivedLandingPage = '';
@@ -839,6 +1073,9 @@ describe('MCP server', () => {
       const schema = request.params.requestedSchema as {
         properties?: Record<string, { default?: unknown }>;
       };
+      if (schema.properties?.selectionMode) {
+        return { action: 'accept', content: { selectionMode: 'manual' } };
+      }
       defaultLandingPage = String(schema.properties?.landingPageUrl?.default ?? '');
       return {
         action: 'accept',
@@ -1020,7 +1257,10 @@ describe('MCP server', () => {
       { name: 'auth-form-stale-client', version: '1.0.0' },
       { capabilities: { elicitation: { form: {} } } }
     );
-    client.setRequestHandler(ElicitRequestSchema, async () => {
+    client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      if ('requestedSchema' in request.params && request.params.requestedSchema.properties?.selectionMode) {
+        return { action: 'accept', content: { selectionMode: 'manual' } };
+      }
       await writeFile(statePath, JSON.stringify(state('changed-value')));
       return {
         action: 'accept',
@@ -1209,6 +1449,9 @@ describe('MCP server', () => {
       { capabilities: { elicitation: { form: {} } } }
     );
     client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      if ('requestedSchema' in request.params && request.params.requestedSchema.properties?.selectionMode) {
+        return { action: 'accept', content: { selectionMode: 'manual' } };
+      }
       confirmationMessage = request.params.message;
       return { action: 'accept', content: { auditor: 'Automated', confirm: false } };
     });

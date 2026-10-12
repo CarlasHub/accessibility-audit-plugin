@@ -81,13 +81,15 @@ A skills-only submission is not equivalent to the local plugin because this skil
 
 ## Suggested reviewer test cases
 
-1. Audit one non-sensitive public staging page and confirm the pre-run scope and auditor prompt.
-2. Audit two explicit pages and confirm that the plugin does not crawl beyond them.
-3. Generate and open the ZIP; verify all seven workbook sheets and relative evidence links.
-4. Confirm that review and manual records are not presented as proven failures or automated passes.
-5. Cancel a run once and confirm that valid partial JSON, XLSX, and ZIP outputs are preserved.
-6. Supply a disallowed host and confirm the request is rejected before browser testing.
-7. Confirm that credentials are redacted from logs and are absent from the workbook and JSON output.
+1. Give the plugin one non-sensitive public staging URL and confirm it offers guided discovery and manual scope.
+2. Choose discovery and confirm it lists unique exact-origin pages with jobs, categories, tags, archives, search, utility, and query variants unchecked by default.
+3. Select a subset and confirm the pre-run scope contains only those pages; then confirm the auditor prompt.
+4. In a separate run, choose manual scope and confirm two explicit pages remain the fixed audit boundary.
+5. Generate and open the ZIP; verify all seven workbook sheets and relative evidence links.
+6. Confirm that review and manual records are not presented as proven failures or automated passes.
+7. Cancel a run once and confirm that valid partial JSON, XLSX, and ZIP outputs are preserved.
+8. Supply a disallowed host and confirm the request is rejected before discovery or browser testing.
+9. Confirm that credentials are redacted from logs and are absent from the workbook and JSON output.
 
 Use synthetic or intentionally public test pages. Never attach private screenshots, cookies, authorization headers, or proprietary page content to a public submission.
 

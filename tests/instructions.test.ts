@@ -41,7 +41,7 @@ describe('embedded audit instructions', () => {
     expect(instructions).toContain('set every populated Findings row to Open');
     expect(instructions).toContain('populate Owner and Effort from the finding');
     expect(instructions).toContain('Explain the result in plain language');
-    expect(instructions).toContain('only supplied URLs were tested');
+    expect(instructions).toContain('only the user-selected or manually supplied unique URLs were tested');
     expect(instructions).toContain("Open workflow status from evidence confidence");
     expect(instructions).toContain('extract the ZIP');
   });

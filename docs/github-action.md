@@ -4,6 +4,14 @@
 
 It is an automated testing aid, not a WCAG certification. WCAG 2.2 Level AA is the conformance target; optional AAA checks are advisory. Complete the report's human assessment before making a conformance claim.
 
+## Easiest setup: public builder
+
+Open the [public Accessibility Audit builder](https://carlashub.github.io/accessibility-audit-plugin/), enter one website address, and review the unique same-origin pages it discovers. Likely job, category, tag, archive, utility, and query-variant pages remain visible but unchecked; the user selects the exact audit scope, up to 20 pages.
+
+Choose **Run in my repository**, connect GitHub, and select a writable repository shared with the maintained CarlasHub GitHub App. Visitors authorize the App and do not create an App of their own. The connector creates or updates only its managed `.github/workflows/accessibility-audit.yml` file and starts the Action immediately. A different workflow at the same path is never replaced. **Create a repository first**, manual URL entry, workflow preview, and download remain available as fallback routes.
+
+Discovery and auditing are separate: discovery proposes pages, while the Action audits exactly the selected URLs written into the workflow and never crawls. Read the [public builder guide](public-builder.md) for limits, permissions, data handling, free-plan boundaries, and recovery steps.
+
 ## Minimal workflow
 
 The shortest setup delegates the audit and report upload to the maintained reusable workflow. Add this as `.github/workflows/accessibility-audit.yml` in your project:

@@ -28,6 +28,8 @@ const packageJson = await readJson('package.json');
 const action = await read('action.yml');
 const readme = await read('README.md');
 const citation = await read('CITATION.cff');
+const command = await read('commands/accessibility-audit.md');
+const cursorCommand = await read('.cursor/commands/accessibility-audit.md');
 const publicTextPaths = [
   'README.md',
   'action.yml',
@@ -95,6 +97,7 @@ assert(citation.includes(`version: ${packageJson.version}`), 'CITATION.cff: vers
 assert(citation.includes(`repository-code: "${REPOSITORY}"`), 'CITATION.cff: repository URL is incorrect');
 assert(citation.includes(`url: "${HOMEPAGE}"`), 'CITATION.cff: homepage is incorrect');
 assert(includesPosition(citation), 'CITATION.cff: abstract must use the approved product position');
+assert(cursorCommand === command, '.cursor command must be byte-identical to commands/accessibility-audit.md');
 
 const staleClaims = [
   /Professional one-shot/i,

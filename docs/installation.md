@@ -171,9 +171,9 @@ Install it in Claude Desktop:
 4. Review the trust warning. The plugin runs a local MCP server and headless browser on this computer.
 5. Confirm that **Accessibility Audit** appears under personal plugins and is enabled.
 6. Start a new conversation in the **Chat** tab.
-7. Type `/`, select **Run Accessibility Audit**, add the URL or page-list path, and send the message.
+7. Type `/`, select **Run Accessibility Audit**, add one seed URL for guided discovery or a manual URL/page-list path, and send the message.
 
-The plugin asks for the exact scope, auditor, and landing-page QA URL before starting. The editable auditor default is `Automated`. It writes results under `Accessibility Audit Results` in the user's home directory unless another output directory is confirmed.
+With one direct URL, the plugin first asks whether to discover pages or use manual scope. Discovery stays on the exact origin and lets the user select unique pages; jobs, categories, tags, archives, search, utility, and query variants are unchecked by default. It then asks for the exact final scope, auditor, and landing-page QA URL before starting. The editable auditor default is `Automated`. It writes results under `Accessibility Audit Results` in the user's home directory unless another output directory is confirmed.
 
 The plugin must be used from Claude Desktop on the computer where it is installed because its MCP server is local. It is not available from `claude.ai` on another computer. Hooks do not run in Chat, but the MCP launcher independently verifies and installs the bundled runtime before starting. An organisation administrator can disable custom plugins or local MCP servers.
 
@@ -238,19 +238,20 @@ The ready-made `copilot-vscode` ZIP follows the marketplace’s VS Code harness 
 1. Reload VS Code if the marketplace UI requests it.
 2. Confirm that `accessibility-audit-vscode` is enabled.
 3. Confirm that the `accessibility-audit` MCP server and `run-accessibility-audit` skill are available.
-4. Open any project and request an audit of explicit URLs or a page-list file.
+4. Open any project and request guided discovery from one URL, or an audit of explicit URLs or a page-list file.
 
 Local source installation is not presented as equivalent proof of the marketplace harness. Use `npm run test:marketplace` to verify the packaged MCP runtime and follow [Marketplace submission](marketplace-submission.md) for the eventual repository submission.
 
 ## 4. Run against a different project
 
-No plugin files need to be copied into the target project. Open or start the client in that project, then supply the page scope explicitly:
+No plugin files need to be copied into the target project. Open or start the client in that project, then choose a scope path:
 
-- one page: `/accessibility-audit https://preview.example.test/`;
+- guided discovery: `/accessibility-audit https://preview.example.test/`, then choose discovery and select pages;
+- one manual page: use the same command, then choose manual scope;
 - selected pages: `/accessibility-audit https://preview.example.test/ https://preview.example.test/jobs`;
 - every URL in a prepared list: `/accessibility-audit /absolute/path/to/pages.xlsx`.
 
-The plugin tests only the URLs supplied. It does not crawl a complete site from its home page. The confirmation step lets the user change the auditor name from the default `Automated` and verify the landing-page QA URL before the browser starts.
+Discovery lists unique pages from the seed URL's exact origin but audits only the user's checked pages. Manual scope audits only the supplied URLs. The confirmation step lets the user verify that final fixed scope, change the auditor name from the default `Automated`, and verify the landing-page QA URL before the browser starts.
 
 ## 5. Update an installation
 

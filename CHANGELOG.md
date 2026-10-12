@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added bounded same-origin page discovery to the public builder, with deduplicated candidate checkboxes, conservative content-page defaults, clear page-type exclusions, a 20-page approval limit, and the original manual URL route retained.
+- Added connected repository setup through the maintained CarlasHub GitHub App: the builder writes only its managed workflow, refuses unrelated replacements, starts the Action immediately, and keeps audits, artifacts, and Actions usage in the visitor's repository. Synchronized the public guide, Marketplace README, privacy, security, terms, and support guidance with the deployed flow and its free-plan fallback.
+
+- Added guided exact-origin page discovery for form-capable plugin clients. A single seed URL now opens a two-option scope form, deduplicates discovered pages, leaves generated or lower-value page classes unchecked by default, and audits only the user's selected unique URLs. Existing manual URL and page-list workflows remain available.
+
 - Added reproducible CycloneDX 1.6 release SBOMs, versioned archive checksums, tag-only GitHub build-provenance and SBOM attestations, least-privilege release permissions, independent supply-chain contract coverage, and production dependency updates for newly disclosed advisories without changing plugin behavior.
 
 - Added explicitly opt-in GitHub Pages report hosting to the reusable workflow, with a direct `hosted-report-url`, public-data warnings, immutable Action pins, skipped-by-default deployment, and Pages write permissions confined to the publishing job while local/private behavior remains the default.

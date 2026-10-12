@@ -14,7 +14,7 @@ Maintained by CarlasHub and released under the MIT License.
 
 [Open the public installation and workflow builder](https://carlashub.github.io/accessibility-audit-plugin/) to use the GitHub Action or choose the verified installation path for Claude Desktop, Claude Code, Cursor, Codex CLI, and GitHub Copilot.
 
-The public builder keeps audit ownership with the user. Choose **Create a new repository** to open the prefilled GitHub template, or **Use an existing repository** to select an App-authorised repository and start its workflow. Every audit run, report, and GitHub Actions usage record stays in that user's account. The optional repository chooser exchanges a narrowly scoped GitHub App credential through a server-side connector, stores it behind an opaque one-hour session, and never exposes it to the page; it does not run audits or receive reports. The manual GitHub editor, workflow preview, and download remain available without connecting an account.
+The public builder can discover unique pages on one address's exact origin, leaves likely jobs, categories, archives, utility pages, and query variants unchecked, and lets the user approve up to 20 exact URLs. Choose **Run in my repository**, connect GitHub, and select an App-authorised repository; the connector saves its managed workflow and starts the Action immediately. Visitors authorize the single CarlasHub GitHub App rather than creating an App of their own. Every audit run, report, and GitHub Actions usage record stays in that user's account. **Create a repository first**, manual URL entry, workflow preview, and download remain available as fallbacks. Read the [public builder guide](docs/public-builder.md) for the complete flow, limits, privacy boundary, cost boundary, and troubleshooting.
 
 The Action and plugin implementation remain public for Marketplace use and independent review. The editable landing-page and connector source are maintained separately in a private repository; only the compiled browser files are published to `site-dist` on public `main` and to the public `gh-pages` branch. Browser-delivered HTML, CSS, and JavaScript are necessarily inspectable by visitors, but the TypeScript source, tests, deployment workflow, and connector implementation are not published from this repository.
 
@@ -54,7 +54,9 @@ For a client-neutral example, [watch the sanitised plugin demonstration](https:/
 
 ## Use the free GitHub Action
 
-Add this file as `.github/workflows/accessibility-audit.yml` in any GitHub project:
+For the shortest setup, use the [public builder](https://carlashub.github.io/accessibility-audit-plugin/): enter one website address, approve the discovered page checklist, choose **Run in my repository**, and select a repository. The builder writes only its managed workflow and starts the run. The Action itself never crawls; it audits exactly the URLs the user selected. See the [public builder guide](docs/public-builder.md) for every setup path and safeguard.
+
+For manual setup, add this file as `.github/workflows/accessibility-audit.yml` in any GitHub project:
 
 ```yaml
 name: Accessibility audit
@@ -84,9 +86,9 @@ Reports stay local in CLI and plugin use, while the reusable workflow's normal a
 
 If the plugin is already installed:
 
-1. Decide which pages are in scope. The plugin tests only the URLs you supply; it does not discover or crawl a whole site.
-2. In Cursor or Claude Code, run `/accessibility-audit` with one URL, several URLs, a pasted URL list, or a page-list file. In Codex or Copilot, ask it to use the Accessibility Audit plugin with the same input.
-3. Check the pre-audit summary. It resolves page-list files before consent and shows the page count and preview, exclusions, hosts and no-crawl boundary, effective coverage and run settings, output filename and template, auditor, and landing-page QA URL. Interactive runs audit that approved in-memory page snapshot even if the source file changes afterward.
+1. Start with one URL for guided discovery, or supply the exact URLs or page-list file yourself.
+2. In Cursor or Claude Code, run `/accessibility-audit` with that input. In Codex or Copilot, ask it to use the Accessibility Audit plugin. With one URL, choose **Discover pages from this URL** or **Use only my supplied URL(s) or file**.
+3. For discovery, choose from the unique exact-origin pages in the checkbox form. Jobs, categories, tags, archives, search, utility, and query-variant pages stay visible but unchecked by default. Then check the pre-audit summary; it contains only the pages you selected and the effective run settings. Manual runs retain the supplied-page snapshot behavior.
 4. Let the headless audit finish, or stop it safely if needed. Progress appears in the editor or terminal.
 5. Extract the generated ZIP and open `Accessibility_Audit_Report.html` for the quickest review. Use `Accessibility_Audit_Report.xlsx` for detailed triage, keeping it beside the `screenshots` folder so its evidence links continue to work.
 
@@ -130,13 +132,13 @@ Equivalent request in Codex or Copilot:
 Use the Accessibility Audit plugin to audit every URL in pages.xlsx.
 ```
 
-For a complete-site audit, the pasted list or page-list file must contain the complete canonical URL inventory. Supplying the home page does **not** make the plugin crawl the rest of the site.
+For broader coverage, start from a representative page and use guided discovery, or provide a complete canonical URL inventory manually. Discovery remains on the seed URL's exact origin and never audits a discovered page until you select it.
 
 ### What the confirmation fields mean
 
 | Field | Plain-language meaning | Default |
 |---|---|---|
-| Pages/input | The exact URLs, pasted URL list, or page-list file that will be tested. | Required |
+| Pages/input | One seed URL for guided selection, or the exact URLs, pasted URL list, or page-list file to test manually. | Required |
 | Auditor | The name recorded in the workbook. Use a person’s name when a person owns the audit. | `Automated` |
 | Landing-page QA URL | The project’s main QA or staging URL shown in the Overview sheet. It is report metadata and does not add pages to the scope. | First resolved URL |
 | Output directory | The isolated folder that receives the HTML report, workbook, JSON, CSV, SARIF, screenshots, and ZIP. | `Accessibility Audit Results` in the user’s home directory |
@@ -150,7 +152,7 @@ Every supplied page is checked at desktop (1440×1000), mobile (390×844), and 3
 - keyboard focus that is unreachable, out of order, outside the viewport, invisible, or fully covered, including forward/reverse order and bypass-block journeys;
 - menus, disclosures, and tabs whose state or keyboard operation is broken, plus configured site-specific keyboard, form, interaction, and live-region task journeys;
 - content that overflows, clips, overlaps, disappears, or loses focus visibility/functionality at narrow widths, at 200% root-text size, or after WCAG text-spacing overrides;
-- same-site links that are empty, placeholders, missing fragments, or consistently return 404/410;
+- same-origin links that are empty, placeholders, missing fragments, or consistently return 404/410;
 - target-size spacing conflicts, plus selected table, media, and responsive-layout signals that require review.
 
 The browser runs headlessly by default, so it should not take over the desktop. Visible consent banners are dismissed before the main checks and evidence capture. If one remains blocking, the plugin records the coverage blocker and does not claim that underlying interactions were tested. Each final confirmed, blocker, or review reporting unit can retain one representative contextual screenshot when the relevant state and element can be reproduced reliably; all occurrences remain traceable in JSON without creating a large duplicate image set.
@@ -289,7 +291,7 @@ npm run package:claude-desktop
 
 The command validates the archive structure and writes versioned and stable ZIP filenames plus their SHA-256 files. In Claude Desktop, open **Customize**, select **Plugins**, use the custom-plugin upload option, and choose the ZIP. The ZIP contains the skill and its local MCP runtime; do not unzip it before uploading.
 
-Open a new conversation in the **Chat** tab, type `/`, select **Run Accessibility Audit**, and provide one or more explicit URLs or a supported page-list file. The local MCP server requires Node.js 22 or later on the same computer. Organisation policy may prohibit custom plugins or local MCP servers. See [Installation](docs/installation.md#3c-install-in-claude-desktop-chat) for verification, updating, and removal.
+Open a new conversation in the **Chat** tab, type `/`, select **Run Accessibility Audit**, and provide one starting URL for guided page discovery or use the manual option for explicit URLs or a supported page-list file. The local MCP server requires Node.js 22 or later on the same computer. Organisation policy may prohibit custom plugins or local MCP servers. See [Installation](docs/installation.md#3c-install-in-claude-desktop-chat) for verification, updating, and removal.
 
 ## GitHub Copilot installation
 
@@ -359,9 +361,11 @@ A complete page-list file:
 /accessibility-audit /absolute/path/to/pages.xlsx
 ```
 
-The confirmation form resolves the supplied pages or page-list file first, then shows a pre-audit summary with the resolved count and preview, exclusions, hosts, explicit no-crawl scope, coverage, viewports, named journeys, preset, browser selection and mode, automatic-install behavior, authentication-state use, concurrency, timeout and traversal limits, screenshot setting, output filename and template, auditor, and landing-page QA URL. `Automated` is the editable auditor default. The landing page defaults to the first resolved URL. A form-confirmed run audits the approved in-memory page snapshot even if the source file changes afterward. If the client does not support MCP forms, the tool returns `confirmation-required` with the same structured summary and a `confirmationDigest`; the agent confirms it in chat and retries once with both `confirmed: true` and that digest. `confirmed: true` without the returned digest never starts an audit. The digest binds the resolved page snapshot and every effective setting, including the report name and template path. A changed page list or setting returns `confirmation-stale` instead of starting an unapproved run.
+With one direct URL, the first form offers guided discovery or manual scope. Guided discovery crawls only the seed URL's exact origin, normalizes fragments and tracking parameters, and presents one checkbox per unique page. Jobs, categories, tags, archives, search, utility, and query-variant pages remain available but unchecked by default. After selection, the normal confirmation form shows the selected count and preview, exclusions, hosts, explicit audit boundary, coverage, viewports, named journeys, preset, browser selection and mode, automatic-install behavior, authentication-state use, concurrency, timeout and traversal limits, screenshot setting, output filename and template, auditor, and landing-page QA URL. `Automated` is the editable auditor default. The landing page defaults to the first selected or resolved URL.
 
-The plugin tests only the URLs provided. It does not crawl a site or infer missing pages. This fixed boundary is recorded as `scopeMode: "supplied-pages-only"` in confirmation data and JSON results, and is stated in the HTML and Excel reports. Link checks may validate destinations, but linked pages are never added as audit targets. To audit a complete site, provide a complete canonical URL list in XLSX, CSV, TXT, JSON, or local URL-set XML sitemap form.
+A form-confirmed run audits the approved in-memory page snapshot even if the source file changes afterward. If a client does not support MCP forms, discovery returns `page-selection-required` with the candidates and a `discoveryDigest`; retry with the chosen `selectedUrls` and that digest. Final confirmation then returns `confirmation-required` and its `confirmationDigest`; retry once with `confirmed: true` and that digest. A missing or stale digest never starts an audit.
+
+The audit tests only user-selected discovered URLs or manually supplied URLs. Discovery is a separate, bounded exact-origin step: it never makes discovered pages audit targets automatically. The final fixed boundary is recorded as `scopeMode: "supplied-pages-only"` in confirmation data and JSON results and is stated in the HTML and Excel reports. Link checks may validate destinations, but linked pages are never added after selection. Terminal and GitHub Action workflows remain manual and accept complete URL lists in XLSX, CSV, TXT, JSON, or local URL-set XML sitemap form.
 
 ## Run from a terminal
 
@@ -669,6 +673,7 @@ Keep `captureScreenshots` enabled, confirm the output directory is writable, and
 - Installation for Cursor, Claude Code, Codex, and GitHub Copilot: [docs/installation.md](docs/installation.md)
 - Marketplace packaging and submission: [docs/marketplace-submission.md](docs/marketplace-submission.md)
 - GitHub Action usage: [docs/github-action.md](docs/github-action.md)
+- Public builder, page discovery, and one-click repository setup: [docs/public-builder.md](docs/public-builder.md)
 - GitHub Developer Program application: [docs/github-developer-program.md](docs/github-developer-program.md)
 - Start-to-finish instructions: [docs/user-guide.md](docs/user-guide.md)
 - WCAG terminology for non-specialists: [docs/wcag-basics.md](docs/wcag-basics.md)

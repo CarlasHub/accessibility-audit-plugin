@@ -29,6 +29,12 @@ import {
   isAuthenticationConfirmationStaleError,
   resolveAuthenticationForExecution
 } from './auth-preflight.js';
+import {
+  discoverPages,
+  selectDiscoveredUrls,
+  type PageDiscoveryResult
+} from './page-discovery.js';
+import { normalizeExplicitUrlEntries } from './urls.js';
 
 const actionableAuditErrorOutputSchema = z.object({
   code: z.enum([
@@ -95,6 +101,26 @@ const proposedAuditOutputSchema = z.object({
   maxPages: z.number().int().positive().nullable(),
   stagingOnly: z.boolean(),
   confirmationDigest: z.string().regex(/^[a-f0-9]{64}$/)
+}).strict();
+
+const discoveryCandidateOutputSchema = z.object({
+  url: z.string().url(),
+  title: z.string().optional(),
+  category: z.enum(['content', 'jobs', 'taxonomy', 'utility', 'query-variant']),
+  recommended: z.boolean(),
+  reason: z.string().optional()
+}).strict();
+
+const pageDiscoveryOutputSchema = z.object({
+  seedUrl: z.string().url(),
+  origin: z.string().url(),
+  candidates: z.array(discoveryCandidateOutputSchema),
+  fetchedPageCount: z.number().int().nonnegative(),
+  discoveryLimit: z.number().int().positive(),
+  maxDepth: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  errors: z.array(z.object({ url: z.string().url(), message: z.string() }).strict()),
+  discoveryDigest: z.string().regex(/^[a-f0-9]{64}$/)
 }).strict();
 
 const artifactDescriptorBaseShape = {
@@ -213,6 +239,19 @@ export const auditToolOutputVariantSchema = z.discriminatedUnion('status', [
     nextAction: z.string()
   }).strict(),
   z.object({
+    status: z.literal('page-selection-required'),
+    auditStarted: z.literal(false),
+    discovery: pageDiscoveryOutputSchema,
+    nextAction: z.string()
+  }).strict(),
+  z.object({
+    status: z.literal('page-selection-stale'),
+    auditStarted: z.literal(false),
+    message: z.string(),
+    discovery: pageDiscoveryOutputSchema,
+    nextAction: z.string()
+  }).strict(),
+  z.object({
     status: z.literal('cancelled-before-start'),
     auditStarted: z.literal(false)
   }).strict(),
@@ -269,11 +308,14 @@ export const auditToolOutputContractSchema = objectVariantOutputSchema({
     'cancelled',
     'confirmation-required',
     'confirmation-stale',
+    'page-selection-required',
+    'page-selection-stale',
     'cancelled-before-start',
     'failed'
   ]),
   auditStarted: z.boolean().optional(),
   proposedRun: proposedAuditOutputSchema.optional(),
+  discovery: pageDiscoveryOutputSchema.optional(),
   reportPath: z.string().optional(),
   htmlPath: z.string().optional(),
   jsonPath: z.string().optional(),
@@ -332,6 +374,7 @@ const manualCheckOutputSchema = z.object({
 
 export interface AccessibilityAuditMcpDependencies {
   executeAudit?: typeof executeAudit;
+  discoverPages?: typeof discoverPages;
 }
 
 export function createAccessibilityAuditMcpServer(
@@ -342,6 +385,7 @@ export function createAccessibilityAuditMcpServer(
     { capabilities: { logging: {} } },
   );
   const execute = dependencies.executeAudit ?? executeAudit;
+  const discover = dependencies.discoverPages ?? discoverPages;
 
   const auditToolResult = (result: Awaited<ReturnType<typeof executeAudit>>) => {
     const artifacts = [
@@ -507,6 +551,85 @@ export function createAccessibilityAuditMcpServer(
     };
   };
 
+  type PageSelectionMode = 'discover' | 'manual';
+
+  const directDiscoverySeed = (targets: string[]): string | undefined => {
+    if (targets.length !== 1) return undefined;
+    try {
+      return normalizeExplicitUrlEntries(targets)[0];
+    } catch {
+      return undefined;
+    }
+  };
+
+  const requestPageSelectionMode = async (): Promise<PageSelectionMode | null | undefined> => {
+    if (!server.server.getClientCapabilities()?.elicitation?.form) return undefined;
+    const response = await server.server.elicitInput({
+      mode: 'form',
+      message: 'Choose how to add pages. Discovery starts from one URL, stays on its exact origin, removes duplicate and tracking variants, and lets you select pages before the audit. Manual mode audits only the URL(s) or page-list file you supplied.',
+      requestedSchema: {
+        type: 'object',
+        properties: {
+          selectionMode: {
+            type: 'string',
+            title: 'Page selection method',
+            description: 'Choose guided discovery or keep the existing manual URL/file workflow.',
+            enum: ['discover', 'manual'],
+            enumNames: ['Discover pages from this URL', 'Use only my supplied URL(s) or file'],
+            default: 'discover'
+          }
+        },
+        required: ['selectionMode']
+      }
+    });
+    if (response.action !== 'accept') return null;
+    return response.content?.selectionMode === 'discover' ? 'discover' : 'manual';
+  };
+
+  const requestDiscoveredPageSelection = async (
+    discovery: PageDiscoveryResult
+  ): Promise<string[] | null | undefined> => {
+    if (!server.server.getClientCapabilities()?.elicitation?.form) return undefined;
+    const defaultUrls = discovery.candidates
+      .filter((candidate) => candidate.recommended)
+      .map((candidate) => candidate.url);
+    const selectionDefaults = defaultUrls;
+    const response = await server.server.elicitInput({
+      mode: 'form',
+      message: [
+        `Discovery stayed on the exact origin ${discovery.origin} and found ${discovery.candidates.length} unique page${discovery.candidates.length === 1 ? '' : 's'}.`,
+        'Duplicate URLs and common tracking variants were collapsed. Jobs, categories, tags, archives, search results, utility pages, and other generated/query pages remain visible but are unchecked by default.',
+        'The audit has not started. Only the unique pages you select below will be fetched by the audit.',
+        ...(discovery.truncated ? [`Discovery reached its limit of ${discovery.discoveryLimit} pages or depth ${discovery.maxDepth}; increase the discovery limits to inspect more pages.`] : []),
+        ...(discovery.errors.length > 0 ? [`${discovery.errors.length} page${discovery.errors.length === 1 ? '' : 's'} could not be inspected during discovery.`] : [])
+      ].join('\n\n'),
+      requestedSchema: {
+        type: 'object',
+        properties: {
+          selectedUrls: {
+            type: 'array',
+            title: 'Pages to audit',
+            description: 'Recommended content pages start checked. Review every page and change the selection before continuing.',
+            minItems: 1,
+            maxItems: discovery.candidates.length,
+            items: {
+              anyOf: discovery.candidates.map((candidate) => ({
+                const: candidate.url,
+                title: `${candidate.title ? `${candidate.title} — ` : ''}${candidate.url}${candidate.recommended ? ' [recommended]' : ` [unchecked: ${candidate.category}]`}`
+              }))
+            },
+            ...(selectionDefaults.length > 0 ? { default: selectionDefaults } : {})
+          }
+        },
+        required: ['selectedUrls']
+      }
+    });
+    if (response.action !== 'accept') return null;
+    return Array.isArray(response.content?.selectedUrls)
+      ? response.content.selectedUrls.filter((url): url is string => typeof url === 'string')
+      : [];
+  };
+
   const mcpExecution = (
     extra: RequestHandlerExtra<ServerRequest, ServerNotification>
   ): AuditExecutionContext => {
@@ -562,15 +685,21 @@ export function createAccessibilityAuditMcpServer(
       description: 'Run one evidence-backed accessibility pre-audit after scope confirmation. Collect desktop, mobile, reflow, link, keyboard, interaction, and screenshot evidence; export complete or partial HTML, Excel, JSON, CSV, and SARIF reports; and preserve completed output after cancellation.',
       inputSchema: {
         targets: z.array(z.string().min(1)).min(1).describe('Authorized HTTP(S) URLs, pasted whitespace/newline/JSON URL lists, and/or one XLSX, CSV, TXT, JSON, or local URL-set XML sitemap page-list path.'),
+        selectionMode: z.enum(['discover', 'manual']).optional().describe('Choose discover for a guided same-origin crawl from one seed URL, or manual to audit only the supplied URL(s) or page-list file. Compatible clients ask when one direct URL is supplied.'),
+        selectedUrls: z.array(z.string().url()).min(1).max(500).optional().describe('Unique discovered pages selected by the user. Bind this selection to the current discovery result with discoveryDigest.'),
+        discoveryDigest: z.string().regex(/^[a-f0-9]{64}$/).optional().describe('Digest returned with the current discovered page list. Required when selectedUrls are supplied programmatically so stale selections cannot start an audit.'),
+        discoveryMaxPages: z.number().int().min(1).max(500).default(200).describe('Maximum unique same-origin page candidates to return during guided discovery.'),
+        discoveryMaxDepth: z.number().int().min(0).max(10).default(5).describe('Maximum same-origin link depth to inspect during guided discovery.'),
         ...commonInput,
         confirmed: z.boolean().default(false).describe('Set true only after the user reviews the complete proposed run, including resolved pages, hosts, coverage, browser mode and selection, limits, journeys, output, landing-page QA URL, and auditor. When false, compatible clients display a confirmation form.'),
         confirmationDigest: z.string().regex(/^[a-f0-9]{64}$/).optional().describe('Digest returned by a prior confirmation-required response. Include it with confirmed true so changed pages or settings are rejected before audit.')
       },
       outputSchema: auditToolOutputContractSchema
     },
-    async ({ targets, preset, auditor, landingPageUrl, outputDir, allowedHosts, exactHosts, maxPages, stagingOnly, browserEngine, channel, wcagLevel, aaaAdvisory, headless, autoInstallBrowser, storageState, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, journeys, templatePath, historyPaths, reportName, confirmed, confirmationDigest }, extra) => {
+    async ({ targets, selectionMode, selectedUrls, discoveryDigest, discoveryMaxPages, discoveryMaxDepth, preset, auditor, landingPageUrl, outputDir, allowedHosts, exactHosts, maxPages, stagingOnly, browserEngine, channel, wcagLevel, aaaAdvisory, headless, autoInstallBrowser, storageState, concurrency, timeoutMs, maxTabStops, maxLinksPerPage, captureScreenshots, journeys, templatePath, historyPaths, reportName, confirmed, confirmationDigest }, extra) => {
       let failureStage: 'preparation' | 'execution' = 'preparation';
       let staleOptions: ReturnType<typeof resolveOptions> | undefined;
+      let auditTargets = targets;
       try {
         const requestedOptions = {
           preset,
@@ -596,7 +725,67 @@ export function createAccessibilityAuditMcpServer(
           journeys
         };
         const previewOptions = resolveOptions(requestedOptions);
-        const preparedAudit = await preparePreAuditSummary(targets, previewOptions, {
+        const directSeed = directDiscoverySeed(targets);
+        let effectiveSelectionMode = selectionMode;
+        if (!effectiveSelectionMode && directSeed) {
+          const requestedMode = await requestPageSelectionMode();
+          if (requestedMode === null) {
+            const result = { status: 'cancelled-before-start' as const, auditStarted: false as const };
+            return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }], structuredContent: result };
+          }
+          effectiveSelectionMode = requestedMode ?? 'manual';
+        }
+        effectiveSelectionMode ??= 'manual';
+
+        if (effectiveSelectionMode === 'discover') {
+          if (!directSeed) {
+            throw new Error('Guided page discovery requires exactly one complete HTTP(S) seed URL. Use manual mode for multiple URLs or a page-list file.');
+          }
+          await preparePreAuditSummary([directSeed], previewOptions, {
+            reportName,
+            ...(templatePath ? { templatePath } : {}),
+            ...(historyPaths.length ? { historyPaths } : {})
+          });
+          const discovery = await discover(directSeed, {
+            maxPages: discoveryMaxPages,
+            maxDepth: discoveryMaxDepth,
+            timeoutMs: previewOptions.timeoutMs
+          });
+          const selectionRequired = () => {
+            const result = {
+              status: 'page-selection-required' as const,
+              auditStarted: false as const,
+              discovery,
+              nextAction: 'Review the discovered unique pages, choose at least one, then retry in discover mode with selectedUrls and this discoveryDigest. Jobs, categories, tags, archives, utility, search, and query-generated pages are unchecked by default.'
+            };
+            return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }], structuredContent: result };
+          };
+          if (discoveryDigest && discoveryDigest !== discovery.discoveryDigest) {
+            const result = {
+              status: 'page-selection-stale' as const,
+              auditStarted: false as const,
+              message: 'The site discovery result changed after page selection. No audit was started.',
+              discovery,
+              nextAction: 'Review the refreshed unique page list, then retry in discover mode with selectedUrls and this new discoveryDigest.'
+            };
+            return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }], structuredContent: result };
+          }
+
+          let effectiveSelectedUrls = selectedUrls;
+          if (effectiveSelectedUrls && !discoveryDigest) return selectionRequired();
+          if (!effectiveSelectedUrls) {
+            const requestedSelection = await requestDiscoveredPageSelection(discovery);
+            if (requestedSelection === null) {
+              const result = { status: 'cancelled-before-start' as const, auditStarted: false as const };
+              return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }], structuredContent: result };
+            }
+            if (requestedSelection === undefined || requestedSelection.length === 0) return selectionRequired();
+            effectiveSelectedUrls = requestedSelection;
+          }
+          auditTargets = selectDiscoveredUrls(discovery, effectiveSelectedUrls);
+        }
+
+        const preparedAudit = await preparePreAuditSummary(auditTargets, previewOptions, {
           reportName,
           ...(templatePath ? { templatePath } : {}),
           ...(historyPaths.length ? { historyPaths } : {})
@@ -608,7 +797,7 @@ export function createAccessibilityAuditMcpServer(
             status: 'confirmation-required' as const,
             auditStarted: false as const,
             proposedRun: {
-              targets,
+              targets: auditTargets,
               ...preparedAudit.summary,
               confirmationDigest: preparedAudit.confirmationDigest
             },
@@ -624,7 +813,7 @@ export function createAccessibilityAuditMcpServer(
               status: 'confirmation-required',
               auditStarted: false,
               proposedRun: {
-                targets,
+                targets: auditTargets,
                 ...preAuditSummary,
                 confirmationDigest: preparedAudit.confirmationDigest
               },
@@ -645,7 +834,7 @@ export function createAccessibilityAuditMcpServer(
             auditStarted: false,
             message: 'The resolved pages or effective settings changed after confirmation. No audit was started.',
             proposedRun: {
-              targets,
+              targets: auditTargets,
               ...preparedAudit.summary,
               confirmationDigest: preparedAudit.confirmationDigest
             },
@@ -678,7 +867,7 @@ export function createAccessibilityAuditMcpServer(
       } catch (error: unknown) {
         if (isAuthenticationConfirmationStaleError(error) && staleOptions) {
           try {
-            const refreshed = await preparePreAuditSummary(targets, staleOptions, {
+            const refreshed = await preparePreAuditSummary(auditTargets, staleOptions, {
               reportName,
               ...(templatePath ? { templatePath } : {}),
               ...(historyPaths.length ? { historyPaths } : {})
@@ -688,7 +877,7 @@ export function createAccessibilityAuditMcpServer(
               auditStarted: false as const,
               message: error.message,
               proposedRun: {
-                targets,
+                targets: auditTargets,
                 ...refreshed.summary,
                 confirmationDigest: refreshed.confirmationDigest
               },
@@ -757,7 +946,7 @@ export function createAccessibilityAuditMcpServer(
     'run-accessibility-audit',
     {
       title: 'Run accessibility pre-audit',
-      description: 'Confirm scope and run an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA with one tool call.',
+      description: 'Discover and select unique exact-origin pages or use a manual URL list, then confirm scope and run an evidence-backed accessibility pre-audit for WCAG 2.2 A/AA.',
       argsSchema: {
         targets: z.string().optional().describe('Explicit URLs, a pasted URL list, or a project-relative page-list path.'),
         auditor: z.string().min(1).default(DEFAULT_AUDITOR),
@@ -781,7 +970,7 @@ export function createAccessibilityAuditMcpServer(
   server.registerTool(
     'audit_pages',
     {
-      description: 'Audit explicit page URLs at desktop, mobile, and 320px reflow sizes; run axe, DOM, keyboard, link, component, and screenshot checks; retain incomplete/blocker/truncation evidence and a page-level coverage matrix; consolidate only equivalent component defects; and write accessible HTML, JSON, CSV, SARIF, and the standard Excel workbook.',
+      description: 'Audit explicitly supplied URLs at desktop, mobile, and 320px reflow sizes; run axe, DOM, keyboard, link, component, and screenshot checks; retain incomplete/blocker/truncation evidence and a page-level coverage matrix; consolidate only equivalent component defects; and write accessible HTML, JSON, CSV, SARIF, and the standard Excel workbook.',
       inputSchema: { urls: z.array(z.string().url()).min(1), ...commonInput },
       outputSchema: auditToolOutputContractSchema
     },
