@@ -172,7 +172,7 @@ describe('agent release bundles', () => {
     expect(repeatedSbomBytes.equals(sbomBytes)).toBe(true);
     expect(sbom.bomFormat).toBe('CycloneDX');
     expect(sbom.specVersion).toBe('1.6');
-    expect(sbom.serialNumber).toBeUndefined();
+    expect(sbom.serialNumber).toMatch(/^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
     expect(sbom.metadata.timestamp).toBeUndefined();
     expect(sbom.metadata.component).toMatchObject({
       name: 'accessibility-audit-plugin',

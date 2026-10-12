@@ -20,6 +20,8 @@ describe('release supply-chain contract', () => {
     expect(generator).toContain("'--validate'");
     expect(generator).toContain("'--spec-version', '1.6'");
     expect(generator).toContain('assertKnownNpmOverrideWarning');
+    expect(generator).toContain('deterministicSerialNumber');
+    expect(generator).toContain('sbom.serialNumber = deterministicSerialNumber');
   });
 
   it('attests only tag-built versioned archives with job-scoped write permissions', async () => {

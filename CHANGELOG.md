@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.8.6 - 2026-10-12
+
+- Fixed release SBOM attestation by adding a deterministic CycloneDX UUID serial number, preserving byte-for-byte reproducible artifacts while satisfying GitHub's SBOM attestation contract.
+
 ## 1.8.5 - 2026-10-12
 
 - Added bounded same-origin page discovery to the public builder, with deduplicated candidate checkboxes, conservative content-page defaults, clear page-type exclusions, a 20-page approval limit, and the original manual URL route retained.
