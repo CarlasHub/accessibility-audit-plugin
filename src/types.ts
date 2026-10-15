@@ -58,14 +58,29 @@ export type AuditCheckId =
   | 'element-context'
   | 'screenshots';
 
-export type CollectionStatus = 'completed' | 'failed' | 'blocked' | 'not-applicable' | 'not-run';
+export type CollectionStatus = 'completed' | 'partial' | 'failed' | 'blocked' | 'not-applicable' | 'not-run';
 
 export interface CollectionOutcome {
   checkId: AuditCheckId;
   status: CollectionStatus;
   observationCount: number;
+  /** Eligible observations present when this collector ran. */
+  candidateCount?: number;
+  /** Eligible observations the collector actually attempted. */
+  checkedCount?: number;
+  /** True when a safety limit prevented complete collection. */
+  truncated?: boolean;
   error?: string;
   blockedBy?: string;
+}
+
+export interface InteractionCheckCollection<T> {
+  results: T[];
+  candidateCount: number;
+  checkedCount: number;
+  truncated: boolean;
+  completed: boolean;
+  error?: string;
 }
 
 export interface EvidenceProvenance {
@@ -197,6 +212,8 @@ export interface DomCheckResult {
   duplicateIds: Array<{ id: string; count: number }>;
   smallTargets: Array<{
     selector: string;
+    /** Selector for the rendered pointer surface when it differs from the logical control (for example a file-input label). */
+    measurementSelector?: string;
     name: string;
     width: number;
     height: number;

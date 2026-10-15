@@ -203,6 +203,54 @@ describe('canonical-result and renderer integrity gates', () => {
       checkId: 'navigation', status: 'not-run', observationCount: 0
     };
     expect(() => assertCollectionCompleteness([unfinished])).toThrow(/still not-run/);
+
+    const partial = structuredClone(complete);
+    partial.viewports[0]!.collectionOutcomes![0] = {
+      checkId: 'navigation',
+      status: 'partial',
+      observationCount: 1,
+      candidateCount: 2,
+      checkedCount: 1,
+      truncated: true,
+      error: 'Checked 1 of 2 eligible observations.'
+    };
+    expect(() => assertCollectionCompleteness([partial])).not.toThrow();
+
+    const partialWithoutEvidence = structuredClone(partial);
+    partialWithoutEvidence.viewports[0]!.collectionOutcomes![0]!.observationCount = 0;
+    expect(() => assertCollectionCompleteness([partialWithoutEvidence])).toThrow(/partial but records no retained observations/);
+
+    const silentlyTruncated = structuredClone(complete);
+    silentlyTruncated.viewports[0]!.collectionOutcomes![0] = {
+      checkId: 'navigation',
+      status: 'completed',
+      observationCount: 1,
+      candidateCount: 2,
+      checkedCount: 1,
+      truncated: true
+    };
+    expect(() => assertCollectionCompleteness([silentlyTruncated])).toThrow(/truncated but is not partial/);
+
+    const silentlyUnchecked = structuredClone(complete);
+    silentlyUnchecked.viewports[0]!.collectionOutcomes![0] = {
+      checkId: 'navigation',
+      status: 'completed',
+      observationCount: 1,
+      candidateCount: 2,
+      checkedCount: 1,
+      truncated: false
+    };
+    expect(() => assertCollectionCompleteness([silentlyUnchecked])).toThrow(/left eligible observations unchecked/);
+
+    const ambiguousCounts = structuredClone(complete);
+    ambiguousCounts.viewports[0]!.collectionOutcomes![0] = {
+      checkId: 'navigation',
+      status: 'completed',
+      observationCount: 1,
+      candidateCount: 1,
+      checkedCount: 1
+    };
+    expect(() => assertCollectionCompleteness([ambiguousCounts])).toThrow(/without an explicit truncation state/);
   });
 
   it('accepts a traceable result and rejects fabricated collector observations', () => {

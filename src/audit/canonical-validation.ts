@@ -36,6 +36,9 @@ function outcomeErrors(outcome: CollectionOutcome, label: string): string[] {
   if (outcome.status === 'completed' && (outcome.error || outcome.blockedBy)) {
     errors.push(`${label} is completed but also records an error or blocker`);
   }
+  if (outcome.status === 'partial' && (!outcome.error?.trim() || outcome.blockedBy)) {
+    errors.push(`${label} is partial without exactly one explicit error`);
+  }
   if (outcome.status === 'failed' && (!outcome.error?.trim() || outcome.blockedBy)) {
     errors.push(`${label} failed without exactly one explicit error`);
   }
@@ -48,6 +51,41 @@ function outcomeErrors(outcome: CollectionOutcome, label: string): string[] {
   if ((outcome.status === 'failed' || outcome.status === 'not-applicable' || outcome.status === 'not-run')
     && outcome.observationCount !== 0) {
     errors.push(`${label} is ${outcome.status} but records retained observations`);
+  }
+  if (outcome.status === 'partial' && outcome.observationCount === 0) {
+    errors.push(`${label} is partial but records no retained observations`);
+  }
+  const hasCandidateCount = outcome.candidateCount !== undefined;
+  const hasCheckedCount = outcome.checkedCount !== undefined;
+  if (hasCandidateCount !== hasCheckedCount) {
+    errors.push(`${label} must record candidate and checked counts together`);
+  }
+  if (hasCandidateCount && (!Number.isInteger(outcome.candidateCount) || outcome.candidateCount! < 0)) {
+    errors.push(`${label} has an invalid candidate count`);
+  }
+  if (hasCheckedCount && (!Number.isInteger(outcome.checkedCount) || outcome.checkedCount! < 0)) {
+    errors.push(`${label} has an invalid checked count`);
+  }
+  if (hasCandidateCount && hasCheckedCount && outcome.checkedCount! > outcome.candidateCount!) {
+    errors.push(`${label} checked more observations than were eligible`);
+  }
+  if ((hasCandidateCount || hasCheckedCount) && outcome.truncated === undefined) {
+    errors.push(`${label} records candidate counts without an explicit truncation state`);
+  }
+  if (outcome.truncated !== undefined && (!hasCandidateCount || !hasCheckedCount)) {
+    errors.push(`${label} records a truncation state without candidate and checked counts`);
+  }
+  if (hasCandidateCount && hasCheckedCount && outcome.checkedCount! < outcome.candidateCount!
+    && outcome.truncated !== true) {
+    errors.push(`${label} left eligible observations unchecked without marking the collection truncated`);
+  }
+  if (outcome.truncated === true) {
+    if (!hasCandidateCount || !hasCheckedCount || outcome.candidateCount! <= outcome.checkedCount!) {
+      errors.push(`${label} is truncated without unchecked eligible observations`);
+    }
+    if (outcome.status !== 'partial') {
+      errors.push(`${label} is truncated but is not partial`);
+    }
   }
   return errors;
 }
@@ -135,12 +173,12 @@ function validateFindingEvidence(finding: Finding, viewports: Map<string, Viewpo
       errors.push(`${evidenceLabel} does not map to a collector outcome`);
       continue;
     }
-    const allowed = outcome.status === 'completed'
+    const allowed = outcome.status === 'completed' || outcome.status === 'partial'
       || (finding.classification === 'blocker' && (outcome.status === 'failed' || outcome.status === 'blocked'));
     if (!allowed) {
       errors.push(`${evidenceLabel} relies on a collector with status ${outcome.status}`);
-    } else if (outcome.status === 'completed' && outcome.observationCount === 0) {
-      errors.push(`${evidenceLabel} relies on a completed collector that recorded no observations`);
+    } else if ((outcome.status === 'completed' || outcome.status === 'partial') && outcome.observationCount === 0) {
+      errors.push(`${evidenceLabel} relies on a ${outcome.status} collector that recorded no observations`);
     }
   }
   return errors;

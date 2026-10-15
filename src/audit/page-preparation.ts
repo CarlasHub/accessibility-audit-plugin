@@ -276,6 +276,7 @@ export async function collectElementContexts(page: Page, selectors: string[]): P
             if (['button', 'submit', 'reset', 'image'].includes(target.type)) return 'button';
             if (target.type === 'checkbox') return 'checkbox';
             if (target.type === 'radio') return 'radio';
+            if (target.type === 'file') return 'file upload';
             return 'textbox';
           }
           return tag;

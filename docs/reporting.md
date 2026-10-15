@@ -31,6 +31,16 @@ Every generated finding starts with workflow status `Open`. Status tracks remedi
 
 Severity estimates the likely effect on users. It is separate from the WCAG conformance level, confidence, effort, and delivery priority.
 
+## Understand finding scope and totals
+
+Reports provide three explicit scope filters:
+
+- `standard`: at least one mapped WCAG 2.2 Level A or AA criterion;
+- `supplemental`: an unmapped or best-practice observation outside the AA conformance target; and
+- `advisory`: only Level AAA mappings.
+
+A mixed A/AA and AAA finding is standard. The AA headline barrier total and prioritised actions use standard findings only. Supplemental and advisory observations remain available for review without changing the AA result. Generic axe `incomplete` nodes appear as review findings with their selector and help text, and remain inconclusive in the criterion ledger.
+
 ## Findings field guide
 
 | Field | Purpose |
@@ -51,7 +61,7 @@ Severity estimates the likely effect on users. It is separate from the WCAG conf
 | Rule ID, Labels | Tool rule and searchable metadata. |
 | Translation review | Whether translated content needs separate review. |
 
-The same reusable component implementation and root cause produce one finding across affected pages. Different implementations, behaviours, criteria, colour treatments, or remedies stay separate. JSON retains detailed URL, viewport, selector, related-node, and raw tool evidence.
+The same reusable component implementation and root cause produce one finding across affected pages. Different implementations, behaviours, colour treatments, or remedies stay separate. Enriched WCAG mappings are combined without splitting an otherwise identical finding. JSON retains detailed URL, viewport, state, selector, related-node, and raw tool evidence as occurrences. Report totals count consolidated findings; the Evidence sheet and occurrence summaries show how many observations support each finding.
 
 Missing `aria-controls` alone is not a WCAG failure for an ordinary disclosure or accordion. Interaction evidence must identify the live control, settle updates, re-query state, and demonstrate a visible mismatch. Ambiguous or incomplete interactions remain inconclusive JSON coverage.
 
@@ -71,4 +81,4 @@ Optional baseline and history comparisons are valid only across equivalent brows
 
 Coverage states include `confirmed-passed`, `confirmed-failed`, `tested-inconclusive`, `manual-review-required`, `not-tested`, and `not-applicable`.
 
-`confirmed-passed` applies only to the exact automated rule and state supported by retained evidence. An empty finding list, axe incomplete result, sampled keyboard path, truncated link check, blocked interaction, or unperformed manual procedure is not proof of accessibility or complete WCAG conformance.
+`confirmed-passed` applies only to the exact automated rule and state supported by retained evidence. An empty finding list, axe incomplete result, sampled keyboard path, truncated link or component collector, blocked interaction, or unperformed manual procedure is not proof of accessibility or complete WCAG conformance. Bounded collectors expose candidate, checked and truncation metadata and report `partial` whenever their cap prevents complete inspection.

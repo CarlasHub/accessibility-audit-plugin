@@ -22,13 +22,13 @@ function summary(overrides: Partial<AuditSummary> = {}): AuditSummary {
   };
 }
 
-function finding(classification: Finding['classification'], severity: Finding['severity']): Finding {
+function finding(classification: Finding['classification'], severity: Finding['severity'], wcag = ['1.1.1']): Finding {
   return {
     key: `${classification}-${severity}`,
     ruleId: 'test-rule',
     classification,
     severity,
-    wcag: ['1.1.1'],
+    wcag,
     summary: 'Test finding',
     issue: 'Test issue',
     impact: 'Test impact',
@@ -81,5 +81,53 @@ describe('executive report summary', () => {
 
     expect(result.headline).toContain('stopped before completion');
     expect(result.nextStep).toContain('rerun the audit before triage');
+  });
+
+  it('keeps AAA-only advisory findings out of AA headline counts', () => {
+    const result = buildExecutiveSummary(summary({
+      findings: [
+        finding('confirmed', 'Critical', ['1.4.6']),
+        finding('review', 'Moderate', ['2.4.8'])
+      ]
+    }));
+
+    expect(result.standardFindings).toBe(0);
+    expect(result.coreFindings).toBe(0);
+    expect(result.supplementalFindings).toBe(0);
+    expect(result.advisoryFindings).toBe(2);
+    expect(result.confirmedFindings).toBe(0);
+    expect(result.seriousOrCriticalFindings).toBe(0);
+    expect(result.reviewCandidates).toBe(0);
+    expect(result.headline).toContain('No confirmed barriers');
+    expect(result.currentPosition).toContain('2 AAA advisory items are reported separately');
+  });
+
+  it('keeps non-WCAG checks actionable without calling them conformance findings', () => {
+    const result = buildExecutiveSummary(summary({
+      findings: [
+        finding('confirmed', 'Serious', ['Best Practice']),
+        finding('review', 'Moderate', [])
+      ]
+    }));
+
+    expect(result.coreFindings).toBe(2);
+    expect(result.standardFindings).toBe(0);
+    expect(result.supplementalFindings).toBe(2);
+    expect(result.advisoryFindings).toBe(0);
+    expect(result.confirmedFindings).toBe(1);
+    expect(result.reviewCandidates).toBe(1);
+    expect(result.currentPosition).toContain('0 findings map to the WCAG A/AA target');
+    expect(result.currentPosition).toContain('2 supporting audit checks are reported without being represented as a WCAG conformance result');
+  });
+
+  it('keeps mixed A/AA and AAA mappings in the AA conformance target', () => {
+    const result = buildExecutiveSummary(summary({
+      findings: [finding('confirmed', 'Serious', ['1.4.3', '1.4.6'])]
+    }));
+
+    expect(result.standardFindings).toBe(1);
+    expect(result.coreFindings).toBe(1);
+    expect(result.advisoryFindings).toBe(0);
+    expect(result.confirmedFindings).toBe(1);
   });
 });

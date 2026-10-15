@@ -14,8 +14,8 @@
     <meta name="twitter:card" content="summary_large_image" />
     <title>CarlasHub Accessibility Audit</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2315151a'/%3E%3Cpath d='M18 32l9 9 19-20' fill='none' stroke='%2393f6b2' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-    <script type="module" crossorigin src="./assets/index-CiNt1TbL.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-BRTaqiVs.css">
+    <script type="module" crossorigin src="./assets/index-C_x3Lu5u.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Bgt7AAmh.css">
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to main content</a>
@@ -200,6 +200,14 @@
                     <p id="repository-error" class="field-error" role="alert" aria-atomic="true" hidden></p>
                   </div>
                 </fieldset>
+                <div class="repository-followup" id="new-repository-followup" role="status" tabindex="-1" hidden>
+                  <strong>Your selected pages are saved in this browser tab.</strong>
+                  <p>Finish creating the repository in GitHub. Then return here and refresh the list. If it is missing, give the GitHub App access to it first.</p>
+                  <div class="repository-picker-actions">
+                    <button class="secondary-button" id="refresh-created-repositories" type="button">Refresh repositories</button>
+                    <a href="https://github.com/settings/installations" target="_blank" rel="noreferrer">Manage repository access <span aria-hidden="true">↗</span></a>
+                  </div>
+                </div>
                 <div class="step-actions">
                   <button class="secondary-button" id="back-to-selection" type="button"><span aria-hidden="true">←</span> Back</button>
                   <button class="primary-button" id="continue-to-review" type="button">Review audit <span aria-hidden="true">→</span></button>
@@ -355,12 +363,12 @@
       <section class="section coverage" id="coverage">
         <div class="section-heading">
           <p class="eyebrow"><span aria-hidden="true"></span> Honest by design</p>
-          <h2>All 55 WCAG 2.2 Level A and AA criteria are accounted for.</h2>
-          <p>Every report pairs automated evidence with one criterion-specific human procedure and an evidence prompt. Untested or inconclusive criteria stay visible and never become automatic passes.</p>
+          <h2>All 55 WCAG 2.2 Level A and AA criteria stay accountable.</h2>
+          <p>Every report pairs selective automated evidence with one criterion-specific human procedure and an evidence prompt. Untested, partial, or inconclusive work stays visible and never becomes an automatic pass or certification claim.</p>
         </div>
         <div class="coverage-grid">
-          <article><span class="feature-icon" aria-hidden="true">⌁</span><h3>Evidence-led browser checks</h3><p>Chromium runs by default, with optional Firefox and WebKit coverage. Checks include semantics, names, contrast signals, structure, component states, links, 200% text resize, 320px reflow, and configurable keyboard, form, focus, and live-region journeys.</p></article>
-          <article><span class="feature-icon" aria-hidden="true">▦</span><h3>Review-ready, trackable outputs</h3><p>An executive summary and prioritised actions lead the accessible HTML report. Excel, JSON, CSV, SARIF, screenshots, and ZIP exports stay together; stable fingerprints support baselines, new-issue gates, and history.</p></article>
+          <article><span class="feature-icon" aria-hidden="true">⌁</span><h3>Evidence-led browser checks</h3><p>Chromium runs by default, with optional Firefox and WebKit coverage. Checks include semantics, names, contrast signals, structure, component states, links, 200% text resize, 320px reflow, and configurable keyboard, form, focus, and live-region journeys. Unresolved tool results become review work; bounded checks disclose partial coverage.</p></article>
+          <article><span class="feature-icon" aria-hidden="true">▦</span><h3>Review-ready, trackable outputs</h3><p>An executive summary and prioritised actions lead the accessible HTML report. Standard A/AA results stay separate from supplemental and optional AAA advice. Consolidated remediation items retain their page, viewport, state, and selector occurrences across Excel, JSON, CSV, SARIF, screenshots, and ZIP exports.</p></article>
           <article><span class="feature-icon" aria-hidden="true">◎</span><h3>Human decisions remain explicit</h3><p>No automated tool can certify WCAG conformance. Screen-reader experience, meaning, usability, and exceptions still require qualified review.</p></article>
         </div>
       </section>
@@ -384,6 +392,13 @@
       <input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or name" />
       <p id="repository-picker-status" class="dialog-status" role="status" aria-live="polite" aria-atomic="true"></p>
       <div class="repository-options" id="repository-options" aria-label="Available repositories"></div>
+      <div class="repository-dialog-tools">
+        <p>New repository missing? Add it to the GitHub App’s repository access, then refresh this list.</p>
+        <div class="repository-picker-actions">
+          <button class="secondary-button" id="refresh-repositories" type="button">Refresh repositories</button>
+          <a href="https://github.com/settings/installations" target="_blank" rel="noreferrer">Manage repository access <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
       <div class="repository-access-help" id="repository-access-help" hidden>
         <p>No writable repositories are available yet. GitHub lets you grant access to selected repositories only.</p>
         <a class="primary-button" id="install-github-app" href="https://github.com/">Choose repository access on GitHub <span aria-hidden="true">→</span></a>

@@ -2,7 +2,13 @@
 
 This page records the public end-to-end test of the CarlasHub Accessibility Audit GitHub Action against [BuggyLand](https://carlashub.github.io/buggyland/), a deliberately inaccessible benchmark site.
 
-## Verified public run
+## Current release-quality regression
+
+The maintained regression audits four page and fragment states at desktop, mobile, and 320px reflow sizes, then repeats the run. Its exact reviewed baseline is 63 consolidated findings: 32 confirmed, 30 requiring review, and 1 blocker. A human-readable manifest describes 40 structural expected-result groups, including rule, page, target identity, classification, WCAG mapping and expected count. The gate also asserts exact page/viewport completion, errors, blocker selectors and every configured journey outcome; it reports missing and unexpected groups instead of accepting an aggregate total or opaque digest.
+
+This is a software-quality regression oracle, not a WCAG conformance or universal recall score. A finding is one remediation-sized unit; its URL, viewport, state and selector observations remain traceable as occurrences. See the [versioned fixture](../tests/fixtures/buggyland-regression.json), [verification script](../scripts/verify-buggyland-regression.mjs), and [testing matrix](testing-matrix.md).
+
+## Historical v1.2.0 public run
 
 - **GitHub Actions run:** [BuggyLand WCAG audit #5](https://github.com/CarlasHub/buggyland/actions/runs/34391886799)
 - **Action version tested:** commit [`c5a4bfa`](https://github.com/CarlasHub/accessibility-audit-plugin/commit/c5a4bfa50bfa18dcec2a83e5cbe47335901c7481)

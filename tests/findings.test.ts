@@ -140,6 +140,34 @@ describe('evidence-gated link and tab findings', () => {
     }));
   });
 
+  it('keeps axe incomplete contrast in review even when the automated signal includes parseable ratios', () => {
+    const findings = findingsFromPage(page(viewport({
+      axe: [{
+        id: 'color-contrast',
+        resultType: 'incomplete',
+        impact: 'serious',
+        tags: ['wcag2aa', 'wcag143'],
+        description: 'Ensure text has sufficient contrast',
+        help: 'Elements must meet contrast thresholds',
+        helpUrl: 'https://dequeuniversity.com/rules/axe/4.13/color-contrast',
+        nodes: [{
+          html: '<p class="muted">Help text</p>',
+          target: ['.muted'],
+          failureSummary: 'Element has insufficient color contrast of 4.08 (foreground color: #0066cc, background color: #c2e0ff, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1'
+        }]
+      }]
+    })));
+    expect(findings).toContainEqual(expect.objectContaining({
+      ruleId: 'axe-color-contrast',
+      classification: 'review',
+      severity: 'Advisory',
+      summary: 'Text contrast result needs measurement review',
+      issue: expect.stringContaining('could not automatically determine'),
+      testing: expect.stringContaining('Decision required:'),
+      effort: 'Review'
+    }));
+  });
+
   it('groups repeated disclosure relationship reviews by component family and does not require Escape', () => {
     const disclosures = ['category', 'country', 'region'].map((name) => ({
       selector: `#${name}-toggle`,
@@ -868,6 +896,7 @@ describe('evidence-gated link and tab findings', () => {
         ...viewport().dom,
         smallTargets: [{
           selector: '#small',
+          measurementSelector: '#small-label',
           name: 'Save',
           width: 26,
           height: 37,
@@ -884,11 +913,14 @@ describe('evidence-gated link and tab findings', () => {
     expect(findings.find((finding) => finding.ruleId === 'target-size-review')).toEqual(expect.objectContaining({
       classification: 'review',
       wcag: ['2.5.8'],
-      issue: expect.stringContaining('may not provide a 24×24 CSS pixel target or sufficient separation')
+      issue: expect.stringContaining('may not provide a 24×24 CSS pixel target or sufficient separation'),
+      evidence: expect.arrayContaining([
+        expect.objectContaining({ detail: expect.stringContaining('measured pointer surface: #small-label') })
+      ])
     }));
   });
 
-  it('retains generic axe incomplete evidence without promoting it to a workbook finding', () => {
+  it('promotes generic axe incomplete evidence to an actionable review finding', () => {
     const audit = viewport({
       axe: [{
         id: 'aria-valid-attr-value',
@@ -901,7 +933,8 @@ describe('evidence-gated link and tab findings', () => {
         nodes: [{
           html: '<div role="combobox" aria-controls="generated-list"></div>',
           target: ['#location-picker'],
-          failureSummary: 'Fix all of the following: Invalid ARIA attribute value'
+          failureSummary: 'Fix all of the following: Invalid ARIA attribute value',
+          any: [{ id: 'aria-valid-attr-value', message: 'The controlled element is not present in the current state.' }]
         }]
       }],
       axeRun: {
@@ -913,7 +946,19 @@ describe('evidence-gated link and tab findings', () => {
       }
     });
 
-    expect(findingsFromPage(page(audit))).toEqual([]);
+    const findings = findingsFromPage(page(audit));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toEqual(expect.objectContaining({
+      ruleId: 'axe-aria-valid-attr-value',
+      classification: 'review',
+      wcag: ['4.1.2'],
+      summary: 'ARIA attribute contains an invalid value needs manual review',
+      issue: expect.stringContaining('could not automatically determine whether this component passes or fails'),
+      testing: expect.stringContaining('Decision required:'),
+      remediation: expect.stringContaining('First complete the manual review')
+    }));
+    expect(findings[0]?.evidence[0]?.detail).toContain('Invalid ARIA attribute value');
+    expect(findings[0]?.evidence[0]?.detail).toContain('controlled element is not present');
     expect(audit.axe).toHaveLength(1);
     expect(audit.axeRun.incompleteCount).toBe(1);
   });

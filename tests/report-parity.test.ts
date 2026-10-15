@@ -163,8 +163,8 @@ describe('cross-format report contract', () => {
     const auditSummary = workbook.getWorksheet('Audit Summary')!;
     expect([auditSummary.getCell('E5').value, auditSummary.getCell('E6').value, auditSummary.getCell('E7').value])
       .toEqual([totals.confirmed, totals.review, totals.blocker]);
-    expect(html).toContain('<span>Confirmed</span><strong>1</strong>');
-    expect(html).toContain('<span>Needs review</span><strong>1</strong>');
+    expect(html).toContain('<span>Core confirmed</span><strong>1</strong>');
+    expect(html).toContain('<span>Core needs review</span><strong>1</strong>');
     expect(html).toContain('<strong>1 audit blocker:</strong>');
     expect(html).toContain('Audit coverage is incomplete, so resolve the gaps before drawing conclusions from the results.');
     expect(String(auditSummary.getCell('A13').value)).toBe('Executive summary, scope and method');

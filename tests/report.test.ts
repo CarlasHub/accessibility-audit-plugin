@@ -160,6 +160,33 @@ describe('Excel report', () => {
     expect((await validateExcelReport(path)).valid).toBe(true);
   });
 
+  it('keeps AAA-only results out of core triage while linking to optional advisory review', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'a11y-report-aaa-only-'));
+    const path = join(directory, 'report.xlsx');
+    const summary = summaryWithScreenshot('');
+    summary.aaaAdvisory = true;
+    summary.findings[0]!.wcag = ['1.4.6'];
+    summary.findings[0]!.severity = 'Advisory';
+    summary.findings[0]!.classification = 'review';
+    summary.criteria = buildWcagCriterionLedger(summary.pages, summary.findings, summary.manualChecks, true);
+    await writeExcelReport(summary, { outputPath: path });
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(path);
+    const auditSummary = workbook.getWorksheet('Audit Summary')!;
+    expect(auditSummary.getCell('E4').value).toBe(0);
+    expect(auditSummary.getCell('E8').value).toBe(1);
+    const summaryText = String(auditSummary.getCell('A16').value).replace(/\s+/g, ' ');
+    expect(summaryText).toContain('No core audit items require triage.');
+    expect(summaryText).toContain('1 WCAG AAA advisory item remains available for optional review');
+    expect(auditSummary.getCell('A17').value).toBe('Open advisory findings:');
+    expect(auditSummary.getCell('C17').value).toEqual(expect.objectContaining({
+      text: 'Review AAA advisory',
+      hyperlink: "#'Findings'!A7"
+    }));
+    expect((await validateExcelReport(path)).valid).toBe(true);
+  });
+
   it('adds a validated baseline comparison sheet only when comparison data is present', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'a11y-report-comparison-'));
     const path = join(directory, 'report.xlsx');

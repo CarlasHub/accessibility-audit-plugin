@@ -11,11 +11,11 @@ import { chromium } from 'playwright';
 import { describe, expect, it } from 'vitest';
 import { resolveOptions } from '../src/config.js';
 import { auditViewport, runAudit, type AuditViewportDependencies } from '../src/audit/runner.js';
-import { runDomChecks, runKeyboardChecks, runLinkChecks, runResponsiveChecks } from '../src/audit/browser-checks.js';
+import { collectTabChecks, runDomChecks, runKeyboardChecks, runLinkChecks, runResponsiveChecks } from '../src/audit/browser-checks.js';
 import { runConfiguredJourneyChecks } from '../src/audit/journey-checks.js';
 import { buildCoverageMatrix } from '../src/audit/coverage.js';
 import { findingsFromPage } from '../src/audit/findings.js';
-import { detectInteractionBlocker } from '../src/audit/page-preparation.js';
+import { collectElementContexts, detectInteractionBlocker } from '../src/audit/page-preparation.js';
 import type { CoverageArea } from '../src/types.js';
 import { executeAudit } from '../src/service.js';
 import { DEFAULT_AUDITOR } from '../src/instructions.js';
@@ -95,6 +95,24 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       { name: 'Keyboard', area: 'keyboard-only', override: { runKeyboardChecks: async () => { throw new Error('injected keyboard failure'); } } },
       { name: 'Disclosure', area: 'interactive-components', override: { runDisclosureChecks: async () => { throw new Error('injected disclosure failure'); } } },
       { name: 'Tab', area: 'interactive-components', override: { runTabChecks: async () => { throw new Error('injected tab failure'); } } },
+      {
+        name: 'Disclosure incomplete',
+        area: 'interactive-components',
+        override: {
+          runDisclosureChecks: async () => ({
+            results: [], candidateCount: 31, checkedCount: 30, truncated: false, completed: true
+          })
+        }
+      },
+      {
+        name: 'Tab incomplete',
+        area: 'interactive-components',
+        override: {
+          runTabChecks: async () => ({
+            results: [], candidateCount: 21, checkedCount: 20, truncated: false, completed: true
+          })
+        }
+      },
       { name: 'Link', area: 'broken-or-misleading-links', override: { runLinkChecks: async () => { throw new Error('injected link failure'); } } },
       { name: 'Element context', area: 'viewport-render', override: { collectElementContexts: async () => { throw new Error('injected context failure'); } } },
       { name: 'Screenshot', area: 'viewport-render', override: { captureElementScreenshots: async () => { throw new Error('injected screenshot failure'); } } }
@@ -126,11 +144,94 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
         expect(findings.some((finding) => finding.ruleId === 'axe-image-alt' && finding.classification === 'confirmed'), failure.name).toBe(true);
         expect(coverage.find((assessment) => assessment.area === 'automated-axe')?.status, failure.name).toBe('confirmed-failed');
         expect(coverage.find((assessment) => assessment.area === failure.area)?.status, failure.name).toBe('tested-inconclusive');
+        if (failure.name.endsWith('incomplete')) {
+          const checkId = failure.name.startsWith('Disclosure') ? 'disclosures' : 'tabs';
+          expect(audit.collectionOutcomes?.find((outcome) => outcome.checkId === checkId), failure.name)
+            .toEqual(expect.objectContaining({
+              status: 'failed',
+              observationCount: 0
+            }));
+          expect(audit.errors.some((error) => error.includes(
+            failure.name.startsWith('Disclosure') ? '30 of 31' : '20 of 21'
+          ))).toBe(true);
+        }
         if (failure.name === 'DOM') {
           expect(findings.some((finding) => finding.ruleId === 'missing-main-landmark'), failure.name).toBe(false);
           expect(findings.some((finding) => finding.ruleId === 'missing-h1'), failure.name).toBe(false);
         }
       }
+    } finally {
+      await browser.close();
+    }
+  }, 120_000);
+
+  it('proves tab behavior and reports safety-limit truncation instead of silently skipping tablists', async () => {
+    const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+    const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
+    const page = await browser.newPage();
+    try {
+      await page.setContent(`<!doctype html><html lang="en"><head><title>Tab behavior</title></head><body>
+        <div role="tablist" aria-label="Working tabs" id="working-tabs">
+          <button role="tab" id="working-one" aria-selected="true" aria-controls="working-panel-one" tabindex="0">One</button>
+          <button role="tab" id="working-two" aria-selected="false" aria-controls="working-panel-two" tabindex="-1">Two</button>
+        </div>
+        <div role="tabpanel" id="working-panel-one" aria-labelledby="working-one">First panel</div>
+        <div role="tabpanel" id="working-panel-two" aria-labelledby="working-two" hidden>Second panel</div>
+        <div role="tablist" aria-label="Broken tabs" id="broken-tabs">
+          <button role="tab" id="broken-one" aria-selected="true" aria-controls="broken-panel-one" tabindex="0">One</button>
+          <button role="tab" id="broken-two" aria-selected="false" aria-controls="broken-panel-two" tabindex="-1">Two</button>
+        </div>
+        <div role="tabpanel" id="broken-panel-one" aria-labelledby="broken-one">First panel</div>
+        <div role="tabpanel" id="broken-panel-two" aria-labelledby="broken-two" hidden>Second panel</div>
+        <script>
+          document.getElementById('working-tabs').addEventListener('keydown', (event) => {
+            const tabs = [...event.currentTarget.querySelectorAll('[role=tab]')];
+            const activeIndex = tabs.indexOf(document.activeElement);
+            const nextIndex = event.key === 'ArrowRight' ? (activeIndex + 1) % tabs.length
+              : event.key === 'Home' ? 0
+              : event.key === 'End' ? tabs.length - 1
+              : -1;
+            if (nextIndex < 0) return;
+            event.preventDefault();
+            tabs.forEach((tab, index) => {
+              tab.setAttribute('aria-selected', String(index === nextIndex));
+              tab.tabIndex = index === nextIndex ? 0 : -1;
+            });
+            tabs[nextIndex].focus();
+          });
+        </script>
+      </body></html>`);
+      const behavior = await collectTabChecks(page);
+      expect(behavior).toEqual(expect.objectContaining({
+        candidateCount: 2,
+        checkedCount: 2,
+        truncated: false,
+        completed: true
+      }));
+      expect(behavior.results.find((result) => result.selector === '#working-tabs')).toEqual(expect.objectContaining({
+        navigationMovedToTab: true,
+        activationWorked: true,
+        homeMovedToFirst: true,
+        endMovedToLast: true
+      }));
+      expect(behavior.results.find((result) => result.selector === '#broken-tabs')).toEqual(expect.objectContaining({
+        navigationMovedToTab: false,
+        activationWorked: false
+      }));
+
+      await page.setContent(`<!doctype html><html lang="en"><head><title>Tab limit</title></head><body>${Array.from({ length: 21 }, (_, index) => `
+        <div role="tablist" aria-label="Tabs ${index + 1}">
+          <button role="tab" aria-selected="true" tabindex="0">One</button>
+          <button role="tab" aria-selected="false" tabindex="-1">Two</button>
+        </div>`).join('')}</body></html>`);
+      const limited = await collectTabChecks(page);
+      expect(limited).toEqual(expect.objectContaining({
+        candidateCount: 21,
+        checkedCount: 20,
+        truncated: true,
+        completed: false,
+        error: expect.stringContaining('20 of 21')
+      }));
     } finally {
       await browser.close();
     }
@@ -347,6 +448,41 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
       })]);
       expect(links.results.some((result) => result.selector === '#cookie-settings')).toBe(false);
       expect(links.results).toEqual([expect.objectContaining({ selector: '#script-control', classification: 'review' })]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('measures a visually hidden file input through its visible label and describes it as an upload', async () => {
+    const channel = process.env.A11Y_TEST_BROWSER_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : undefined);
+    const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
+    try {
+      const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+      await page.setContent(`<!doctype html><html lang="en"><head><title>File upload target</title><style>
+        .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+        #resume-label { display: inline-flex; width: 160px; height: 40px; align-items: center; justify-content: center; }
+        #avatar-label { display: inline-block; width: 16px; height: 16px; }
+      </style></head><body>
+        <label id="resume-label" for="resume">Upload résumé</label><input class="visually-hidden" id="resume" type="file">
+        <label id="avatar-label" for="avatar">+</label><input class="visually-hidden" id="avatar" type="file">
+      </body></html>`);
+
+      const dom = await runDomChecks(page);
+      const contexts = await collectElementContexts(page, ['#resume']);
+
+      expect(dom.smallTargets.some((target) => target.selector === '#resume')).toBe(false);
+      expect(dom.smallTargets.find((target) => target.selector === '#avatar')).toEqual(expect.objectContaining({
+        measurementSelector: '#avatar-label',
+        name: '+',
+        width: 16,
+        height: 16
+      }));
+      expect(contexts).toEqual([expect.objectContaining({
+        selector: '#resume',
+        role: 'file upload',
+        accessibleName: 'Upload résumé',
+        componentName: '“Upload résumé” file upload'
+      })]);
     } finally {
       await browser.close();
     }
@@ -863,6 +999,14 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('browser audit inte
         ...(channel ? { channel } : {})
       }));
       const viewport = result.pages[0]!.viewports[0]!;
+      expect(viewport.partial).toBe(true);
+      expect(viewport.collectionOutcomes?.find((outcome) => outcome.checkId === 'disclosures')).toEqual(expect.objectContaining({
+        status: 'partial',
+        observationCount: 6,
+        candidateCount: 6,
+        checkedCount: 6,
+        truncated: false
+      }));
       const slow = viewport.disclosures.find((item) => item.selector === '#slow-toggle');
       expect(slow).toEqual(expect.objectContaining({
         activationTargetVerified: true,

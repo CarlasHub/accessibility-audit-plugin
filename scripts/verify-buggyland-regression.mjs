@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,10 +70,99 @@ function normalizedFindingIdentities(report, { includeSelectors = false } = {}) 
   })).sort((first, second) => first.id.localeCompare(second.id));
 }
 
-function identityDigest(report) {
-  return createHash('sha256')
-    .update(JSON.stringify(normalizedFindingIdentities(report)))
-    .digest('hex');
+function findingGroupKey(finding) {
+  return JSON.stringify({
+    ruleId: finding.ruleId,
+    classification: finding.classification,
+    severity: finding.severity,
+    wcag: uniqueSorted(finding.wcag),
+    urls: uniqueSorted(finding.urls)
+  });
+}
+
+function normalizedFindingGroups(report) {
+  const groups = new Map();
+  for (const finding of report.findings) {
+    const key = findingGroupKey(finding);
+    groups.set(key, (groups.get(key) ?? 0) + 1);
+  }
+  return [...groups.entries()]
+    .map(([key, count]) => ({ ...JSON.parse(key), count }))
+    .sort((first, second) => findingGroupKey(first).localeCompare(findingGroupKey(second)));
+}
+
+function formatFindingGroup(group) {
+  return `${group.ruleId} [${group.classification}/${group.severity}] WCAG ${group.wcag.join(', ')} on ${group.urls.join(', ')}`;
+}
+
+function assertReviewedFindingManifest(report, label) {
+  const expectedByKey = new Map(baseline.expectedFindings.map((finding) => [findingGroupKey(finding), finding.count]));
+  const actualByKey = new Map(normalizedFindingGroups(report).map((finding) => [findingGroupKey(finding), finding.count]));
+  const differences = [];
+  for (const key of new Set([...expectedByKey.keys(), ...actualByKey.keys()])) {
+    const expectedCount = expectedByKey.get(key) ?? 0;
+    const actualCount = actualByKey.get(key) ?? 0;
+    if (expectedCount !== actualCount) {
+      differences.push(`${formatFindingGroup(JSON.parse(key))}: expected ${expectedCount}, received ${actualCount}`);
+    }
+  }
+  assert(
+    differences.length === 0,
+    `${label}: reviewed finding manifest changed:\n- ${differences.join('\n- ')}`
+  );
+}
+
+function pageExpectationFor(url) {
+  return baseline.pageExpectations.find((expectation) => expectation.url === url);
+}
+
+function assertBaselineContract() {
+  assert(Array.isArray(baseline.expectedFindings) && baseline.expectedFindings.length > 0, 'Baseline: expectedFindings must be a non-empty reviewed manifest.');
+  const manifestKeys = baseline.expectedFindings.map(findingGroupKey);
+  assert(new Set(manifestKeys).size === manifestKeys.length, 'Baseline: expectedFindings contains duplicate structural groups; combine them with count.');
+  assert(baseline.expectedFindings.every((finding) => (
+    normalizeText(finding.ruleId)
+    && ['confirmed', 'review', 'blocker'].includes(finding.classification)
+    && normalizeText(finding.severity)
+    && finding.wcag.length > 0
+    && finding.urls.length > 0
+    && Number.isInteger(finding.count)
+    && finding.count > 0
+  )), 'Baseline: every expected finding group needs a rule, classification, severity, mappings, URLs and a positive integer count.');
+
+  const expectedCounts = Object.fromEntries(['confirmed', 'review', 'blocker'].map((classification) => [
+    classification,
+    baseline.expectedFindings
+      .filter((finding) => finding.classification === classification)
+      .reduce((total, finding) => total + finding.count, 0)
+  ]));
+  for (const classification of ['confirmed', 'review', 'blocker']) {
+    assert(expectedCounts[classification] === baseline.classifications[classification], `Baseline: ${classification} summary does not match expectedFindings.`);
+  }
+  assert(
+    Object.values(expectedCounts).reduce((total, count) => total + count, 0) === baseline.classifications.totalFindings,
+    'Baseline: totalFindings does not match expectedFindings.'
+  );
+
+  assert(Array.isArray(baseline.pageExpectations), 'Baseline: pageExpectations must be present.');
+  assert(sameValues(baseline.pageExpectations.map((page) => page.url), baseline.urls), 'Baseline: pageExpectations must cover every target URL exactly once.');
+  assert(new Set(baseline.pageExpectations.map((page) => page.url)).size === baseline.urls.length, 'Baseline: pageExpectations contains duplicate URLs.');
+  for (const page of baseline.pageExpectations) {
+    assert(['completed', 'partial'].includes(page.status), `Baseline: invalid page status for ${page.url}.`);
+    assert(sameValues(Object.keys(page.journeys), baseline.viewports), `Baseline: journey expectations do not cover every viewport for ${page.url}.`);
+    assert(Array.isArray(page.expectedErrors), `Baseline: expectedErrors must be an array for ${page.url}.`);
+    for (const viewport of baseline.viewports) {
+      const expectedJourneys = page.journeys[viewport];
+      if (page.status === 'partial') {
+        assert(normalizeText(page.blockerSelector), `Baseline: partial page ${page.url} needs a blocker selector.`);
+        assert(Object.keys(expectedJourneys).length === 0, `Baseline: partial page ${page.url} must not claim configured journey outcomes.`);
+      } else {
+        assert(page.blockerSelector === null, `Baseline: completed page ${page.url} must not define a blocker selector.`);
+        assert(sameValues(Object.keys(expectedJourneys), baseline.configuredJourneys.ids), `Baseline: configured journey expectations are incomplete for ${page.url} at ${viewport}.`);
+        assert(Object.values(expectedJourneys).every((status) => ['passed', 'failed', 'inconclusive'].includes(status)), `Baseline: invalid configured journey status for ${page.url} at ${viewport}.`);
+      }
+    }
+  }
 }
 
 const equivalentFamilies = new Map([
@@ -243,10 +331,11 @@ function assertEvidenceContract(report, label) {
 function assertConfiguredJourneyContract(report, label, blockedUrls) {
   const expectedIds = baseline.configuredJourneys.ids;
   const expectedCategories = ['keyboard', 'forms', 'interaction', 'dynamic-content'];
-  const allConfigured = [];
   for (const page of report.pages) {
+    const pageExpectation = pageExpectationFor(page.url);
     for (const viewport of page.viewports) {
       const configured = viewport.keyboard.journeys.filter((journey) => journey.source === 'configured');
+      const expectedStatuses = pageExpectation.journeys[viewport.viewport.name];
       if (blockedUrls.has(page.url)) {
         assert(configured.length === 0, `${label}: configured journeys ran behind the blocker on ${page.url} at ${viewport.viewport.name}.`);
         continue;
@@ -260,17 +349,14 @@ function assertConfiguredJourneyContract(report, label, blockedUrls) {
         `${label}: a configured journey has neither an executed assertion nor deterministic focus-failure evidence on ${page.url} at ${viewport.viewport.name}.`
       );
       assert(configured.every((journey) => journey.steps.length > 0 && normalizeText(journey.detail)), `${label}: configured journey evidence is incomplete on ${page.url} at ${viewport.viewport.name}.`);
-      allConfigured.push(...configured);
+      for (const journey of configured) {
+        assert(
+          journey.status === expectedStatuses[journey.id],
+          `${label}: ${journey.id} on ${page.url} at ${viewport.viewport.name} expected ${expectedStatuses[journey.id]}, received ${journey.status}.`
+        );
+      }
     }
   }
-  const statuses = Object.fromEntries(['passed', 'failed', 'inconclusive'].map((status) => [
-    status,
-    allConfigured.filter((journey) => journey.status === status).length
-  ]));
-  for (const status of ['passed', 'failed', 'inconclusive']) {
-    assert(statuses[status] === baseline.configuredJourneys[status], `${label}: expected ${baseline.configuredJourneys[status]} configured journeys to be ${status}, received ${statuses[status]}.`);
-  }
-  assert(allConfigured.length === baseline.configuredJourneys.total, `${label}: configured journey total changed.`);
 }
 
 function assertReport(report, label) {
@@ -297,32 +383,31 @@ function assertReport(report, label) {
   assert(report.manualChecks.length === baseline.classifications.manualChecks, `${label}: manual-check count changed.`);
   assert(report.findings.length === baseline.classifications.totalFindings, `${label}: total finding count changed.`);
 
-  let completedPages = 0;
-  let partialPages = 0;
   const blockedUrls = new Set();
   for (const page of report.pages) {
-    const shouldBeBlocked = new globalThis.URL(page.url).hash === '#special';
+    const pageExpectation = pageExpectationFor(page.url);
+    assert(pageExpectation, `${label}: ${page.url} has no reviewed page expectation.`);
+    const shouldBeBlocked = pageExpectation.status === 'partial';
     assert(sameValues(page.viewports.map((viewport) => viewport.viewport.name), baseline.viewports), `${label}: viewport coverage changed for ${page.url}.`);
     assert(Boolean(page.partial) === shouldBeBlocked, `${label}: partial status is wrong for ${page.url}.`);
-    if (page.partial) partialPages += 1;
-    else completedPages += 1;
 
     for (const viewport of page.viewports) {
       assert(viewport.axeRun.completed, `${label}: axe did not complete for ${page.url} at ${viewport.viewport.name}.`);
       assert(Boolean(viewport.partial) === shouldBeBlocked, `${label}: viewport partial status is wrong for ${page.url} at ${viewport.viewport.name}.`);
+      assert(
+        JSON.stringify(viewport.errors) === JSON.stringify(pageExpectation.expectedErrors),
+        `${label}: coverage errors changed for ${page.url} at ${viewport.viewport.name}.`
+      );
       if (shouldBeBlocked) {
         blockedUrls.add(page.url);
-        assert(viewport.interactionBlocker?.selector === baseline.blockerSelector, `${label}: expected the known fullscreen blocker for ${page.url} at ${viewport.viewport.name}.`);
+        assert(viewport.interactionBlocker?.selector === pageExpectation.blockerSelector, `${label}: expected the reviewed fullscreen blocker for ${page.url} at ${viewport.viewport.name}.`);
         assert(viewport.keyboard.scope === 'unknown', `${label}: page-level keyboard testing must remain unclaimed behind the blocker for ${page.url} at ${viewport.viewport.name}.`);
         assert(viewport.keyboard.sequence.length === 0 && viewport.keyboard.journeys.length === 0, `${label}: keyboard evidence was emitted behind the blocker for ${page.url} at ${viewport.viewport.name}.`);
       } else {
         assert(viewport.interactionBlocker === null, `${label}: unexpected blocker on ${page.url} at ${viewport.viewport.name}.`);
-        assert(viewport.errors.length === 0, `${label}: unexpected coverage error on ${page.url} at ${viewport.viewport.name}.`);
       }
     }
   }
-  assert(completedPages === baseline.fullyCompletedPages, `${label}: fully completed page count changed.`);
-  assert(partialPages === baseline.partialPages, `${label}: partial page count changed.`);
 
   assertCoverageContract(report, label, blockedUrls);
   assertCriterionContract(report, label);
@@ -336,11 +421,12 @@ function assertReport(report, label) {
 
   const ids = report.findings.map((finding) => finding.id);
   assert(ids.every((id, index) => id === `A11Y${String(index + 1).padStart(3, '0')}`), `${label}: finding IDs must be complete, ordered and gap-free.`);
-  assert(identityDigest(report) === baseline.findingIdentitySha256, `${label}: normalized finding identities changed from the reviewed baseline.`);
+  assertReviewedFindingManifest(report, label);
   assertNoConfirmedIncompleteAxe(report, label);
   assertNoEquivalentDuplicates(report, label);
 }
 
+assertBaselineContract();
 reports.forEach((report, index) => assertReport(report, `run ${index + 1}`));
 assert(
   JSON.stringify(normalizedFindingIdentities(reports[0], { includeSelectors: true }))

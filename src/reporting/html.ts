@@ -17,6 +17,7 @@ import {
   RESOLUTION_SCOPE_NOTE
 } from './comparison-presentation.js';
 import { findingId } from './finding-id.js';
+import { findingScope, findingScopeLabel, isCoreScopeFinding } from './finding-scope.js';
 
 export { findingActionGuidance } from './finding-actions.js';
 
@@ -81,6 +82,7 @@ export function findingTicketText(finding: Finding, index: number): string {
     `[${id}] ${finding.summary}`,
     '',
     `Evidence type: ${findingClassificationLabel(finding.classification)}`,
+    `Scope: ${findingScopeLabel(finding)}`,
     `Impact / priority: ${findingPriorityLabel(finding)}`,
     `WCAG / standard: ${standards.join(', ') || 'Advisory'}`,
     `Affected viewports: ${finding.viewports.join(', ') || 'Not specified'}`,
@@ -118,6 +120,8 @@ function findingRows(summary: AuditSummary, outputPath: string): string {
     return '<tr><td colspan="6" class="empty">No automated findings were recorded.</td></tr>';
   }
   return summary.findings.map((finding, index) => {
+    const scope = findingScope(finding);
+    const scopeLabel = findingScopeLabel(finding);
     const screenshots = finding.evidence
       .filter((item) => item.screenshot)
       .map((item) => {
@@ -144,12 +148,13 @@ function findingRows(summary: AuditSummary, outputPath: string): string {
       finding.componentLocation,
       finding.classification,
       finding.severity,
+      scopeLabel,
       ...finding.wcag,
       ...(finding.standards ?? []),
       ...finding.urls
-    ].filter(Boolean).join(' ').toLowerCase())}" data-classification="${escapeHtml(finding.classification)}" data-severity="${escapeHtml(finding.severity)}">
+    ].filter(Boolean).join(' ').toLowerCase())}" data-classification="${escapeHtml(finding.classification)}" data-severity="${escapeHtml(finding.severity)}" data-scope="${escapeHtml(scope)}">
       <td><span class="finding-id">${escapeHtml(id)}</span><br><span class="muted">${escapeHtml(finding.ruleId)}</span></td>
-      <td><span class="badge badge-${escapeHtml(finding.classification)}">${escapeHtml(finding.classification)}</span></td>
+      <td><span class="badge badge-${escapeHtml(finding.classification)}">${escapeHtml(finding.classification)}</span><br><span class="muted">${escapeHtml(scopeLabel)}</span></td>
       <td><span class="badge ${escapeHtml(impact.css)}">${escapeHtml(impact.label)}</span></td>
       <td><strong>${escapeHtml(finding.summary)}</strong><p>${escapeHtml(finding.issue)}</p>
         <details><summary>Understand and resolve this finding</summary>
@@ -282,12 +287,11 @@ function renderReport(summary: AuditSummary, outputPath: string): string {
     </li>`;
   }).join('');
   const topActionContent = topActionItems
-    ? `<ol class="top-action-list">${topActionItems}</ol>${summary.findings.length > topActions.length ? `<p class="top-action-count">Showing ${topActions.length} of ${summary.findings.length} report items. <a href="#findings">Review all findings</a>.</p>` : ''}`
-    : `<div class="panel"><p><strong>No report items require triage.</strong> ${escapeHtml(executiveSummary.nextStep)}</p></div>`;
-  const confirmed = count(summary, (finding) => finding.classification === 'confirmed');
-  const reviews = count(summary, (finding) => finding.classification === 'review');
-  const blockers = count(summary, (finding) => finding.classification === 'blocker');
-  const serious = count(summary, (finding) => finding.classification === 'confirmed' && (finding.severity === 'Critical' || finding.severity === 'Serious'));
+    ? `<ol class="top-action-list">${topActionItems}</ol>${executiveSummary.coreFindings > topActions.length || executiveSummary.advisoryFindings > 0 ? `<p class="top-action-count">Showing ${topActions.length} of ${executiveSummary.coreFindings} core audit items.${executiveSummary.advisoryFindings > 0 ? ` ${executiveSummary.advisoryFindings} WCAG AAA advisory item${executiveSummary.advisoryFindings === 1 ? ' is' : 's are'} listed separately.` : ''} <a href="#findings">Review all findings</a>.</p>` : ''}`
+    : `<div class="panel"><p><strong>No core audit items require triage.</strong>${executiveSummary.advisoryFindings > 0 ? ` ${executiveSummary.advisoryFindings} WCAG AAA advisory item${executiveSummary.advisoryFindings === 1 ? ' remains' : 's remain'} available for optional review. <a href="#findings">Review advisory findings</a>.` : ` ${escapeHtml(executiveSummary.nextStep)}`}</p></div>`;
+  const confirmed = count(summary, (finding) => isCoreScopeFinding(finding) && finding.classification === 'confirmed');
+  const reviews = count(summary, (finding) => isCoreScopeFinding(finding) && finding.classification === 'review');
+  const blockers = count(summary, (finding) => isCoreScopeFinding(finding) && finding.classification === 'blocker');
   const generated = Number.isNaN(Date.parse(summary.generatedAt)) ? summary.generatedAt : new Date(summary.generatedAt).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' });
   const target = summary.landingPageUrl || summary.requestedUrls[0] || 'Not specified';
   const aaaAdvisory = summary.aaaAdvisory ?? summary.wcagLevel === 'AAA';
@@ -338,11 +342,11 @@ function renderReport(summary: AuditSummary, outputPath: string): string {
     ${blockers ? `<div class="notice"><strong>${blockers} audit blocker${blockers === 1 ? '' : 's'}:</strong> review the findings before treating coverage as complete.</div>` : ''}
     <section class="metrics" aria-label="Audit summary">
       <div class="metric"><span>Pages audited</span><strong>${summary.auditedUrls.length}</strong></div>
-      <div class="metric"><span>Report items</span><strong>${summary.findings.length}</strong></div>
-      <div class="metric attention"><span>Confirmed</span><strong>${confirmed}</strong></div>
-      <div class="metric attention"><span>Confirmed serious / critical</span><strong>${serious}</strong></div>
-      <div class="metric"><span>Needs review</span><strong>${reviews}</strong></div>
-      <div class="metric"><span>Unresolved AA criteria</span><strong>${unresolvedCriteria}</strong></div>
+      <div class="metric"><span>Core audit items</span><strong>${executiveSummary.coreFindings}</strong></div>
+      <div class="metric"><span>WCAG A/AA mapped</span><strong>${executiveSummary.standardFindings}</strong></div>
+      <div class="metric attention"><span>Core confirmed</span><strong>${confirmed}</strong></div>
+      <div class="metric"><span>Core needs review</span><strong>${reviews}</strong></div>
+      <div class="metric"><span>WCAG AAA advisory</span><strong>${executiveSummary.advisoryFindings}</strong></div>
     </section>
     <div class="notice warning"><strong>Conformance decision: ${escapeHtml(summary.conformanceDecision === 'not-determined' || !summary.conformanceDecision ? 'Not determined' : summary.conformanceDecision)}.</strong> Automated evidence cannot certify WCAG conformance. A qualified human assessment and sign-off remain mandatory; failures require remediation and unresolved outcomes are not passes.</div>
     <nav aria-label="Report sections"><a href="#top-actions">Top actions</a>${comparisonNavLink}${historyNavLink}<a href="#findings">Findings</a><a href="#criteria">WCAG criteria</a><a href="#pages">Pages</a><a href="#coverage">Coverage</a><a href="#journeys">Task journeys</a><a href="#manual">Manual checks</a><a href="#method">Method and limitations</a></nav>
@@ -350,8 +354,8 @@ function renderReport(summary: AuditSummary, outputPath: string): string {
     ${comparison}
     ${history}
 
-    <section id="findings" aria-labelledby="findings-title"><h2 id="findings-title">Findings</h2><p class="lede">Confirmed rows are reproduced barriers to assign and retest. Review rows need a documented human decision before they become failures. Blockers mean the affected scope must be restored and rerun; manual rows require a person to complete the procedure. Ratings on non-confirmed rows are review priority, not confirmed impact severity. Expand a row for plain-language impact, assessment steps, remediation and linked evidence.</p>
-      <div class="toolbar"><div class="field"><label for="finding-search">Search findings</label><input id="finding-search" type="search" placeholder="Rule, issue, page or WCAG criterion"></div><div class="field"><label for="classification-filter">Classification</label><select id="classification-filter"><option value="">All classifications</option><option value="confirmed">Confirmed</option><option value="review">Review</option><option value="blocker">Blocker</option><option value="manual">Manual</option></select></div><div class="field"><label for="severity-filter">Severity</label><select id="severity-filter"><option value="">All severities</option><option>Critical</option><option>Serious</option><option>Moderate</option><option>Minor</option><option>Advisory</option></select></div><div id="result-count" class="result-count" aria-live="polite"></div></div>
+    <section id="findings" aria-labelledby="findings-title"><h2 id="findings-title">Findings</h2><p class="lede">Confirmed rows are reproduced barriers to assign and retest. Review rows need a documented human decision before they become failures. Blockers mean the affected scope must be restored and rerun; manual rows require a person to complete the procedure. Supporting audit checks remain actionable but are not represented as WCAG conformance results. Level AAA items are optional advisory scope and are kept separate from the A/AA conformance target. Ratings on non-confirmed rows are review priority, not confirmed impact severity. Expand a row for plain-language impact, assessment steps, remediation and linked evidence.</p>
+      <div class="toolbar"><div class="field"><label for="finding-search">Search findings</label><input id="finding-search" type="search" placeholder="Rule, issue, page or WCAG criterion"></div><div class="field"><label for="scope-filter">Scope</label><select id="scope-filter"><option value="">All scopes</option><option value="standard">WCAG A/AA target</option><option value="supplemental">Supporting audit checks</option><option value="advisory">WCAG AAA advisory</option></select></div><div class="field"><label for="classification-filter">Classification</label><select id="classification-filter"><option value="">All classifications</option><option value="confirmed">Confirmed</option><option value="review">Review</option><option value="blocker">Blocker</option><option value="manual">Manual</option></select></div><div class="field"><label for="severity-filter">Severity</label><select id="severity-filter"><option value="">All severities</option><option>Critical</option><option>Serious</option><option>Moderate</option><option>Minor</option><option>Advisory</option></select></div><div id="result-count" class="result-count" aria-live="polite"></div></div>
       <div class="table-wrap"><table><caption>Findings and evidence requiring action or validation</caption><thead><tr><th scope="col">ID / rule</th><th scope="col">Class</th><th scope="col">Impact / priority</th><th scope="col">Finding</th><th scope="col">Standards / rule source</th><th scope="col">Pages</th></tr></thead><tbody id="finding-rows">${findingRows(summary, outputPath)}</tbody></table></div>
     </section>
 
@@ -367,6 +371,7 @@ function renderReport(summary: AuditSummary, outputPath: string): string {
   <script>
     (() => {
       const search = document.getElementById('finding-search');
+      const scope = document.getElementById('scope-filter');
       const classification = document.getElementById('classification-filter');
       const severity = document.getElementById('severity-filter');
       const rows = [...document.querySelectorAll('#finding-rows tr[data-search]')];
@@ -375,13 +380,14 @@ function renderReport(summary: AuditSummary, outputPath: string): string {
         const query = search.value.trim().toLowerCase();
         let visible = 0;
         for (const row of rows) {
-          const show = (!query || row.dataset.search.includes(query)) && (!classification.value || row.dataset.classification === classification.value) && (!severity.value || row.dataset.severity === severity.value);
+          const show = (!query || row.dataset.search.includes(query)) && (!scope.value || row.dataset.scope === scope.value) && (!classification.value || row.dataset.classification === classification.value) && (!severity.value || row.dataset.severity === severity.value);
           row.hidden = !show;
           if (show) visible += 1;
         }
         count.textContent = visible + ' of ' + rows.length + ' findings';
       };
       search.addEventListener('input', filter);
+      scope.addEventListener('change', filter);
       classification.addEventListener('change', filter);
       severity.addEventListener('change', filter);
       filter();

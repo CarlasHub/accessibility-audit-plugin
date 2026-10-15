@@ -92,6 +92,30 @@ function axeTesting(violation: AxeViolationResult, audit: ViewportAudit, selecto
   ].join('\n');
 }
 
+function axeIncompleteSignals(node: AxeNodeResult): string {
+  return conciseList([
+    node.failureSummary ?? '',
+    ...[...(node.any ?? []), ...(node.all ?? []), ...(node.none ?? [])]
+      .map((check) => check.message ?? '')
+  ]
+    .map((signal) => signal.replace(/^Fix (any|all) of the following:\s*/i, '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean));
+}
+
+function axeIncompleteTesting(violation: AxeViolationResult, audit: ViewportAudit, selector: string, signal: string): string {
+  const expected = violation.description.replace(/^Ensure\s+/i, '').replace(/\.$/, '');
+  return [
+    `1. Open the affected page at the ${audit.viewport.name} viewport.`,
+    `2. Locate the component using ${selector}.`,
+    `3. Inspect the rendered state and accessibility-tree properties relevant to axe-core rule ${violation.id}.`,
+    `4. Decide manually whether the requirement passes or fails, and record the evidence for that decision.`,
+    `Automated signal: ${signal || 'axe-core could not resolve this rule automatically from the rendered state.'}`,
+    `Expected: ${expected}.`,
+    `Decision required: Record pass with supporting evidence, or confirm a failure and create a remediation ticket.`,
+    `Rule reference: ${violation.helpUrl}`
+  ].join('\n');
+}
+
 function axeUserImpact(ruleId: string): string {
   if (ruleId === 'color-contrast') return 'People with low vision or colour-vision deficiencies may be unable to read the text.';
   if (ruleId === 'target-size') return 'Touch users and people with limited dexterity may miss the target or activate an adjacent control.';
@@ -308,9 +332,6 @@ function axeFindings(audit: ViewportAudit): Finding[] {
     const wcag = violation.tags.map(criterionFromTag).filter((item): item is string => Boolean(item));
     const isWcagViolation = wcag.length > 0;
     const incomplete = violation.resultType === 'incomplete';
-    // Incomplete axe results remain in ViewportAudit.axe and AxeRunMetadata for
-    // coverage review. They are indeterminate and must not become report rows.
-    if (incomplete) return [];
     if (violation.id === 'color-contrast') {
       const groups = new Map<string, { details: ContrastDetails | null; nodes: AxeNodeResult[] }>();
       for (const node of violation.nodes) {
@@ -328,29 +349,33 @@ function axeFindings(audit: ViewportAudit): Finding[] {
         const actual = details
           ? `${details.foreground} foreground on ${details.background} background measured ${details.actual}:1; ${details.expected}:1 is required`
           : 'axe-core identified insufficient text contrast for the listed elements';
+        const confirmedContrast = Boolean(details) && !incomplete;
         const component = details
           ? `text colour treatment ${details.foreground} on ${details.background}`
           : 'text colour treatment';
         return makeFinding({
           identity: `color-contrast|${signature}`,
           ruleId: 'axe-color-contrast',
-          classification: details ? 'confirmed' : 'review',
-          severity: details ? severityFromAxe(violation.impact) : 'Advisory',
+          classification: confirmedContrast ? 'confirmed' : 'review',
+          severity: confirmedContrast ? severityFromAxe(violation.impact) : 'Advisory',
           wcag: wcag.length ? wcag : ['1.4.3'],
-          summary: details ? 'Shared text colour treatment has insufficient contrast' : 'Text contrast result needs measurement review',
-          issue: details
+          summary: confirmedContrast ? 'Shared text colour treatment has insufficient contrast' : 'Text contrast result needs measurement review',
+          issue: confirmedContrast
             ? `The same rendered colour treatment is used by the listed text components and does not meet minimum contrast. ${actual}.`
-            : 'The automated engine returned a potential text contrast result without the complete rendered colour and ratio measurements required to confirm a failure.',
+            : `axe-core could not automatically determine whether the listed text passes or fails minimum contrast. Automated signal: ${actual}. A human decision based on an independent rendered-colour measurement is required.`,
           impact: axeUserImpact(violation.id),
           testing: [
             `1. Open the affected page at the ${audit.viewport.name} viewport.`,
             `2. Locate the listed elements using ${conciseList(selectors, 8)}.`,
             '3. Measure the rendered foreground and background colours in each affected state.',
-            `Actual: ${actual}.`,
+            `${confirmedContrast ? 'Actual' : 'Automated signal'}: ${actual}.`,
             `Expected: Text reaches at least ${details?.expected ?? 'the applicable minimum'}:1 contrast for the rendered text size and weight.`,
+            ...(!confirmedContrast ? ['Decision required: Record pass with measured evidence, or confirm a failure and create a remediation ticket.'] : []),
             `Rule reference: ${violation.helpUrl}`
           ].join('\n'),
-          remediation: 'Change the shared foreground or background colour token so every affected instance reaches the applicable contrast threshold in each state. Retest normal, bold, selected, hover and focus states wherever that shared colour treatment is used.',
+          remediation: confirmedContrast
+            ? 'Change the shared foreground or background colour token so every affected instance reaches the applicable contrast threshold in each state. Retest normal, bold, selected, hover and focus states wherever that shared colour treatment is used.'
+            : 'First complete the independent rendered-colour measurement. If it confirms a failure, change the shared foreground or background colour token and retest every affected state.',
           component,
           sharedComponentKey: createSharedComponentKey(component, `color-contrast|${signature}`),
           urls: [audit.url],
@@ -365,7 +390,7 @@ function axeFindings(audit: ViewportAudit): Finding[] {
             screenshot: screenshotFor(audit, node.target[0])
           })),
           assignment: 'Mixed',
-          effort: details ? 'Medium' : 'Review',
+          effort: confirmedContrast ? 'Medium' : 'Review',
           translationRequired: 'No'
         });
       });
@@ -467,22 +492,29 @@ function axeFindings(audit: ViewportAudit): Finding[] {
       const representative = group.nodes[0]!;
       const nameDiagnostic = violation.id === 'link-name' ? linkNameDiagnostic(audit, representative) : '';
       const issue = axeAccessibilityIssue(violation, representative.failureSummary);
+      const incompleteSignal = axeIncompleteSignals(representative);
       return makeFinding({
         identity: `${violation.id}|${group.component}|${group.failure}`,
         ruleId: `axe-${violation.id}`,
-        classification: isWcagViolation ? 'confirmed' : 'review',
+        classification: incomplete ? 'review' : isWcagViolation ? 'confirmed' : 'review',
         severity: severityFromAxe(violation.impact),
         wcag: wcag.length ? wcag : ['Best Practice'],
-        summary: axeSummary(violation),
-        issue: nameDiagnostic ? `${issue} ${nameDiagnostic}` : issue,
+        summary: incomplete ? `${axeSummary(violation)} needs manual review` : axeSummary(violation),
+        issue: incomplete
+          ? `axe-core could not automatically determine whether this component passes or fails the requirement. ${incompleteSignal ? `Review signal: ${incompleteSignal}. ` : ''}A human decision is required before this result is recorded as passed or failed.`
+          : nameDiagnostic ? `${issue} ${nameDiagnostic}` : issue,
         impact: axeUserImpact(violation.id),
-        testing: axeTesting(
-          violation,
-          audit,
-          conciseList(selectors, 8),
-          nameDiagnostic ? `${representative.failureSummary ?? ''} ${nameDiagnostic}`.trim() : representative.failureSummary
-        ),
-        remediation: `${axeRemediation(violation)} Retest the component in every affected state.`,
+        testing: incomplete
+          ? axeIncompleteTesting(violation, audit, conciseList(selectors, 8), incompleteSignal)
+          : axeTesting(
+            violation,
+            audit,
+            conciseList(selectors, 8),
+            nameDiagnostic ? `${representative.failureSummary ?? ''} ${nameDiagnostic}`.trim() : representative.failureSummary
+          ),
+        remediation: incomplete
+          ? `First complete the manual review. If it confirms a failure, ${axeRemediation(violation).replace(/^./, (character) => character.toLowerCase())} Retest the component in every affected state.`
+          : `${axeRemediation(violation)} Retest the component in every affected state.`,
         component: group.component,
         sharedComponentKey: createSharedComponentKey(group.component, `${violation.id}|${group.failure}`),
         urls: [audit.url],
@@ -493,7 +525,11 @@ function axeFindings(audit: ViewportAudit): Finding[] {
           pageUrl: audit.url,
           viewport: audit.viewport.name,
           selector: node.target.join(', '),
-          detail: [node.html, violation.id === 'link-name' ? linkNameDiagnostic(audit, node) : ''].filter(Boolean).join('\n'),
+          detail: [
+            node.html,
+            incomplete ? axeIncompleteSignals(node) : '',
+            !incomplete && violation.id === 'link-name' ? linkNameDiagnostic(audit, node) : ''
+          ].filter(Boolean).join('\n'),
           screenshot: screenshotFor(audit, node.target[0])
         })),
         assignment: assignmentForRule(violation.id),
@@ -1131,7 +1167,7 @@ function domFindings(audit: ViewportAudit): Finding[] {
       evidence: items.map((item) => evidence(
         'dom',
         item.selector,
-        `${item.width}×${item.height} CSS pixels; name: ${item.name || 'unnamed target'}; inline exception: ${item.inlineException}; spacing risk: ${item.spacingRisk}; nearby targets: ${item.nearbyTargets.map((nearby) => `${nearby.name || nearby.selector} (${nearby.centerDistance}px centre distance)`).join(', ') || 'none'}; axe target-size signal: ${Boolean(item.axeTargetSizeSignal || axeTargetSelectors.has(normalizeComponent(item.selector)))}`
+        `${item.width}×${item.height} CSS pixels; name: ${item.name || 'unnamed target'}; measured pointer surface: ${item.measurementSelector || item.selector}; inline exception: ${item.inlineException}; spacing risk: ${item.spacingRisk}; nearby targets: ${item.nearbyTargets.map((nearby) => `${nearby.name || nearby.selector} (${nearby.centerDistance}px centre distance)`).join(', ') || 'none'}; axe target-size signal: ${Boolean(item.axeTargetSizeSignal || axeTargetSelectors.has(normalizeComponent(item.selector)))}`
       )),
       assignment: 'Development',
       effort: 'Small',
@@ -1400,7 +1436,7 @@ export function findingsFromPage(page: PageAudit): Finding[] {
         }
         if (!checkId || !audit.collectionOutcomes) return true;
         const status = outcome(checkId)?.status;
-        return status === 'completed'
+        return status === 'completed' || status === 'partial'
           || (finding.classification === 'blocker' && (status === 'failed' || status === 'blocked'));
       });
       return [...axeFindings(audit), ...domFindings(audit)]

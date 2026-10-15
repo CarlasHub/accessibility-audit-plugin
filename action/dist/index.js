@@ -152234,7 +152234,7 @@ Execution rules:
 7. Treat WCAG 2.2 Level AA as the public conformance target. AAA checks are optional advisory evidence and must never relabel the audit as an AAA conformance assessment. Do not claim that automation, axe, or a scripted screen-reader journey covers all WCAG 2.2 requirements. Retrieve list_guided_manual_checks, confirm that it contains one criterion-specific procedure and evidence prompt for each of the 55 active A/AA criteria, and preserve screen-reader, physical-device, content, visual, and judgment-based checks as outstanding until a qualified person performs them.
 8. Treat deterministic reproduced failures as confirmed issues. Keep heuristics or unresolved content and visual questions as review issues. Keep unavailable pages as blockers. Keep unexecuted assistive-technology and judgment-based procedures as guided/manual checks.
 9. Use one row for the same reusable component implementation and root cause across all affected pages, and group repeated DOM instances within that component. List every affected page individually in the merged row's Links cell. Keep a page-specific implementation, colour treatment, behaviour, success criterion, or remediation requirement on its own row. Do not merge unrelated findings merely because they share a host or WCAG criterion. Do not report missing aria-controls alone as a WCAG failure or standalone review for an ordinary disclosure/accordion; generic disclosures/accordions do not require Escape to close.
-10. If a modal, consent layer, or other surface cannot be dismissed, record it as an interaction-coverage blocker, skip underlying state-based checks, and never interpret the resulting focus sequence or absence of findings as a page pass. Preserve axe incomplete results, unresolved focus-indicator samples, and incomplete interactions as raw JSON evidence and inconclusive coverage; do not promote them to workbook findings. Record every page/viewport/area outcome in the JSON coverage matrix using confirmed-passed, confirmed-failed, tested-inconclusive, manual-review-required, not-tested, or not-applicable.
+10. If a modal, consent layer, or other surface cannot be dismissed, record it as an interaction-coverage blocker, skip underlying state-based checks, and never interpret the resulting focus sequence or absence of findings as a page pass. Preserve axe incomplete results as raw JSON evidence and inconclusive coverage, and expose generic axe incomplete results as review-only findings with the affected rule, component, evidence, and manual decision procedure; never present them as confirmed failures or passes. Keep unresolved focus-indicator samples and incomplete interactions in raw JSON and inconclusive coverage without promoting them to findings. Record every page/viewport/area outcome in the JSON coverage matrix using confirmed-passed, confirmed-failed, tested-inconclusive, manual-review-required, not-tested, or not-applicable.
 
 Report rules:
 1. Generate the self-contained accessible HTML report, seven-sheet CarlasHub WCAG 2.2 workbook, JSON evidence, CSV finding register, and SARIF 2.1.0 results. Preserve the six canonical template worksheets in their existing order, tab colours, accessible colour scheme, formulas, validations, filters, and the 25 Findings columns; append only the generated WCAG Criteria ledger. Remove placeholder values and do not add other worksheets or columns.
@@ -152768,9 +152768,34 @@ async function runDomChecks(page, axeTargetSizeSelectors = []) {
                 return false;
             }
         });
+        const renderedAsHiddenProxy = (element) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width <= 4
+                || rect.height <= 4
+                || rect.right <= 0
+                || rect.left >= innerWidth
+                || Number.parseFloat(style.opacity || '1') === 0
+                || style.pointerEvents === 'none'
+                || (style.clip !== 'auto' && style.clip !== '')
+                || (style.clipPath !== 'none' && style.clipPath !== '');
+        };
+        const pointerSurfaceFor = (element) => {
+            if (!(element instanceof HTMLInputElement) || element.type !== 'file' || !renderedAsHiddenProxy(element))
+                return element;
+            const labels = [...(element.labels ?? [])]
+                .filter(visible)
+                .sort((first, second) => {
+                const firstRect = first.getBoundingClientRect();
+                const secondRect = second.getBoundingClientRect();
+                return secondRect.width * secondRect.height - firstRect.width * firstRect.height;
+            });
+            return labels[0] ?? element;
+        };
         const pointerTargets = [...document.querySelectorAll(focusables)]
-            .filter(visible)
-            .map((element) => ({ element, rect: element.getBoundingClientRect() }));
+            .map((element) => ({ element, surface: pointerSurfaceFor(element) }))
+            .filter(({ surface }) => visible(surface))
+            .map(({ element, surface }) => ({ element, surface, rect: surface.getBoundingClientRect() }));
         const inlineExceptionFor = (element) => {
             if (!(element instanceof HTMLAnchorElement))
                 return false;
@@ -152807,12 +152832,12 @@ async function runDomChecks(page, axeTargetSizeSelectors = []) {
             return Math.hypot(targetX - closestX, targetY - closestY) < 12;
         };
         const smallTargets = pointerTargets
-            .filter(({ element, rect }) => rect.width < 24 || rect.height < 24 || hasAxeTargetSizeSignal(element))
-            .map(({ element, rect }) => {
+            .filter(({ element, surface, rect }) => rect.width < 24 || rect.height < 24 || hasAxeTargetSizeSignal(element) || hasAxeTargetSizeSignal(surface))
+            .map(({ element, surface, rect }) => {
             const nearbyTargets = pointerTargets
-                .filter(({ element: otherElement, rect: otherRect }) => (otherElement !== element
-                && !element.contains(otherElement)
-                && !otherElement.contains(element)
+                .filter(({ element: otherElement, surface: otherSurface, rect: otherRect }) => (otherElement !== element
+                && !surface.contains(otherSurface)
+                && !otherSurface.contains(surface)
                 && clearanceCircleIntersects(rect, otherRect)))
                 .slice(0, 12)
                 .map(({ element: otherElement, rect: otherRect }) => ({
@@ -152824,14 +152849,15 @@ async function runDomChecks(page, axeTargetSizeSelectors = []) {
             }));
             return {
                 selector: cssPath(element),
+                ...(surface === element ? {} : { measurementSelector: cssPath(surface) }),
                 name: name(element),
                 width: rounded(rect.width),
                 height: rounded(rect.height),
-                groupSelector: groupSelectorFor(element),
-                inlineException: inlineExceptionFor(element),
+                groupSelector: groupSelectorFor(surface),
+                inlineException: inlineExceptionFor(surface),
                 hitTested: rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth,
                 spacingRisk: nearbyTargets.length > 0,
-                axeTargetSizeSignal: hasAxeTargetSizeSignal(element),
+                axeTargetSizeSignal: hasAxeTargetSizeSignal(element) || hasAxeTargetSizeSignal(surface),
                 nearbyTargets
             };
         });
@@ -153817,6 +153843,8 @@ async function waitForDisclosureInventorySettled(page) {
         await page.waitForTimeout(50);
     }
 }
+const DISCLOSURE_CHECK_LIMIT = 30;
+const TAB_CHECK_LIMIT = 20;
 async function collectDisclosureIdentities(page) {
     await waitForDisclosureInventorySettled(page);
     return page.evaluate(({ selector, limit }) => {
@@ -153872,7 +153900,6 @@ async function collectDisclosureIdentities(page) {
             && !element.closest('[inert], [aria-hidden="true"], .slick-cloned:not(.slick-active), .swiper-slide-duplicate:not(.swiper-slide-active)'));
         const identities = [...document.querySelectorAll(selector)]
             .filter(activeControl)
-            .slice(0, limit)
             .map((element) => ({
             selector: cssPath(element),
             name: accessibleName(element),
@@ -153881,11 +153908,15 @@ async function collectDisclosureIdentities(page) {
             id: element.id,
             controls: element.getAttribute('aria-controls')
         }));
-        return identities.filter((identity, index) => identities.findIndex((item) => (item.selector === identity.selector
+        const uniqueIdentities = identities.filter((identity, index) => identities.findIndex((item) => (item.selector === identity.selector
             && item.name === identity.name
             && item.role === identity.role
             && item.controls === identity.controls)) === index);
-    }, { selector: disclosureSelector, limit: 30 });
+        return {
+            identities: uniqueIdentities.slice(0, limit),
+            candidateCount: uniqueIdentities.length
+        };
+    }, { selector: disclosureSelector, limit: DISCLOSURE_CHECK_LIMIT });
 }
 async function readDisclosureSnapshot(page, identity) {
     return page.evaluate(({ identity: expected, selector }) => {
@@ -154214,9 +154245,10 @@ function incompleteDisclosureResult(identity, error, partial = {}) {
         error
     };
 }
-async function runDisclosureChecks(page) {
+async function collectDisclosureChecks(page) {
     const results = [];
-    const identities = await collectDisclosureIdentities(page);
+    const inventory = await collectDisclosureIdentities(page);
+    const identities = inventory.identities;
     for (const identity of identities) {
         try {
             let initialRead = await readDisclosureSnapshot(page, identity);
@@ -154401,19 +154433,46 @@ async function runDisclosureChecks(page) {
             results.push(incompleteDisclosureResult(identity, error instanceof Error ? error.message : String(error)));
         }
     }
-    return results;
+    const incompleteCount = results.filter((result) => result.error).length;
+    const truncated = inventory.candidateCount > identities.length;
+    const problems = [
+        ...(truncated
+            ? [`The disclosure safety limit checked ${identities.length} of ${inventory.candidateCount} eligible controls.`]
+            : []),
+        ...(incompleteCount > 0
+            ? [`${incompleteCount} of ${results.length} attempted disclosure checks did not complete.`]
+            : [])
+    ];
+    return {
+        results,
+        candidateCount: inventory.candidateCount,
+        checkedCount: identities.length,
+        truncated,
+        completed: problems.length === 0,
+        ...(problems.length ? { error: problems.join(' ') } : {})
+    };
 }
-async function runTabChecks(page) {
+async function runDisclosureChecks(page) {
+    return (await collectDisclosureChecks(page)).results;
+}
+async function collectTabChecks(page) {
     const tablists = page.locator('[role="tablist"]');
     const results = [];
-    const count = Math.min(await tablists.count(), 20);
-    for (let index = 0; index < count; index += 1) {
+    const eligibleIndexes = [];
+    const tablistCount = await tablists.count();
+    for (let index = 0; index < tablistCount; index += 1) {
         const tabs = tablists.nth(index).locator('[role="tab"]');
         if ((await tabs.count()) < 2)
             continue;
         const first = tabs.first();
         if (!(await first.isVisible().catch(() => false)))
             continue;
+        eligibleIndexes.push(index);
+    }
+    const checkedIndexes = eligibleIndexes.slice(0, TAB_CHECK_LIMIT);
+    for (const index of checkedIndexes) {
+        const tabs = tablists.nth(index).locator('[role="tab"]');
+        const first = tabs.first();
         const tablist = tablists.nth(index);
         const description = await locatorDescription(tablist);
         try {
@@ -154462,8 +154521,10 @@ async function runTabChecks(page) {
             const orientation = await tablist.getAttribute('aria-orientation');
             const navigationKey = orientation === 'vertical' ? 'ArrowDown' : 'ArrowRight';
             await start.focus();
+            const navigationStartIndex = await tabs.evaluateAll((elements) => elements.indexOf(document.activeElement));
             await page.keyboard.press(navigationKey);
-            const navigationMovedToTab = await tabs.evaluateAll((elements) => elements.includes(document.activeElement));
+            const navigationEndIndex = await tabs.evaluateAll((elements) => elements.indexOf(document.activeElement));
+            const navigationMovedToTab = navigationEndIndex >= 0 && navigationEndIndex !== navigationStartIndex;
             let activationWorked = false;
             if (navigationMovedToTab) {
                 const active = page.locator(':focus');
@@ -154516,7 +154577,27 @@ async function runTabChecks(page) {
             });
         }
     }
-    return results;
+    const incompleteCount = results.filter((result) => result.error).length;
+    const truncated = eligibleIndexes.length > checkedIndexes.length;
+    const problems = [
+        ...(truncated
+            ? [`The tablist safety limit checked ${checkedIndexes.length} of ${eligibleIndexes.length} eligible tablists.`]
+            : []),
+        ...(incompleteCount > 0
+            ? [`${incompleteCount} of ${results.length} attempted tab checks did not complete.`]
+            : [])
+    ];
+    return {
+        results,
+        candidateCount: eligibleIndexes.length,
+        checkedCount: checkedIndexes.length,
+        truncated,
+        completed: problems.length === 0,
+        ...(problems.length ? { error: problems.join(' ') } : {})
+    };
+}
+async function runTabChecks(page) {
+    return (await collectTabChecks(page)).results;
 }
 //# sourceMappingURL=browser-checks.js.map
 ;// CONCATENATED MODULE: ./dist/audit/journey-checks.js
@@ -155161,6 +155242,8 @@ async function collectElementContexts(page, selectors) {
                             return 'checkbox';
                         if (target.type === 'radio')
                             return 'radio';
+                        if (target.type === 'file')
+                            return 'file upload';
                         return 'textbox';
                     }
                     return tag;
@@ -155305,6 +155388,28 @@ function axeTesting(violation, audit, selector, failureSummary) {
         `3. Inspect its rendered state and accessibility-tree properties, then run axe-core rule ${violation.id}.`,
         `Actual: ${actual}`,
         `Expected: ${expected}.`,
+        `Rule reference: ${violation.helpUrl}`
+    ].join('\n');
+}
+function axeIncompleteSignals(node) {
+    return conciseList([
+        node.failureSummary ?? '',
+        ...[...(node.any ?? []), ...(node.all ?? []), ...(node.none ?? [])]
+            .map((check) => check.message ?? '')
+    ]
+        .map((signal) => signal.replace(/^Fix (any|all) of the following:\s*/i, '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean));
+}
+function axeIncompleteTesting(violation, audit, selector, signal) {
+    const expected = violation.description.replace(/^Ensure\s+/i, '').replace(/\.$/, '');
+    return [
+        `1. Open the affected page at the ${audit.viewport.name} viewport.`,
+        `2. Locate the component using ${selector}.`,
+        `3. Inspect the rendered state and accessibility-tree properties relevant to axe-core rule ${violation.id}.`,
+        `4. Decide manually whether the requirement passes or fails, and record the evidence for that decision.`,
+        `Automated signal: ${signal || 'axe-core could not resolve this rule automatically from the rendered state.'}`,
+        `Expected: ${expected}.`,
+        `Decision required: Record pass with supporting evidence, or confirm a failure and create a remediation ticket.`,
         `Rule reference: ${violation.helpUrl}`
     ].join('\n');
 }
@@ -155525,10 +155630,6 @@ function axeFindings(audit) {
         const wcag = violation.tags.map(criterionFromTag).filter((item) => Boolean(item));
         const isWcagViolation = wcag.length > 0;
         const incomplete = violation.resultType === 'incomplete';
-        // Incomplete axe results remain in ViewportAudit.axe and AxeRunMetadata for
-        // coverage review. They are indeterminate and must not become report rows.
-        if (incomplete)
-            return [];
         if (violation.id === 'color-contrast') {
             const groups = new Map();
             for (const node of violation.nodes) {
@@ -155546,29 +155647,33 @@ function axeFindings(audit) {
                 const actual = details
                     ? `${details.foreground} foreground on ${details.background} background measured ${details.actual}:1; ${details.expected}:1 is required`
                     : 'axe-core identified insufficient text contrast for the listed elements';
+                const confirmedContrast = Boolean(details) && !incomplete;
                 const component = details
                     ? `text colour treatment ${details.foreground} on ${details.background}`
                     : 'text colour treatment';
                 return makeFinding({
                     identity: `color-contrast|${signature}`,
                     ruleId: 'axe-color-contrast',
-                    classification: details ? 'confirmed' : 'review',
-                    severity: details ? severityFromAxe(violation.impact) : 'Advisory',
+                    classification: confirmedContrast ? 'confirmed' : 'review',
+                    severity: confirmedContrast ? severityFromAxe(violation.impact) : 'Advisory',
                     wcag: wcag.length ? wcag : ['1.4.3'],
-                    summary: details ? 'Shared text colour treatment has insufficient contrast' : 'Text contrast result needs measurement review',
-                    issue: details
+                    summary: confirmedContrast ? 'Shared text colour treatment has insufficient contrast' : 'Text contrast result needs measurement review',
+                    issue: confirmedContrast
                         ? `The same rendered colour treatment is used by the listed text components and does not meet minimum contrast. ${actual}.`
-                        : 'The automated engine returned a potential text contrast result without the complete rendered colour and ratio measurements required to confirm a failure.',
+                        : `axe-core could not automatically determine whether the listed text passes or fails minimum contrast. Automated signal: ${actual}. A human decision based on an independent rendered-colour measurement is required.`,
                     impact: axeUserImpact(violation.id),
                     testing: [
                         `1. Open the affected page at the ${audit.viewport.name} viewport.`,
                         `2. Locate the listed elements using ${conciseList(selectors, 8)}.`,
                         '3. Measure the rendered foreground and background colours in each affected state.',
-                        `Actual: ${actual}.`,
+                        `${confirmedContrast ? 'Actual' : 'Automated signal'}: ${actual}.`,
                         `Expected: Text reaches at least ${details?.expected ?? 'the applicable minimum'}:1 contrast for the rendered text size and weight.`,
+                        ...(!confirmedContrast ? ['Decision required: Record pass with measured evidence, or confirm a failure and create a remediation ticket.'] : []),
                         `Rule reference: ${violation.helpUrl}`
                     ].join('\n'),
-                    remediation: 'Change the shared foreground or background colour token so every affected instance reaches the applicable contrast threshold in each state. Retest normal, bold, selected, hover and focus states wherever that shared colour treatment is used.',
+                    remediation: confirmedContrast
+                        ? 'Change the shared foreground or background colour token so every affected instance reaches the applicable contrast threshold in each state. Retest normal, bold, selected, hover and focus states wherever that shared colour treatment is used.'
+                        : 'First complete the independent rendered-colour measurement. If it confirms a failure, change the shared foreground or background colour token and retest every affected state.',
                     component,
                     sharedComponentKey: createSharedComponentKey(component, `color-contrast|${signature}`),
                     urls: [audit.url],
@@ -155583,7 +155688,7 @@ function axeFindings(audit) {
                         screenshot: screenshotFor(audit, node.target[0])
                     })),
                     assignment: 'Mixed',
-                    effort: details ? 'Medium' : 'Review',
+                    effort: confirmedContrast ? 'Medium' : 'Review',
                     translationRequired: 'No'
                 });
             });
@@ -155685,17 +155790,24 @@ function axeFindings(audit) {
             const representative = group.nodes[0];
             const nameDiagnostic = violation.id === 'link-name' ? linkNameDiagnostic(audit, representative) : '';
             const issue = axeAccessibilityIssue(violation, representative.failureSummary);
+            const incompleteSignal = axeIncompleteSignals(representative);
             return makeFinding({
                 identity: `${violation.id}|${group.component}|${group.failure}`,
                 ruleId: `axe-${violation.id}`,
-                classification: isWcagViolation ? 'confirmed' : 'review',
+                classification: incomplete ? 'review' : isWcagViolation ? 'confirmed' : 'review',
                 severity: severityFromAxe(violation.impact),
                 wcag: wcag.length ? wcag : ['Best Practice'],
-                summary: axeSummary(violation),
-                issue: nameDiagnostic ? `${issue} ${nameDiagnostic}` : issue,
+                summary: incomplete ? `${axeSummary(violation)} needs manual review` : axeSummary(violation),
+                issue: incomplete
+                    ? `axe-core could not automatically determine whether this component passes or fails the requirement. ${incompleteSignal ? `Review signal: ${incompleteSignal}. ` : ''}A human decision is required before this result is recorded as passed or failed.`
+                    : nameDiagnostic ? `${issue} ${nameDiagnostic}` : issue,
                 impact: axeUserImpact(violation.id),
-                testing: axeTesting(violation, audit, conciseList(selectors, 8), nameDiagnostic ? `${representative.failureSummary ?? ''} ${nameDiagnostic}`.trim() : representative.failureSummary),
-                remediation: `${axeRemediation(violation)} Retest the component in every affected state.`,
+                testing: incomplete
+                    ? axeIncompleteTesting(violation, audit, conciseList(selectors, 8), incompleteSignal)
+                    : axeTesting(violation, audit, conciseList(selectors, 8), nameDiagnostic ? `${representative.failureSummary ?? ''} ${nameDiagnostic}`.trim() : representative.failureSummary),
+                remediation: incomplete
+                    ? `First complete the manual review. If it confirms a failure, ${axeRemediation(violation).replace(/^./, (character) => character.toLowerCase())} Retest the component in every affected state.`
+                    : `${axeRemediation(violation)} Retest the component in every affected state.`,
                 component: group.component,
                 sharedComponentKey: createSharedComponentKey(group.component, `${violation.id}|${group.failure}`),
                 urls: [audit.url],
@@ -155706,7 +155818,11 @@ function axeFindings(audit) {
                     pageUrl: audit.url,
                     viewport: audit.viewport.name,
                     selector: node.target.join(', '),
-                    detail: [node.html, violation.id === 'link-name' ? linkNameDiagnostic(audit, node) : ''].filter(Boolean).join('\n'),
+                    detail: [
+                        node.html,
+                        incomplete ? axeIncompleteSignals(node) : '',
+                        !incomplete && violation.id === 'link-name' ? linkNameDiagnostic(audit, node) : ''
+                    ].filter(Boolean).join('\n'),
                     screenshot: screenshotFor(audit, node.target[0])
                 })),
                 assignment: assignmentForRule(violation.id),
@@ -156307,7 +156423,7 @@ function domFindings(audit) {
             urls: [audit.url],
             viewports: [audit.viewport.name],
             selectors,
-            evidence: items.map((item) => evidence('dom', item.selector, `${item.width}×${item.height} CSS pixels; name: ${item.name || 'unnamed target'}; inline exception: ${item.inlineException}; spacing risk: ${item.spacingRisk}; nearby targets: ${item.nearbyTargets.map((nearby) => `${nearby.name || nearby.selector} (${nearby.centerDistance}px centre distance)`).join(', ') || 'none'}; axe target-size signal: ${Boolean(item.axeTargetSizeSignal || axeTargetSelectors.has(normalizeComponent(item.selector)))}`)),
+            evidence: items.map((item) => evidence('dom', item.selector, `${item.width}×${item.height} CSS pixels; name: ${item.name || 'unnamed target'}; measured pointer surface: ${item.measurementSelector || item.selector}; inline exception: ${item.inlineException}; spacing risk: ${item.spacingRisk}; nearby targets: ${item.nearbyTargets.map((nearby) => `${nearby.name || nearby.selector} (${nearby.centerDistance}px centre distance)`).join(', ') || 'none'}; axe target-size signal: ${Boolean(item.axeTargetSizeSignal || axeTargetSelectors.has(normalizeComponent(item.selector)))}`)),
             assignment: 'Development',
             effort: 'Small',
             translationRequired: 'No'
@@ -156564,7 +156680,7 @@ function findingsFromPage(page) {
             if (!checkId || !audit.collectionOutcomes)
                 return true;
             const status = outcome(checkId)?.status;
-            return status === 'completed'
+            return status === 'completed' || status === 'partial'
                 || (finding.classification === 'blocker' && (status === 'failed' || status === 'blocked'));
         });
         return [...axeFindings(audit), ...domFindings(audit)]
@@ -156973,7 +157089,7 @@ function ledgerStatusCounts(criteria = []) {
 }
 //# sourceMappingURL=wcag-criteria.js.map
 ;// CONCATENATED MODULE: ./dist/audit/quality-contract.js
-const AUDIT_QUALITY_CONTRACT_VERSION = '1.2.0';
+const AUDIT_QUALITY_CONTRACT_VERSION = '1.3.0';
 const WCAG_22_AA_CRITERION_COUNT = 55;
 const AUDIT_QUALITY_CONTRACT = {
     version: AUDIT_QUALITY_CONTRACT_VERSION,
@@ -157148,6 +157264,9 @@ function outcomeErrors(outcome, label) {
     if (outcome.status === 'completed' && (outcome.error || outcome.blockedBy)) {
         errors.push(`${label} is completed but also records an error or blocker`);
     }
+    if (outcome.status === 'partial' && (!outcome.error?.trim() || outcome.blockedBy)) {
+        errors.push(`${label} is partial without exactly one explicit error`);
+    }
     if (outcome.status === 'failed' && (!outcome.error?.trim() || outcome.blockedBy)) {
         errors.push(`${label} failed without exactly one explicit error`);
     }
@@ -157160,6 +157279,41 @@ function outcomeErrors(outcome, label) {
     if ((outcome.status === 'failed' || outcome.status === 'not-applicable' || outcome.status === 'not-run')
         && outcome.observationCount !== 0) {
         errors.push(`${label} is ${outcome.status} but records retained observations`);
+    }
+    if (outcome.status === 'partial' && outcome.observationCount === 0) {
+        errors.push(`${label} is partial but records no retained observations`);
+    }
+    const hasCandidateCount = outcome.candidateCount !== undefined;
+    const hasCheckedCount = outcome.checkedCount !== undefined;
+    if (hasCandidateCount !== hasCheckedCount) {
+        errors.push(`${label} must record candidate and checked counts together`);
+    }
+    if (hasCandidateCount && (!Number.isInteger(outcome.candidateCount) || outcome.candidateCount < 0)) {
+        errors.push(`${label} has an invalid candidate count`);
+    }
+    if (hasCheckedCount && (!Number.isInteger(outcome.checkedCount) || outcome.checkedCount < 0)) {
+        errors.push(`${label} has an invalid checked count`);
+    }
+    if (hasCandidateCount && hasCheckedCount && outcome.checkedCount > outcome.candidateCount) {
+        errors.push(`${label} checked more observations than were eligible`);
+    }
+    if ((hasCandidateCount || hasCheckedCount) && outcome.truncated === undefined) {
+        errors.push(`${label} records candidate counts without an explicit truncation state`);
+    }
+    if (outcome.truncated !== undefined && (!hasCandidateCount || !hasCheckedCount)) {
+        errors.push(`${label} records a truncation state without candidate and checked counts`);
+    }
+    if (hasCandidateCount && hasCheckedCount && outcome.checkedCount < outcome.candidateCount
+        && outcome.truncated !== true) {
+        errors.push(`${label} left eligible observations unchecked without marking the collection truncated`);
+    }
+    if (outcome.truncated === true) {
+        if (!hasCandidateCount || !hasCheckedCount || outcome.candidateCount <= outcome.checkedCount) {
+            errors.push(`${label} is truncated without unchecked eligible observations`);
+        }
+        if (outcome.status !== 'partial') {
+            errors.push(`${label} is truncated but is not partial`);
+        }
     }
     return errors;
 }
@@ -157247,13 +157401,13 @@ function validateFindingEvidence(finding, viewports) {
             errors.push(`${evidenceLabel} does not map to a collector outcome`);
             continue;
         }
-        const allowed = outcome.status === 'completed'
+        const allowed = outcome.status === 'completed' || outcome.status === 'partial'
             || (finding.classification === 'blocker' && (outcome.status === 'failed' || outcome.status === 'blocked'));
         if (!allowed) {
             errors.push(`${evidenceLabel} relies on a collector with status ${outcome.status}`);
         }
-        else if (outcome.status === 'completed' && outcome.observationCount === 0) {
-            errors.push(`${evidenceLabel} relies on a completed collector that recorded no observations`);
+        else if ((outcome.status === 'completed' || outcome.status === 'partial') && outcome.observationCount === 0) {
+            errors.push(`${evidenceLabel} relies on a ${outcome.status} collector that recorded no observations`);
         }
     }
     return errors;
@@ -157532,7 +157686,9 @@ function rootCause(finding) {
         canonicalRule: canonicalRule(finding.ruleId),
         classification: finding.classification,
         severity: finding.severity,
-        wcag: consolidate_uniqueSorted(finding.wcag),
+        // WCAG mappings are accumulated evidence, not part of defect identity.
+        // Different engines or viewports may enrich the same defect with another
+        // applicable criterion; keeping the mapping in the key duplicates it.
         summary: finding.summary,
         issue: finding.issue,
         remediation: finding.remediation
@@ -158580,8 +158736,8 @@ const defaultAuditViewportDependencies = {
     runDomChecks: runDomChecks,
     runKeyboardChecks: runKeyboardChecks,
     runConfiguredJourneyChecks: runConfiguredJourneyChecks,
-    runDisclosureChecks: runDisclosureChecks,
-    runTabChecks: runTabChecks,
+    runDisclosureChecks: collectDisclosureChecks,
+    runTabChecks: collectTabChecks,
     runResponsiveChecks: runResponsiveChecks,
     runLinkChecks: runLinkChecks,
     collectElementContexts: collectElementContexts,
@@ -158596,7 +158752,7 @@ const defaultAuditViewportDependencies = {
 function isPartialAudit(errors, axeRun, blocker) {
     return Boolean(blocker)
         || !axeRun.completed
-        || errors.some((message) => /^(?:DOM|Keyboard|Configured journey|Disclosure|Tab|Responsive|Link|Element context|Screenshot) checks? error:/i.test(message));
+        || errors.some((message) => /^(?:DOM|Keyboard|Configured journey|Disclosure|Tab|Responsive|Link|Element context|Screenshot) checks? (?:error|incomplete):/i.test(message));
 }
 async function auditViewport(browser, url, options, viewport, signal, dependencyOverrides = {}, storageState) {
     const dependencies = { ...defaultAuditViewportDependencies, ...dependencyOverrides };
@@ -158825,8 +158981,27 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
         }
         if (!interactionBlocker) {
             try {
-                disclosures = await dependencies.runDisclosureChecks(page);
-                recordOutcome('disclosures', { status: 'completed', observationCount: disclosures.length });
+                const disclosureOutput = await dependencies.runDisclosureChecks(page);
+                disclosures = disclosureOutput.results;
+                const disclosureTruncated = disclosureOutput.truncated
+                    || disclosureOutput.checkedCount < disclosureOutput.candidateCount;
+                const disclosureCompleted = disclosureOutput.completed && !disclosureTruncated;
+                const disclosureError = disclosureCompleted ? undefined : disclosureOutput.error
+                    ?? `The disclosure collector checked ${disclosureOutput.checkedCount} of ${disclosureOutput.candidateCount} eligible controls.`;
+                const disclosureRetainsEvidence = disclosures.length > 0;
+                recordOutcome('disclosures', {
+                    status: disclosureCompleted ? 'completed' : disclosureRetainsEvidence ? 'partial' : 'failed',
+                    observationCount: disclosures.length,
+                    ...(disclosureCompleted || disclosureRetainsEvidence ? {
+                        candidateCount: disclosureOutput.candidateCount,
+                        checkedCount: disclosureOutput.checkedCount,
+                        truncated: disclosureTruncated
+                    } : {}),
+                    ...(disclosureError ? { error: disclosureError } : {})
+                });
+                if (!disclosureCompleted) {
+                    errors.push(`Disclosure checks incomplete: ${disclosureError}`);
+                }
             }
             catch (error) {
                 const message = errorMessage(error);
@@ -158835,12 +159010,30 @@ async function auditViewport(browser, url, options, viewport, signal, dependency
             }
         }
         for (const disclosure of disclosures.filter((item) => item.error)) {
-            errors.push(`Disclosure interaction check incomplete for “${disclosure.name || disclosure.selector}”: ${disclosure.error}`);
+            errors.push(`Disclosure evidence incomplete for “${disclosure.name || disclosure.selector}”: ${disclosure.error}`);
         }
         if (!interactionBlocker) {
             try {
-                tabs = await dependencies.runTabChecks(page);
-                recordOutcome('tabs', { status: 'completed', observationCount: tabs.length });
+                const tabOutput = await dependencies.runTabChecks(page);
+                tabs = tabOutput.results;
+                const tabTruncated = tabOutput.truncated || tabOutput.checkedCount < tabOutput.candidateCount;
+                const tabCompleted = tabOutput.completed && !tabTruncated;
+                const tabError = tabCompleted ? undefined : tabOutput.error
+                    ?? `The tab collector checked ${tabOutput.checkedCount} of ${tabOutput.candidateCount} eligible tablists.`;
+                const tabRetainsEvidence = tabs.length > 0;
+                recordOutcome('tabs', {
+                    status: tabCompleted ? 'completed' : tabRetainsEvidence ? 'partial' : 'failed',
+                    observationCount: tabs.length,
+                    ...(tabCompleted || tabRetainsEvidence ? {
+                        candidateCount: tabOutput.candidateCount,
+                        checkedCount: tabOutput.checkedCount,
+                        truncated: tabTruncated
+                    } : {}),
+                    ...(tabError ? { error: tabError } : {})
+                });
+                if (!tabCompleted) {
+                    errors.push(`Tab checks incomplete: ${tabError}`);
+                }
             }
             catch (error) {
                 const message = errorMessage(error);
@@ -159199,7 +159392,43 @@ async function runAudit(urls, source, skippedUrls, options, execution = {}, auth
 //# sourceMappingURL=runner.js.map
 // EXTERNAL MODULE: external "node:url"
 var external_node_url_ = __nccwpck_require__(73136);
+;// CONCATENATED MODULE: ./dist/reporting/finding-scope.js
+
+const AAA_CRITERIA = new Set(WCAG_CRITERIA_DEFINITIONS
+    .filter((definition) => definition.level === 'AAA')
+    .map((definition) => definition.criterion));
+const STANDARD_CRITERIA = new Set(WCAG_CRITERIA_DEFINITIONS
+    .filter((definition) => definition.level === 'A' || definition.level === 'AA')
+    .map((definition) => definition.criterion));
+/**
+ * Keep A/AA-mapped findings in the conformance target, AAA-only findings in
+ * advisory scope, and non-WCAG or unknown mappings in supporting audit scope.
+ */
+function findingScope(finding) {
+    const criteria = [...new Set(finding.wcag.map((criterion) => criterion.trim()).filter(Boolean))];
+    if (criteria.some((criterion) => STANDARD_CRITERIA.has(criterion)))
+        return 'standard';
+    if (criteria.length > 0 && criteria.every((criterion) => AAA_CRITERIA.has(criterion)))
+        return 'advisory';
+    return 'supplemental';
+}
+function isStandardScopeFinding(finding) {
+    return findingScope(finding) === 'standard';
+}
+function isCoreScopeFinding(finding) {
+    return findingScope(finding) !== 'advisory';
+}
+function findingScopeLabel(finding) {
+    const scope = findingScope(finding);
+    if (scope === 'standard')
+        return 'WCAG A/AA target';
+    if (scope === 'advisory')
+        return 'WCAG AAA advisory';
+    return 'Supporting audit check';
+}
+//# sourceMappingURL=finding-scope.js.map
 ;// CONCATENATED MODULE: ./dist/reporting/executive-summary.js
+
 function findingCount(summary, predicate) {
     return summary.findings.filter(predicate).length;
 }
@@ -159207,11 +159436,16 @@ function plural(count, singular, pluralForm = `${singular}s`) {
     return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 function buildExecutiveSummary(summary) {
-    const confirmedFindings = findingCount(summary, (finding) => finding.classification === 'confirmed');
-    const seriousOrCriticalFindings = findingCount(summary, (finding) => finding.classification === 'confirmed'
+    const standardFindings = findingCount(summary, isStandardScopeFinding);
+    const supplementalFindings = findingCount(summary, (finding) => findingScope(finding) === 'supplemental');
+    const advisoryFindings = findingCount(summary, (finding) => findingScope(finding) === 'advisory');
+    const coreFindings = standardFindings + supplementalFindings;
+    const confirmedFindings = findingCount(summary, (finding) => isCoreScopeFinding(finding) && finding.classification === 'confirmed');
+    const seriousOrCriticalFindings = findingCount(summary, (finding) => isCoreScopeFinding(finding)
+        && finding.classification === 'confirmed'
         && (finding.severity === 'Critical' || finding.severity === 'Serious'));
-    const reviewCandidates = findingCount(summary, (finding) => finding.classification === 'review');
-    const coverageBlockers = findingCount(summary, (finding) => finding.classification === 'blocker');
+    const reviewCandidates = findingCount(summary, (finding) => isCoreScopeFinding(finding) && finding.classification === 'review');
+    const coverageBlockers = findingCount(summary, (finding) => isCoreScopeFinding(finding) && finding.classification === 'blocker');
     const partialPages = summary.pages.filter((page) => page.partial).length;
     const skippedUrls = summary.skippedUrls.length;
     const unresolvedCriteria = (summary.criteria ?? []).filter((criterion) => criterion.scope === 'standard'
@@ -159251,9 +159485,11 @@ function buildExecutiveSummary(summary) {
     const currentPosition = [
         `Coverage reached ${summary.auditedUrls.length} of ${summary.requestedUrls.length} requested URLs`,
         `with ${plural(partialPages, 'partial page')} and ${plural(skippedUrls, 'skipped URL')}.`,
-        `The report contains ${plural(confirmedFindings, 'confirmed finding')}, ${plural(reviewCandidates, 'review candidate')}, and ${plural(coverageBlockers, 'coverage blocker')}.`,
+        `The core audit contains ${plural(confirmedFindings, 'confirmed finding')}, ${plural(reviewCandidates, 'review candidate')}, and ${plural(coverageBlockers, 'coverage blocker')}.`,
+        `${plural(standardFindings, 'finding')} ${standardFindings === 1 ? 'maps' : 'map'} to the WCAG A/AA target${supplementalFindings > 0 ? `; ${plural(supplementalFindings, 'supporting audit check')} ${supplementalFindings === 1 ? 'is' : 'are'} reported without being represented as a WCAG conformance result` : ''}.`,
+        advisoryFindings > 0 ? `${plural(advisoryFindings, 'AAA advisory item')} ${advisoryFindings === 1 ? 'is' : 'are'} reported separately.` : '',
         'WCAG conformance remains not determined pending qualified human assessment.'
-    ].join(' ');
+    ].filter(Boolean).join(' ');
     return {
         headline,
         currentPosition,
@@ -159265,6 +159501,10 @@ function buildExecutiveSummary(summary) {
         partialPages,
         skippedUrls,
         unresolvedCriteria,
+        coreFindings,
+        standardFindings,
+        supplementalFindings,
+        advisoryFindings,
         coverageIncomplete
     };
 }
@@ -159330,6 +159570,7 @@ function comparisonPriorityLabel(record) {
 }
 //# sourceMappingURL=comparison-presentation.js.map
 ;// CONCATENATED MODULE: ./dist/reporting/finding-actions.js
+
 
 const SEVERITY_PRIORITY = {
     Critical: 0,
@@ -159411,6 +159652,7 @@ function buildTopActions(summary, limit = 3) {
     const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0;
     return summary.findings
         .map((finding, sourceIndex) => ({ finding, sourceIndex }))
+        .filter(({ finding }) => isCoreScopeFinding(finding))
         .sort((left, right) => (CLASSIFICATION_PRIORITY[left.finding.classification] - CLASSIFICATION_PRIORITY[right.finding.classification]
         || SEVERITY_PRIORITY[left.finding.severity] - SEVERITY_PRIORITY[right.finding.severity]
         || left.sourceIndex - right.sourceIndex))
@@ -159979,6 +160221,7 @@ async function validateExcelReport(path) {
 
 
 
+
 const moduleDirectory = (0,external_node_path_.dirname)((0,external_node_url_.fileURLToPath)(import.meta.url));
 const templateFileName = ['accessibility', 'report', 'template.xlsx'].join('-');
 const DEFAULT_TEMPLATE = (0,external_node_path_.resolve)(moduleDirectory, '..', '..', 'assets', templateFileName);
@@ -160260,7 +160503,7 @@ function reportRowValues(finding, id, criteria, outputPath) {
         finding.effort,
         screenshotLink(finding, outputPath),
         finding.ruleId,
-        [finding.classification, finding.ruleId, ...(finding.standards ?? finding.wcag.map((criterion) => `WCAG ${criterion}`))].join(', '),
+        [finding.classification, findingScopeLabel(finding), finding.ruleId, ...(finding.standards ?? finding.wcag.map((criterion) => `WCAG ${criterion}`))].join(', '),
         finding.translationRequired
     ];
 }
@@ -160620,8 +160863,8 @@ function populateSummary(worksheet, summary) {
     const executiveSummary = buildExecutiveSummary(summary);
     const topActions = buildTopActions(summary);
     const allViewports = summary.pages.flatMap((page) => page.viewports);
-    const classifications = (classification) => summary.findings.filter((finding) => finding.classification === classification).length;
-    const confirmedSeverities = (severity) => summary.findings.filter((finding) => finding.classification === 'confirmed' && finding.severity === severity).length;
+    const classifications = (classification) => summary.findings.filter((finding) => isCoreScopeFinding(finding) && finding.classification === classification).length;
+    const confirmedSeverities = (severity) => summary.findings.filter((finding) => isCoreScopeFinding(finding) && finding.classification === 'confirmed' && finding.severity === severity).length;
     worksheet.getCell('B4').value = summary.status === 'completed' ? 'Completed' : 'Cancelled';
     worksheet.getCell('B5').value = new Date(summary.generatedAt);
     worksheet.getCell('B6').value = summary.auditor;
@@ -160632,15 +160875,15 @@ function populateSummary(worksheet, summary) {
     worksheet.getCell('B9').value = summary.requestedUrls.length;
     worksheet.getCell('B10').value = summary.pages.length;
     worksheet.getCell('B11').value = allViewports.length;
-    worksheet.getCell('D4').value = 'Report items';
-    worksheet.getCell('D6').value = 'Review candidates';
-    worksheet.getCell('D8').value = 'Manual plan checks';
-    worksheet.getCell('G3').value = 'Confirmed impact';
-    worksheet.getCell('E4').value = summary.findings.length;
+    worksheet.getCell('D4').value = 'Core audit items';
+    worksheet.getCell('D6').value = 'Core review candidates';
+    worksheet.getCell('D8').value = 'WCAG AAA advisory';
+    worksheet.getCell('G3').value = 'Core confirmed impact';
+    worksheet.getCell('E4').value = executiveSummary.coreFindings;
     worksheet.getCell('E5').value = classifications('confirmed');
     worksheet.getCell('E6').value = classifications('review');
     worksheet.getCell('E7').value = classifications('blocker');
-    worksheet.getCell('E8').value = summary.manualChecks.length;
+    worksheet.getCell('E8').value = executiveSummary.advisoryFindings;
     ['Critical', 'Serious', 'Moderate', 'Minor', 'Advisory'].forEach((severity, index) => {
         worksheet.getCell(`H${index + 4}`).value = confirmedSeverities(severity);
     });
@@ -160659,36 +160902,54 @@ function populateSummary(worksheet, summary) {
         `Skipped URLs: ${summary.skippedUrls.length}`,
         `Viewports run: ${allViewports.length}`,
         'Conformance target: WCAG 2.2 Level AA',
+        `WCAG A/AA-mapped findings: ${executiveSummary.standardFindings}`,
+        `Supporting audit checks: ${executiveSummary.supplementalFindings}`,
         `Audit Quality Contract: ${summary.qualityContract?.version ?? 'not recorded'}`,
         `Finding policy: ${summary.qualityContract?.findingPolicy ?? 'not recorded'}`,
         `AAA advisory checks: ${aaaAdvisory ? 'Enabled' : 'Disabled'}`,
+        `AAA advisory findings: ${executiveSummary.advisoryFindings}`,
+        `Manual plan checks: ${summary.manualChecks.length}`,
         `Source: ${summary.source}`
     ].join('; ');
     worksheet.getCell('A13').value = 'Executive summary, scope and method';
     worksheet.getCell('A14').value = wrapSummaryText(`Executive summary: ${executiveSummary.headline}`);
     worksheet.getCell('A15').value = wrapSummaryText(`Current position: ${executiveSummary.currentPosition}`);
+    const advisoryOnly = executiveSummary.coreFindings === 0 && executiveSummary.advisoryFindings > 0;
+    const firstAdvisoryIndex = advisoryOnly
+        ? summary.findings.findIndex((finding) => findingScope(finding) === 'advisory')
+        : -1;
+    const advisoryOnlyGuidance = advisoryOnly
+        ? `No core audit items require triage. ${executiveSummary.advisoryFindings} WCAG AAA advisory ${executiveSummary.advisoryFindings === 1 ? 'item remains' : 'items remain'} available for optional review in the Findings sheet.`
+        : '';
     worksheet.getCell('A16').value = wrapSummaryText([
         `Recommended next step: ${executiveSummary.nextStep}`,
         topActions.length
             ? ['Top actions:', ...topActions.map((action, index) => `${index + 1}. [${action.id}] ${action.classificationLabel} · ${action.priorityLabel} — ${action.nextStep}`)].join('\n')
-            : `Top actions: ${executiveSummary.nextStep}`,
+            : `Top actions: ${advisoryOnlyGuidance || executiveSummary.nextStep}`,
         summary.comparison ? `Baseline comparison: ${comparisonHeadline(summary.comparison)} See the Baseline Comparison sheet for details.` : '',
         `Scope and method: ${scopeAndMethod}`
     ].filter(Boolean).join('\n'));
     worksheet.mergeCells('A17:B17');
-    worksheet.getCell('A17').value = 'Open top actions in Findings:';
+    worksheet.getCell('A17').value = advisoryOnly ? 'Open advisory findings:' : 'Open top actions in Findings:';
     const actionLinkRanges = ['C17:D17', 'E17:F17', 'G17:H17'];
     const actionLinkCells = ['C17', 'E17', 'G17'];
     actionLinkRanges.forEach((range) => worksheet.mergeCells(range));
     actionLinkCells.forEach((address, index) => {
         const action = topActions[index];
+        const advisoryLink = index === 0 && firstAdvisoryIndex >= 0
+            ? {
+                text: 'Review AAA advisory',
+                hyperlink: `#'Findings'!A${firstAdvisoryIndex + 7}`,
+                tooltip: 'Open the first WCAG AAA advisory item in the Findings sheet.'
+            }
+            : undefined;
         worksheet.getCell(address).value = action
             ? {
                 text: `Open ${action.id}`,
                 hyperlink: `#'Findings'!A${action.sourceIndex + 7}`,
                 tooltip: `Open ${action.id} in the Findings sheet.`
             }
-            : 'No additional action';
+            : advisoryLink ?? 'No additional action';
     });
     const unresolvedCoverage = summary.coverage.flatMap((page) => page.viewports)
         .flatMap((viewport) => viewport.assessments)
@@ -160944,6 +161205,7 @@ async function createAuditArchive(outputDir, reportPath, htmlPath, jsonPath, add
 
 
 
+
 const STATUS_LABELS = {
     passed: 'Passed by available evidence',
     failed: 'Failed',
@@ -160999,6 +161261,7 @@ function findingTicketText(finding, index) {
         `[${id}] ${finding.summary}`,
         '',
         `Evidence type: ${findingClassificationLabel(finding.classification)}`,
+        `Scope: ${findingScopeLabel(finding)}`,
         `Impact / priority: ${findingPriorityLabel(finding)}`,
         `WCAG / standard: ${standards.join(', ') || 'Advisory'}`,
         `Affected viewports: ${finding.viewports.join(', ') || 'Not specified'}`,
@@ -161035,6 +161298,8 @@ function findingRows(summary, outputPath) {
         return '<tr><td colspan="6" class="empty">No automated findings were recorded.</td></tr>';
     }
     return summary.findings.map((finding, index) => {
+        const scope = findingScope(finding);
+        const scopeLabel = findingScopeLabel(finding);
         const screenshots = finding.evidence
             .filter((item) => item.screenshot)
             .map((item) => {
@@ -161061,12 +161326,13 @@ function findingRows(summary, outputPath) {
             finding.componentLocation,
             finding.classification,
             finding.severity,
+            scopeLabel,
             ...finding.wcag,
             ...(finding.standards ?? []),
             ...finding.urls
-        ].filter(Boolean).join(' ').toLowerCase())}" data-classification="${escapeHtml(finding.classification)}" data-severity="${escapeHtml(finding.severity)}">
+        ].filter(Boolean).join(' ').toLowerCase())}" data-classification="${escapeHtml(finding.classification)}" data-severity="${escapeHtml(finding.severity)}" data-scope="${escapeHtml(scope)}">
       <td><span class="finding-id">${escapeHtml(id)}</span><br><span class="muted">${escapeHtml(finding.ruleId)}</span></td>
-      <td><span class="badge badge-${escapeHtml(finding.classification)}">${escapeHtml(finding.classification)}</span></td>
+      <td><span class="badge badge-${escapeHtml(finding.classification)}">${escapeHtml(finding.classification)}</span><br><span class="muted">${escapeHtml(scopeLabel)}</span></td>
       <td><span class="badge ${escapeHtml(impact.css)}">${escapeHtml(impact.label)}</span></td>
       <td><strong>${escapeHtml(finding.summary)}</strong><p>${escapeHtml(finding.issue)}</p>
         <details><summary>Understand and resolve this finding</summary>
@@ -161189,12 +161455,11 @@ function renderReport(summary, outputPath) {
     </li>`;
     }).join('');
     const topActionContent = topActionItems
-        ? `<ol class="top-action-list">${topActionItems}</ol>${summary.findings.length > topActions.length ? `<p class="top-action-count">Showing ${topActions.length} of ${summary.findings.length} report items. <a href="#findings">Review all findings</a>.</p>` : ''}`
-        : `<div class="panel"><p><strong>No report items require triage.</strong> ${escapeHtml(executiveSummary.nextStep)}</p></div>`;
-    const confirmed = count(summary, (finding) => finding.classification === 'confirmed');
-    const reviews = count(summary, (finding) => finding.classification === 'review');
-    const blockers = count(summary, (finding) => finding.classification === 'blocker');
-    const serious = count(summary, (finding) => finding.classification === 'confirmed' && (finding.severity === 'Critical' || finding.severity === 'Serious'));
+        ? `<ol class="top-action-list">${topActionItems}</ol>${executiveSummary.coreFindings > topActions.length || executiveSummary.advisoryFindings > 0 ? `<p class="top-action-count">Showing ${topActions.length} of ${executiveSummary.coreFindings} core audit items.${executiveSummary.advisoryFindings > 0 ? ` ${executiveSummary.advisoryFindings} WCAG AAA advisory item${executiveSummary.advisoryFindings === 1 ? ' is' : 's are'} listed separately.` : ''} <a href="#findings">Review all findings</a>.</p>` : ''}`
+        : `<div class="panel"><p><strong>No core audit items require triage.</strong>${executiveSummary.advisoryFindings > 0 ? ` ${executiveSummary.advisoryFindings} WCAG AAA advisory item${executiveSummary.advisoryFindings === 1 ? ' remains' : 's remain'} available for optional review. <a href="#findings">Review advisory findings</a>.` : ` ${escapeHtml(executiveSummary.nextStep)}`}</p></div>`;
+    const confirmed = count(summary, (finding) => isCoreScopeFinding(finding) && finding.classification === 'confirmed');
+    const reviews = count(summary, (finding) => isCoreScopeFinding(finding) && finding.classification === 'review');
+    const blockers = count(summary, (finding) => isCoreScopeFinding(finding) && finding.classification === 'blocker');
     const generated = Number.isNaN(Date.parse(summary.generatedAt)) ? summary.generatedAt : new Date(summary.generatedAt).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' });
     const target = summary.landingPageUrl || summary.requestedUrls[0] || 'Not specified';
     const aaaAdvisory = summary.aaaAdvisory ?? summary.wcagLevel === 'AAA';
@@ -161245,11 +161510,11 @@ function renderReport(summary, outputPath) {
     ${blockers ? `<div class="notice"><strong>${blockers} audit blocker${blockers === 1 ? '' : 's'}:</strong> review the findings before treating coverage as complete.</div>` : ''}
     <section class="metrics" aria-label="Audit summary">
       <div class="metric"><span>Pages audited</span><strong>${summary.auditedUrls.length}</strong></div>
-      <div class="metric"><span>Report items</span><strong>${summary.findings.length}</strong></div>
-      <div class="metric attention"><span>Confirmed</span><strong>${confirmed}</strong></div>
-      <div class="metric attention"><span>Confirmed serious / critical</span><strong>${serious}</strong></div>
-      <div class="metric"><span>Needs review</span><strong>${reviews}</strong></div>
-      <div class="metric"><span>Unresolved AA criteria</span><strong>${unresolvedCriteria}</strong></div>
+      <div class="metric"><span>Core audit items</span><strong>${executiveSummary.coreFindings}</strong></div>
+      <div class="metric"><span>WCAG A/AA mapped</span><strong>${executiveSummary.standardFindings}</strong></div>
+      <div class="metric attention"><span>Core confirmed</span><strong>${confirmed}</strong></div>
+      <div class="metric"><span>Core needs review</span><strong>${reviews}</strong></div>
+      <div class="metric"><span>WCAG AAA advisory</span><strong>${executiveSummary.advisoryFindings}</strong></div>
     </section>
     <div class="notice warning"><strong>Conformance decision: ${escapeHtml(summary.conformanceDecision === 'not-determined' || !summary.conformanceDecision ? 'Not determined' : summary.conformanceDecision)}.</strong> Automated evidence cannot certify WCAG conformance. A qualified human assessment and sign-off remain mandatory; failures require remediation and unresolved outcomes are not passes.</div>
     <nav aria-label="Report sections"><a href="#top-actions">Top actions</a>${comparisonNavLink}${historyNavLink}<a href="#findings">Findings</a><a href="#criteria">WCAG criteria</a><a href="#pages">Pages</a><a href="#coverage">Coverage</a><a href="#journeys">Task journeys</a><a href="#manual">Manual checks</a><a href="#method">Method and limitations</a></nav>
@@ -161257,8 +161522,8 @@ function renderReport(summary, outputPath) {
     ${comparison}
     ${history}
 
-    <section id="findings" aria-labelledby="findings-title"><h2 id="findings-title">Findings</h2><p class="lede">Confirmed rows are reproduced barriers to assign and retest. Review rows need a documented human decision before they become failures. Blockers mean the affected scope must be restored and rerun; manual rows require a person to complete the procedure. Ratings on non-confirmed rows are review priority, not confirmed impact severity. Expand a row for plain-language impact, assessment steps, remediation and linked evidence.</p>
-      <div class="toolbar"><div class="field"><label for="finding-search">Search findings</label><input id="finding-search" type="search" placeholder="Rule, issue, page or WCAG criterion"></div><div class="field"><label for="classification-filter">Classification</label><select id="classification-filter"><option value="">All classifications</option><option value="confirmed">Confirmed</option><option value="review">Review</option><option value="blocker">Blocker</option><option value="manual">Manual</option></select></div><div class="field"><label for="severity-filter">Severity</label><select id="severity-filter"><option value="">All severities</option><option>Critical</option><option>Serious</option><option>Moderate</option><option>Minor</option><option>Advisory</option></select></div><div id="result-count" class="result-count" aria-live="polite"></div></div>
+    <section id="findings" aria-labelledby="findings-title"><h2 id="findings-title">Findings</h2><p class="lede">Confirmed rows are reproduced barriers to assign and retest. Review rows need a documented human decision before they become failures. Blockers mean the affected scope must be restored and rerun; manual rows require a person to complete the procedure. Supporting audit checks remain actionable but are not represented as WCAG conformance results. Level AAA items are optional advisory scope and are kept separate from the A/AA conformance target. Ratings on non-confirmed rows are review priority, not confirmed impact severity. Expand a row for plain-language impact, assessment steps, remediation and linked evidence.</p>
+      <div class="toolbar"><div class="field"><label for="finding-search">Search findings</label><input id="finding-search" type="search" placeholder="Rule, issue, page or WCAG criterion"></div><div class="field"><label for="scope-filter">Scope</label><select id="scope-filter"><option value="">All scopes</option><option value="standard">WCAG A/AA target</option><option value="supplemental">Supporting audit checks</option><option value="advisory">WCAG AAA advisory</option></select></div><div class="field"><label for="classification-filter">Classification</label><select id="classification-filter"><option value="">All classifications</option><option value="confirmed">Confirmed</option><option value="review">Review</option><option value="blocker">Blocker</option><option value="manual">Manual</option></select></div><div class="field"><label for="severity-filter">Severity</label><select id="severity-filter"><option value="">All severities</option><option>Critical</option><option>Serious</option><option>Moderate</option><option>Minor</option><option>Advisory</option></select></div><div id="result-count" class="result-count" aria-live="polite"></div></div>
       <div class="table-wrap"><table><caption>Findings and evidence requiring action or validation</caption><thead><tr><th scope="col">ID / rule</th><th scope="col">Class</th><th scope="col">Impact / priority</th><th scope="col">Finding</th><th scope="col">Standards / rule source</th><th scope="col">Pages</th></tr></thead><tbody id="finding-rows">${findingRows(summary, outputPath)}</tbody></table></div>
     </section>
 
@@ -161274,6 +161539,7 @@ function renderReport(summary, outputPath) {
   <script>
     (() => {
       const search = document.getElementById('finding-search');
+      const scope = document.getElementById('scope-filter');
       const classification = document.getElementById('classification-filter');
       const severity = document.getElementById('severity-filter');
       const rows = [...document.querySelectorAll('#finding-rows tr[data-search]')];
@@ -161282,13 +161548,14 @@ function renderReport(summary, outputPath) {
         const query = search.value.trim().toLowerCase();
         let visible = 0;
         for (const row of rows) {
-          const show = (!query || row.dataset.search.includes(query)) && (!classification.value || row.dataset.classification === classification.value) && (!severity.value || row.dataset.severity === severity.value);
+          const show = (!query || row.dataset.search.includes(query)) && (!scope.value || row.dataset.scope === scope.value) && (!classification.value || row.dataset.classification === classification.value) && (!severity.value || row.dataset.severity === severity.value);
           row.hidden = !show;
           if (show) visible += 1;
         }
         count.textContent = visible + ' of ' + rows.length + ' findings';
       };
       search.addEventListener('input', filter);
+      scope.addEventListener('change', filter);
       classification.addEventListener('change', filter);
       severity.addEventListener('change', filter);
       filter();

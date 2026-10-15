@@ -4,6 +4,7 @@ import type {
   DisclosureStateSnapshot,
   DomCheckResult,
   KeyboardCheckResult,
+  InteractionCheckCollection,
   LinkCheckMetadata,
   LinkCheckResult,
   ResponsiveCheckResult,
@@ -221,9 +222,33 @@ export async function runDomChecks(page: Page, axeTargetSizeSelectors: string[] 
         return false;
       }
     });
+    const renderedAsHiddenProxy = (element: Element): boolean => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return rect.width <= 4
+        || rect.height <= 4
+        || rect.right <= 0
+        || rect.left >= innerWidth
+        || Number.parseFloat(style.opacity || '1') === 0
+        || style.pointerEvents === 'none'
+        || (style.clip !== 'auto' && style.clip !== '')
+        || (style.clipPath !== 'none' && style.clipPath !== '');
+    };
+    const pointerSurfaceFor = (element: Element): Element => {
+      if (!(element instanceof HTMLInputElement) || element.type !== 'file' || !renderedAsHiddenProxy(element)) return element;
+      const labels = [...(element.labels ?? [])]
+        .filter(visible)
+        .sort((first, second) => {
+          const firstRect = first.getBoundingClientRect();
+          const secondRect = second.getBoundingClientRect();
+          return secondRect.width * secondRect.height - firstRect.width * firstRect.height;
+        });
+      return labels[0] ?? element;
+    };
     const pointerTargets = [...document.querySelectorAll(focusables)]
-      .filter(visible)
-      .map((element) => ({ element, rect: element.getBoundingClientRect() }));
+      .map((element) => ({ element, surface: pointerSurfaceFor(element) }))
+      .filter(({ surface }) => visible(surface))
+      .map(({ element, surface }) => ({ element, surface, rect: surface.getBoundingClientRect() }));
     const inlineExceptionFor = (element: Element): boolean => {
       if (!(element instanceof HTMLAnchorElement)) return false;
       const container = element.closest('p, dd, dt, figcaption, caption, blockquote');
@@ -259,13 +284,13 @@ export async function runDomChecks(page: Page, axeTargetSizeSelectors: string[] 
       return Math.hypot(targetX - closestX, targetY - closestY) < 12;
     };
     const smallTargets = pointerTargets
-      .filter(({ element, rect }) => rect.width < 24 || rect.height < 24 || hasAxeTargetSizeSignal(element))
-      .map(({ element, rect }) => {
+      .filter(({ element, surface, rect }) => rect.width < 24 || rect.height < 24 || hasAxeTargetSizeSignal(element) || hasAxeTargetSizeSignal(surface))
+      .map(({ element, surface, rect }) => {
         const nearbyTargets = pointerTargets
-          .filter(({ element: otherElement, rect: otherRect }) => (
+          .filter(({ element: otherElement, surface: otherSurface, rect: otherRect }) => (
             otherElement !== element
-            && !element.contains(otherElement)
-            && !otherElement.contains(element)
+            && !surface.contains(otherSurface)
+            && !otherSurface.contains(surface)
             && clearanceCircleIntersects(rect, otherRect)
           ))
           .slice(0, 12)
@@ -278,14 +303,15 @@ export async function runDomChecks(page: Page, axeTargetSizeSelectors: string[] 
           }));
         return {
           selector: cssPath(element),
+          ...(surface === element ? {} : { measurementSelector: cssPath(surface) }),
           name: name(element),
           width: rounded(rect.width),
           height: rounded(rect.height),
-          groupSelector: groupSelectorFor(element),
-          inlineException: inlineExceptionFor(element),
+          groupSelector: groupSelectorFor(surface),
+          inlineException: inlineExceptionFor(surface),
           hitTested: rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth,
           spacingRisk: nearbyTargets.length > 0,
-          axeTargetSizeSignal: hasAxeTargetSizeSignal(element),
+          axeTargetSizeSignal: hasAxeTargetSizeSignal(element) || hasAxeTargetSizeSignal(surface),
           nearbyTargets
         };
       });
@@ -1296,7 +1322,13 @@ async function waitForDisclosureInventorySettled(page: Page): Promise<void> {
   }
 }
 
-async function collectDisclosureIdentities(page: Page): Promise<DisclosureIdentity[]> {
+const DISCLOSURE_CHECK_LIMIT = 30;
+const TAB_CHECK_LIMIT = 20;
+
+async function collectDisclosureIdentities(page: Page): Promise<{
+  identities: DisclosureIdentity[];
+  candidateCount: number;
+}> {
   await waitForDisclosureInventorySettled(page);
   return page.evaluate(({ selector, limit }) => {
     const cssPath = (element: Element): string => {
@@ -1353,7 +1385,6 @@ async function collectDisclosureIdentities(page: Page): Promise<DisclosureIdenti
 
     const identities = [...document.querySelectorAll(selector)]
       .filter(activeControl)
-      .slice(0, limit)
       .map((element) => ({
         selector: cssPath(element),
         name: accessibleName(element),
@@ -1362,13 +1393,17 @@ async function collectDisclosureIdentities(page: Page): Promise<DisclosureIdenti
         id: element.id,
         controls: element.getAttribute('aria-controls')
       }));
-    return identities.filter((identity, index) => identities.findIndex((item) => (
+    const uniqueIdentities = identities.filter((identity, index) => identities.findIndex((item) => (
       item.selector === identity.selector
       && item.name === identity.name
       && item.role === identity.role
       && item.controls === identity.controls
     )) === index);
-  }, { selector: disclosureSelector, limit: 30 });
+    return {
+      identities: uniqueIdentities.slice(0, limit),
+      candidateCount: uniqueIdentities.length
+    };
+  }, { selector: disclosureSelector, limit: DISCLOSURE_CHECK_LIMIT });
 }
 
 async function readDisclosureSnapshot(page: Page, identity: DisclosureIdentity): Promise<DisclosureSnapshotRead> {
@@ -1719,9 +1754,10 @@ function incompleteDisclosureResult(
   };
 }
 
-export async function runDisclosureChecks(page: Page): Promise<DisclosureCheckResult[]> {
+export async function collectDisclosureChecks(page: Page): Promise<InteractionCheckCollection<DisclosureCheckResult>> {
   const results: DisclosureCheckResult[] = [];
-  const identities = await collectDisclosureIdentities(page);
+  const inventory = await collectDisclosureIdentities(page);
+  const identities = inventory.identities;
 
   for (const identity of identities) {
     try {
@@ -1922,18 +1958,46 @@ export async function runDisclosureChecks(page: Page): Promise<DisclosureCheckRe
       results.push(incompleteDisclosureResult(identity, error instanceof Error ? error.message : String(error)));
     }
   }
-  return results;
+  const incompleteCount = results.filter((result) => result.error).length;
+  const truncated = inventory.candidateCount > identities.length;
+  const problems = [
+    ...(truncated
+      ? [`The disclosure safety limit checked ${identities.length} of ${inventory.candidateCount} eligible controls.`]
+      : []),
+    ...(incompleteCount > 0
+      ? [`${incompleteCount} of ${results.length} attempted disclosure checks did not complete.`]
+      : [])
+  ];
+  return {
+    results,
+    candidateCount: inventory.candidateCount,
+    checkedCount: identities.length,
+    truncated,
+    completed: problems.length === 0,
+    ...(problems.length ? { error: problems.join(' ') } : {})
+  };
 }
 
-export async function runTabChecks(page: Page): Promise<TabCheckResult[]> {
+export async function runDisclosureChecks(page: Page): Promise<DisclosureCheckResult[]> {
+  return (await collectDisclosureChecks(page)).results;
+}
+
+export async function collectTabChecks(page: Page): Promise<InteractionCheckCollection<TabCheckResult>> {
   const tablists = page.locator('[role="tablist"]');
   const results: TabCheckResult[] = [];
-  const count = Math.min(await tablists.count(), 20);
-  for (let index = 0; index < count; index += 1) {
+  const eligibleIndexes: number[] = [];
+  const tablistCount = await tablists.count();
+  for (let index = 0; index < tablistCount; index += 1) {
     const tabs = tablists.nth(index).locator('[role="tab"]');
     if ((await tabs.count()) < 2) continue;
     const first = tabs.first();
     if (!(await first.isVisible().catch(() => false))) continue;
+    eligibleIndexes.push(index);
+  }
+  const checkedIndexes = eligibleIndexes.slice(0, TAB_CHECK_LIMIT);
+  for (const index of checkedIndexes) {
+    const tabs = tablists.nth(index).locator('[role="tab"]');
+    const first = tabs.first();
     const tablist = tablists.nth(index);
     const description = await locatorDescription(tablist);
     try {
@@ -1976,8 +2040,10 @@ export async function runTabChecks(page: Page): Promise<TabCheckResult[]> {
       const orientation = await tablist.getAttribute('aria-orientation');
       const navigationKey = orientation === 'vertical' ? 'ArrowDown' as const : 'ArrowRight' as const;
       await start.focus();
+      const navigationStartIndex = await tabs.evaluateAll((elements) => elements.indexOf(document.activeElement as HTMLElement));
       await page.keyboard.press(navigationKey);
-      const navigationMovedToTab = await tabs.evaluateAll((elements) => elements.includes(document.activeElement as HTMLElement));
+      const navigationEndIndex = await tabs.evaluateAll((elements) => elements.indexOf(document.activeElement as HTMLElement));
+      const navigationMovedToTab = navigationEndIndex >= 0 && navigationEndIndex !== navigationStartIndex;
       let activationWorked = false;
       if (navigationMovedToTab) {
         const active = page.locator(':focus');
@@ -2029,5 +2095,26 @@ export async function runTabChecks(page: Page): Promise<TabCheckResult[]> {
       });
     }
   }
-  return results;
+  const incompleteCount = results.filter((result) => result.error).length;
+  const truncated = eligibleIndexes.length > checkedIndexes.length;
+  const problems = [
+    ...(truncated
+      ? [`The tablist safety limit checked ${checkedIndexes.length} of ${eligibleIndexes.length} eligible tablists.`]
+      : []),
+    ...(incompleteCount > 0
+      ? [`${incompleteCount} of ${results.length} attempted tab checks did not complete.`]
+      : [])
+  ];
+  return {
+    results,
+    candidateCount: eligibleIndexes.length,
+    checkedCount: checkedIndexes.length,
+    truncated,
+    completed: problems.length === 0,
+    ...(problems.length ? { error: problems.join(' ') } : {})
+  };
+}
+
+export async function runTabChecks(page: Page): Promise<TabCheckResult[]> {
+  return (await collectTabChecks(page)).results;
 }

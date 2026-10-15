@@ -8,7 +8,7 @@ Web accessibility means people with disabilities can perceive, understand, navig
 
 WCAG is the Web Content Accessibility Guidelines published by the World Wide Web Consortium (W3C). This plugin targets testable evidence related to WCAG 2.2 Level A and Level AA.
 
-The report explicitly accounts for all 55 active Level A and AA success criteria. It supplies one human-verification procedure and evidence prompt per criterion because complete criteria coverage cannot be reduced to automated rule coverage. WCAG 4.1.1 is not included because it was removed in WCAG 2.2; the 31 active Level AAA criteria are optional advisory coverage.
+The assessment ledger explicitly represents all 55 active Level A and AA success criteria and supplies one human-verification procedure and evidence prompt per criterion. That is complete criterion accountability, not complete automated testing or certification. WCAG 4.1.1 is not included because it was removed in WCAG 2.2; the 31 active Level AAA criteria are optional advisory coverage.
 
 WCAG is organized around four principles:
 
@@ -24,6 +24,8 @@ WCAG is organized around four principles:
 - **Level AAA** includes A, AA, and AAA, but this plugin is not presented as a complete AAA audit.
 
 The level describes the conformance requirement. It does not describe defect severity, engineering difficulty, business priority, or confidence in an automated result.
+
+Report scope is separate from evidence confidence: `standard` findings map to A or AA, `advisory` findings map only to AAA, and `supplemental` findings are best-practice or unmapped observations. Standard findings alone drive the AA headline and priority actions; the other scopes stay visible through filters.
 
 ## What a success-criterion number means
 

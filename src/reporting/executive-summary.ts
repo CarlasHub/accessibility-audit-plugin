@@ -1,4 +1,5 @@
 import type { AuditSummary, Finding } from '../types.js';
+import { findingScope, isCoreScopeFinding, isStandardScopeFinding } from './finding-scope.js';
 
 export interface ExecutiveSummary {
   headline: string;
@@ -11,6 +12,10 @@ export interface ExecutiveSummary {
   partialPages: number;
   skippedUrls: number;
   unresolvedCriteria: number;
+  coreFindings: number;
+  standardFindings: number;
+  supplementalFindings: number;
+  advisoryFindings: number;
   coverageIncomplete: boolean;
 }
 
@@ -23,14 +28,19 @@ function plural(count: number, singular: string, pluralForm = `${singular}s`): s
 }
 
 export function buildExecutiveSummary(summary: AuditSummary): ExecutiveSummary {
-  const confirmedFindings = findingCount(summary, (finding) => finding.classification === 'confirmed');
+  const standardFindings = findingCount(summary, isStandardScopeFinding);
+  const supplementalFindings = findingCount(summary, (finding) => findingScope(finding) === 'supplemental');
+  const advisoryFindings = findingCount(summary, (finding) => findingScope(finding) === 'advisory');
+  const coreFindings = standardFindings + supplementalFindings;
+  const confirmedFindings = findingCount(summary, (finding) => isCoreScopeFinding(finding) && finding.classification === 'confirmed');
   const seriousOrCriticalFindings = findingCount(
     summary,
-    (finding) => finding.classification === 'confirmed'
+    (finding) => isCoreScopeFinding(finding)
+      && finding.classification === 'confirmed'
       && (finding.severity === 'Critical' || finding.severity === 'Serious')
   );
-  const reviewCandidates = findingCount(summary, (finding) => finding.classification === 'review');
-  const coverageBlockers = findingCount(summary, (finding) => finding.classification === 'blocker');
+  const reviewCandidates = findingCount(summary, (finding) => isCoreScopeFinding(finding) && finding.classification === 'review');
+  const coverageBlockers = findingCount(summary, (finding) => isCoreScopeFinding(finding) && finding.classification === 'blocker');
   const partialPages = summary.pages.filter((page) => page.partial).length;
   const skippedUrls = summary.skippedUrls.length;
   const unresolvedCriteria = (summary.criteria ?? []).filter(
@@ -69,9 +79,11 @@ export function buildExecutiveSummary(summary: AuditSummary): ExecutiveSummary {
   const currentPosition = [
     `Coverage reached ${summary.auditedUrls.length} of ${summary.requestedUrls.length} requested URLs`,
     `with ${plural(partialPages, 'partial page')} and ${plural(skippedUrls, 'skipped URL')}.`,
-    `The report contains ${plural(confirmedFindings, 'confirmed finding')}, ${plural(reviewCandidates, 'review candidate')}, and ${plural(coverageBlockers, 'coverage blocker')}.`,
+    `The core audit contains ${plural(confirmedFindings, 'confirmed finding')}, ${plural(reviewCandidates, 'review candidate')}, and ${plural(coverageBlockers, 'coverage blocker')}.`,
+    `${plural(standardFindings, 'finding')} ${standardFindings === 1 ? 'maps' : 'map'} to the WCAG A/AA target${supplementalFindings > 0 ? `; ${plural(supplementalFindings, 'supporting audit check')} ${supplementalFindings === 1 ? 'is' : 'are'} reported without being represented as a WCAG conformance result` : ''}.`,
+    advisoryFindings > 0 ? `${plural(advisoryFindings, 'AAA advisory item')} ${advisoryFindings === 1 ? 'is' : 'are'} reported separately.` : '',
     'WCAG conformance remains not determined pending qualified human assessment.'
-  ].join(' ');
+  ].filter(Boolean).join(' ');
 
   return {
     headline,
@@ -84,6 +96,10 @@ export function buildExecutiveSummary(summary: AuditSummary): ExecutiveSummary {
     partialPages,
     skippedUrls,
     unresolvedCriteria,
+    coreFindings,
+    standardFindings,
+    supplementalFindings,
+    advisoryFindings,
     coverageIncomplete
   };
 }

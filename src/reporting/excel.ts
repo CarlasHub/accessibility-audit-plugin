@@ -7,6 +7,7 @@ import type { AuditSummary, Finding, PageAudit } from '../types.js';
 import { assertCanonicalAuditSummary } from '../audit/canonical-validation.js';
 import { AUDIT_SCOPE_LABEL } from '../scope.js';
 import { buildExecutiveSummary } from './executive-summary.js';
+import { findingScope, findingScopeLabel, isCoreScopeFinding } from './finding-scope.js';
 import {
   comparisonCategories,
   comparisonHeadline,
@@ -301,7 +302,7 @@ function reportRowValues(finding: Finding, id: string, criteria: LookupEntry[], 
     finding.effort,
     screenshotLink(finding, outputPath),
     finding.ruleId,
-    [finding.classification, finding.ruleId, ...(finding.standards ?? finding.wcag.map((criterion) => `WCAG ${criterion}`))].join(', '),
+    [finding.classification, findingScopeLabel(finding), finding.ruleId, ...(finding.standards ?? finding.wcag.map((criterion) => `WCAG ${criterion}`))].join(', '),
     finding.translationRequired
   ];
 }
@@ -683,9 +684,9 @@ function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
   const topActions = buildTopActions(summary);
   const allViewports = summary.pages.flatMap((page) => page.viewports);
   const classifications = (classification: Finding['classification']): number =>
-    summary.findings.filter((finding) => finding.classification === classification).length;
+    summary.findings.filter((finding) => isCoreScopeFinding(finding) && finding.classification === classification).length;
   const confirmedSeverities = (severity: Finding['severity']): number =>
-    summary.findings.filter((finding) => finding.classification === 'confirmed' && finding.severity === severity).length;
+    summary.findings.filter((finding) => isCoreScopeFinding(finding) && finding.classification === 'confirmed' && finding.severity === severity).length;
   worksheet.getCell('B4').value = summary.status === 'completed' ? 'Completed' : 'Cancelled';
   worksheet.getCell('B5').value = new Date(summary.generatedAt);
   worksheet.getCell('B6').value = summary.auditor;
@@ -696,15 +697,15 @@ function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
   worksheet.getCell('B9').value = summary.requestedUrls.length;
   worksheet.getCell('B10').value = summary.pages.length;
   worksheet.getCell('B11').value = allViewports.length;
-  worksheet.getCell('D4').value = 'Report items';
-  worksheet.getCell('D6').value = 'Review candidates';
-  worksheet.getCell('D8').value = 'Manual plan checks';
-  worksheet.getCell('G3').value = 'Confirmed impact';
-  worksheet.getCell('E4').value = summary.findings.length;
+  worksheet.getCell('D4').value = 'Core audit items';
+  worksheet.getCell('D6').value = 'Core review candidates';
+  worksheet.getCell('D8').value = 'WCAG AAA advisory';
+  worksheet.getCell('G3').value = 'Core confirmed impact';
+  worksheet.getCell('E4').value = executiveSummary.coreFindings;
   worksheet.getCell('E5').value = classifications('confirmed');
   worksheet.getCell('E6').value = classifications('review');
   worksheet.getCell('E7').value = classifications('blocker');
-  worksheet.getCell('E8').value = summary.manualChecks.length;
+  worksheet.getCell('E8').value = executiveSummary.advisoryFindings;
   (['Critical', 'Serious', 'Moderate', 'Minor', 'Advisory'] as const).forEach((severity, index) => {
     worksheet.getCell(`H${index + 4}`).value = confirmedSeverities(severity);
   });
@@ -723,36 +724,54 @@ function populateSummary(worksheet: Worksheet, summary: AuditSummary): void {
     `Skipped URLs: ${summary.skippedUrls.length}`,
     `Viewports run: ${allViewports.length}`,
     'Conformance target: WCAG 2.2 Level AA',
+    `WCAG A/AA-mapped findings: ${executiveSummary.standardFindings}`,
+    `Supporting audit checks: ${executiveSummary.supplementalFindings}`,
     `Audit Quality Contract: ${summary.qualityContract?.version ?? 'not recorded'}`,
     `Finding policy: ${summary.qualityContract?.findingPolicy ?? 'not recorded'}`,
     `AAA advisory checks: ${aaaAdvisory ? 'Enabled' : 'Disabled'}`,
+    `AAA advisory findings: ${executiveSummary.advisoryFindings}`,
+    `Manual plan checks: ${summary.manualChecks.length}`,
     `Source: ${summary.source}`
   ].join('; ');
   worksheet.getCell('A13').value = 'Executive summary, scope and method';
   worksheet.getCell('A14').value = wrapSummaryText(`Executive summary: ${executiveSummary.headline}`);
   worksheet.getCell('A15').value = wrapSummaryText(`Current position: ${executiveSummary.currentPosition}`);
+  const advisoryOnly = executiveSummary.coreFindings === 0 && executiveSummary.advisoryFindings > 0;
+  const firstAdvisoryIndex = advisoryOnly
+    ? summary.findings.findIndex((finding) => findingScope(finding) === 'advisory')
+    : -1;
+  const advisoryOnlyGuidance = advisoryOnly
+    ? `No core audit items require triage. ${executiveSummary.advisoryFindings} WCAG AAA advisory ${executiveSummary.advisoryFindings === 1 ? 'item remains' : 'items remain'} available for optional review in the Findings sheet.`
+    : '';
   worksheet.getCell('A16').value = wrapSummaryText([
     `Recommended next step: ${executiveSummary.nextStep}`,
     topActions.length
       ? ['Top actions:', ...topActions.map((action, index) => `${index + 1}. [${action.id}] ${action.classificationLabel} · ${action.priorityLabel} — ${action.nextStep}`)].join('\n')
-      : `Top actions: ${executiveSummary.nextStep}`,
+      : `Top actions: ${advisoryOnlyGuidance || executiveSummary.nextStep}`,
     summary.comparison ? `Baseline comparison: ${comparisonHeadline(summary.comparison)} See the Baseline Comparison sheet for details.` : '',
     `Scope and method: ${scopeAndMethod}`
   ].filter(Boolean).join('\n'));
   worksheet.mergeCells('A17:B17');
-  worksheet.getCell('A17').value = 'Open top actions in Findings:';
+  worksheet.getCell('A17').value = advisoryOnly ? 'Open advisory findings:' : 'Open top actions in Findings:';
   const actionLinkRanges = ['C17:D17', 'E17:F17', 'G17:H17'];
   const actionLinkCells = ['C17', 'E17', 'G17'];
   actionLinkRanges.forEach((range) => worksheet.mergeCells(range));
   actionLinkCells.forEach((address, index) => {
     const action = topActions[index];
+    const advisoryLink = index === 0 && firstAdvisoryIndex >= 0
+      ? {
+          text: 'Review AAA advisory',
+          hyperlink: `#'Findings'!A${firstAdvisoryIndex + 7}`,
+          tooltip: 'Open the first WCAG AAA advisory item in the Findings sheet.'
+        }
+      : undefined;
     worksheet.getCell(address).value = action
       ? {
           text: `Open ${action.id}`,
           hyperlink: `#'Findings'!A${action.sourceIndex + 7}`,
           tooltip: `Open ${action.id} in the Findings sheet.`
         }
-      : 'No additional action';
+      : advisoryLink ?? 'No additional action';
   });
   const unresolvedCoverage = summary.coverage.flatMap((page) => page.viewports)
     .flatMap((viewport) => viewport.assessments)

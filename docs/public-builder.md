@@ -16,7 +16,7 @@ The owner maintains one CarlasHub GitHub App. Visitors do **not** create their o
 ## Other setup paths
 
 - **Enter page URLs myself** keeps the original form for up to 20 explicit public URLs.
-- **Create a repository first** opens the starter template. After GitHub creates it, return to the builder, choose **Use my repository (recommended)**, and select that repository so the checked pages can be saved and the Action started. GitHub's repository template form cannot receive a visitor's dynamic page selection.
+- **Create a repository first** opens the starter template in a new tab and retains the exact checked-page selection in the builder tab. After GitHub creates the repository, return to the builder, grant the CarlasHub GitHub App access to the new repository if needed, choose **Refresh repositories**, and select it. The connector then writes those pages into the managed workflow and starts the Action. GitHub's repository template form itself cannot receive a visitor's dynamic page selection.
 - **Preview or download the workflow instead** provides a no-sign-in fallback. This route requires the user to add the file to a repository and start the workflow from GitHub.
 
 The discovery service finds possible pages only. The installed Action does not crawl: it audits exactly the checked URLs written into the workflow.
@@ -68,7 +68,7 @@ Refresh the live builder rather than an old downloaded copy. The current checkli
 
 ### No repository is listed
 
-Choose **Change repository access on GitHub**, grant the CarlasHub App access to at least one writable repository, and return to the builder. Archived or read-only repositories are not offered.
+Choose **Manage repository access**, grant the CarlasHub App access to at least one writable repository, return to the still-open builder tab, and choose **Refresh repositories**. Archived or read-only repositories are not offered.
 
 ### The workflow was not changed
 

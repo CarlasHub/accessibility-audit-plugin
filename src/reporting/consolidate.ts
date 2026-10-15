@@ -101,7 +101,9 @@ function rootCause(finding: Finding): string {
     canonicalRule: canonicalRule(finding.ruleId),
     classification: finding.classification,
     severity: finding.severity,
-    wcag: uniqueSorted(finding.wcag),
+    // WCAG mappings are accumulated evidence, not part of defect identity.
+    // Different engines or viewports may enrich the same defect with another
+    // applicable criterion; keeping the mapping in the key duplicates it.
     summary: finding.summary,
     issue: finding.issue,
     remediation: finding.remediation

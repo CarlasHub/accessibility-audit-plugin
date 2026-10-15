@@ -155,6 +155,7 @@ describe('HTML accessibility report', () => {
     expect(html).toContain('role="status" aria-live="polite"');
     expect(ticket).toContain('[A11Y001] Button has no accessible name');
     expect(ticket).toContain('Evidence type: Confirmed barrier');
+    expect(ticket).toContain('Scope: WCAG A/AA target');
     expect(ticket).toContain('Impact / priority: Serious');
     expect(ticket).toContain('WCAG / standard: 4.1.2');
     expect(ticket).toContain('Component / location: Submit button — Checkout');
@@ -169,6 +170,48 @@ describe('HTML accessibility report', () => {
     expect(html).not.toContain('id="comparison"');
     expect(html).not.toContain('Baseline comparison</a>');
     expect(html).not.toMatch(/https?:\/\/[^"']+\.(?:css|js)/i);
+
+    const originalFinding = summary.findings[0]!;
+    const advisoryFinding: Finding = {
+      ...ticketFinding('confirmed'),
+      key: 'aaa-contrast',
+      ruleId: 'color-contrast-enhanced',
+      severity: 'Critical',
+      wcag: ['1.4.6'],
+      summary: 'Enhanced contrast is below the AAA advisory threshold'
+    };
+    const supportingFinding: Finding = {
+      ...ticketFinding('review'),
+      key: 'supporting-check',
+      ruleId: 'landmark-quality',
+      wcag: ['Best Practice'],
+      summary: 'Landmark structure needs review'
+    };
+    summary.findings.push(advisoryFinding, supportingFinding);
+    const advisoryPath = join(outputDir, 'Accessibility_Audit_Advisory_Report.html');
+    await writeHtmlReport(summary, advisoryPath);
+    const advisoryHtml = await readFile(advisoryPath, 'utf8');
+    expect(advisoryHtml).toContain('<span>Core audit items</span><strong>2</strong>');
+    expect(advisoryHtml).toContain('<span>WCAG A/AA mapped</span><strong>1</strong>');
+    expect(advisoryHtml).toContain('<span>WCAG AAA advisory</span><strong>1</strong>');
+    expect(advisoryHtml).toContain('data-scope="advisory"');
+    expect(advisoryHtml).toContain('data-scope="supplemental"');
+    expect(advisoryHtml).toContain('<label for="scope-filter">Scope</label>');
+    expect(advisoryHtml).toContain('WCAG AAA advisory</span>');
+    expect(advisoryHtml).toContain('Supporting audit check</span>');
+    expect(advisoryHtml).toContain('<option value="supplemental">Supporting audit checks</option>');
+    expect(advisoryHtml).toContain('Showing 2 of 2 core audit items');
+
+    summary.findings = [advisoryFinding];
+    const advisoryOnlyPath = join(outputDir, 'Accessibility_Audit_Advisory_Only_Report.html');
+    await writeHtmlReport(summary, advisoryOnlyPath);
+    const advisoryOnlyHtml = await readFile(advisoryOnlyPath, 'utf8');
+    expect(advisoryOnlyHtml).toContain('<strong>No core audit items require triage.</strong>');
+    expect(advisoryOnlyHtml).toContain('1 WCAG AAA advisory item remains available for optional review');
+    expect(advisoryOnlyHtml).toContain('<a href="#findings">Review advisory findings</a>');
+    expect(advisoryOnlyHtml).not.toContain('No report items require triage');
+
+    summary.findings = [originalFinding];
 
     summary.comparison = {
       kind: 'baseline-comparison',

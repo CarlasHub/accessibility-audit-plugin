@@ -283,6 +283,33 @@ describe('finding consolidation', () => {
     expect(result[0]?.viewports).toEqual(['desktop', 'mobile']);
   });
 
+  it('merges one select defect across viewports when later evidence enriches its WCAG mapping', () => {
+    const desktop = finding('https://test.example/apply');
+    desktop.ruleId = 'axe-select-name';
+    desktop.component = 'select#country';
+    desktop.componentName = 'Unnamed combobox';
+    desktop.selectors = ['#country'];
+    desktop.wcag = ['4.1.2'];
+    desktop.summary = 'Select element has no accessible name';
+    desktop.issue = 'The country select has no programmatic label.';
+    desktop.remediation = 'Associate one visible label with the select element.';
+
+    const mobile = {
+      ...desktop,
+      wcag: ['1.3.1', '4.1.2'],
+      viewports: ['mobile'],
+      evidence: [{ ...desktop.evidence[0]!, detail: 'missing select name on mobile' }]
+    };
+
+    const result = consolidateFindings([desktop, mobile]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(expect.objectContaining({
+      wcag: ['1.3.1', '4.1.2'],
+      viewports: ['desktop', 'mobile']
+    }));
+    expect(result[0]?.evidence).toHaveLength(2);
+  });
+
   it('rejects Jira text or empty remediation Notes', () => {
     const invalid = finding('https://test.example/a');
     invalid.remediation = 'Create a JIRA ticket.';

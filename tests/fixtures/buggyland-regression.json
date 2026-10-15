@@ -24,7 +24,7 @@
     }
   ],
   "qualityContract": {
-    "version": "1.2.0",
+    "version": "1.3.0",
     "standard": "WCAG 2.2",
     "conformanceTarget": "A/AA",
     "criterionCount": 55,
@@ -36,17 +36,14 @@
       "deterministic-output"
     ]
   },
-  "baselineRationale": "Evidence-gated baseline: unsupported overlap and diagnostic-only review candidates were removed; three repeat-confirmed clipping defects with meaningful content are retained as confirmed failures, and an unmapped broken-fragment result remains review-only rather than being reported as a confirmed WCAG failure.",
+  "baselineRationale": "Evidence-gated baseline: unsupported overlap is excluded; unresolved axe evidence remains review-only and inconclusive rather than becoming a confirmed WCAG failure; three repeat-confirmed clipping defects with meaningful content are retained as confirmed failures; and an unmapped broken-fragment result remains review-only.",
   "classifications": {
-    "confirmed": 34,
-    "review": 22,
+    "confirmed": 32,
+    "review": 30,
     "blocker": 1,
     "manualChecks": 55,
-    "totalFindings": 57
+    "totalFindings": 63
   },
-  "fullyCompletedPages": 2,
-  "partialPages": 2,
-  "blockerSelector": "div.modal-backdrop",
   "configuredJourneys": {
     "ids": [
       "theme-toggle-keyboard",
@@ -56,11 +53,446 @@
       "modal-initial-focus",
       "modal-escape-key",
       "toast-announcement"
-    ],
-    "passed": 12,
-    "failed": 30,
-    "inconclusive": 0,
-    "total": 42
+    ]
   },
-  "findingIdentitySha256": "999ef81e46adc5199d8a6b8b12b975e20cc65c17d9b560e0611cd40a54ddb350"
+  "pageExpectations": [
+    {
+      "url": "https://carlashub.github.io/buggyland/",
+      "status": "completed",
+      "blockerSelector": null,
+      "expectedErrors": [],
+      "journeys": {
+        "desktop": {
+          "theme-toggle-keyboard": "passed",
+          "form-error-announcement": "failed",
+          "form-keyboard-entry": "passed",
+          "custom-tabs-keyboard": "failed",
+          "modal-initial-focus": "failed",
+          "modal-escape-key": "failed",
+          "toast-announcement": "failed"
+        },
+        "mobile": {
+          "theme-toggle-keyboard": "passed",
+          "form-error-announcement": "failed",
+          "form-keyboard-entry": "passed",
+          "custom-tabs-keyboard": "failed",
+          "modal-initial-focus": "failed",
+          "modal-escape-key": "failed",
+          "toast-announcement": "failed"
+        },
+        "reflow-320": {
+          "theme-toggle-keyboard": "passed",
+          "form-error-announcement": "failed",
+          "form-keyboard-entry": "passed",
+          "custom-tabs-keyboard": "failed",
+          "modal-initial-focus": "failed",
+          "modal-escape-key": "failed",
+          "toast-announcement": "failed"
+        }
+      }
+    },
+    {
+      "url": "https://carlashub.github.io/buggyland/#special",
+      "status": "partial",
+      "blockerSelector": "div.modal-backdrop",
+      "expectedErrors": [
+        "A visible modal or blocking surface remained active before page-level interaction tests. div.modal-backdrop"
+      ],
+      "journeys": {
+        "desktop": {},
+        "mobile": {},
+        "reflow-320": {}
+      }
+    },
+    {
+      "url": "https://carlashub.github.io/buggyland/page2.html",
+      "status": "completed",
+      "blockerSelector": null,
+      "expectedErrors": [],
+      "journeys": {
+        "desktop": {
+          "theme-toggle-keyboard": "passed",
+          "form-error-announcement": "failed",
+          "form-keyboard-entry": "passed",
+          "custom-tabs-keyboard": "failed",
+          "modal-initial-focus": "failed",
+          "modal-escape-key": "failed",
+          "toast-announcement": "failed"
+        },
+        "mobile": {
+          "theme-toggle-keyboard": "passed",
+          "form-error-announcement": "failed",
+          "form-keyboard-entry": "passed",
+          "custom-tabs-keyboard": "failed",
+          "modal-initial-focus": "failed",
+          "modal-escape-key": "failed",
+          "toast-announcement": "failed"
+        },
+        "reflow-320": {
+          "theme-toggle-keyboard": "passed",
+          "form-error-announcement": "failed",
+          "form-keyboard-entry": "passed",
+          "custom-tabs-keyboard": "failed",
+          "modal-initial-focus": "failed",
+          "modal-escape-key": "failed",
+          "toast-announcement": "failed"
+        }
+      }
+    },
+    {
+      "url": "https://carlashub.github.io/buggyland/page2.html#special",
+      "status": "partial",
+      "blockerSelector": "div.modal-backdrop",
+      "expectedErrors": [
+        "A visible modal or blocking surface remained active before page-level interaction tests. div.modal-backdrop"
+      ],
+      "journeys": {
+        "desktop": {},
+        "mobile": {},
+        "reflow-320": {}
+      }
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "interaction-coverage-blocked",
+      "classification": "blocker",
+      "severity": "Critical",
+      "wcag": ["None"],
+      "urls": [
+        "https://carlashub.github.io/buggyland/#special",
+        "https://carlashub.github.io/buggyland/page2.html#special"
+      ],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-aria-input-field-name",
+      "classification": "confirmed",
+      "severity": "Serious",
+      "wcag": ["4.1.2"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-aria-required-attr",
+      "classification": "confirmed",
+      "severity": "Critical",
+      "wcag": ["4.1.2"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 2
+    },
+    {
+      "ruleId": "axe-aria-toggle-field-name",
+      "classification": "confirmed",
+      "severity": "Serious",
+      "wcag": ["4.1.2"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-button-name",
+      "classification": "confirmed",
+      "severity": "Critical",
+      "wcag": ["4.1.2"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-button-name",
+      "classification": "confirmed",
+      "severity": "Critical",
+      "wcag": ["4.1.2"],
+      "urls": ["https://carlashub.github.io/buggyland/page2.html"],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-color-contrast",
+      "classification": "confirmed",
+      "severity": "Serious",
+      "wcag": ["1.4.3"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 4
+    },
+    {
+      "ruleId": "axe-color-contrast",
+      "classification": "confirmed",
+      "severity": "Serious",
+      "wcag": ["1.4.3"],
+      "urls": [
+        "https://carlashub.github.io/buggyland/",
+        "https://carlashub.github.io/buggyland/page2.html"
+      ],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-color-contrast",
+      "classification": "confirmed",
+      "severity": "Serious",
+      "wcag": ["1.4.3"],
+      "urls": [
+        "https://carlashub.github.io/buggyland/#special",
+        "https://carlashub.github.io/buggyland/page2.html#special"
+      ],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-color-contrast",
+      "classification": "confirmed",
+      "severity": "Serious",
+      "wcag": ["1.4.3"],
+      "urls": ["https://carlashub.github.io/buggyland/page2.html"],
+      "count": 2
+    },
+    {
+      "ruleId": "axe-image-alt",
+      "classification": "confirmed",
+      "severity": "Critical",
+      "wcag": ["1.1.1"],
+      "urls": [
+        "https://carlashub.github.io/buggyland/",
+        "https://carlashub.github.io/buggyland/page2.html"
+      ],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-link-in-text-block",
+      "classification": "confirmed",
+      "severity": "Serious",
+      "wcag": ["1.4.1"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-scrollable-region-focusable",
+      "classification": "confirmed",
+      "severity": "Serious",
+      "wcag": ["2.1.1", "2.1.3"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-select-name",
+      "classification": "confirmed",
+      "severity": "Critical",
+      "wcag": ["1.3.1", "3.3.2", "4.1.2"],
+      "urls": [
+        "https://carlashub.github.io/buggyland/",
+        "https://carlashub.github.io/buggyland/page2.html"
+      ],
+      "count": 1
+    },
+    {
+      "ruleId": "form-field-no-label",
+      "classification": "confirmed",
+      "severity": "Critical",
+      "wcag": ["1.3.1", "3.3.2", "4.1.2"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 4
+    },
+    {
+      "ruleId": "form-field-no-label",
+      "classification": "confirmed",
+      "severity": "Critical",
+      "wcag": ["1.3.1", "3.3.2", "4.1.2"],
+      "urls": ["https://carlashub.github.io/buggyland/page2.html"],
+      "count": 4
+    },
+    {
+      "ruleId": "image-missing-alt",
+      "classification": "confirmed",
+      "severity": "Serious",
+      "wcag": ["1.1.1"],
+      "urls": ["https://carlashub.github.io/buggyland/#special"],
+      "count": 2
+    },
+    {
+      "ruleId": "image-missing-alt",
+      "classification": "confirmed",
+      "severity": "Serious",
+      "wcag": ["1.1.1"],
+      "urls": ["https://carlashub.github.io/buggyland/page2.html#special"],
+      "count": 1
+    },
+    {
+      "ruleId": "responsive-content-clipped",
+      "classification": "confirmed",
+      "severity": "Moderate",
+      "wcag": ["1.4.10"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 3
+    },
+    {
+      "ruleId": "autoplay-media-review",
+      "classification": "review",
+      "severity": "Moderate",
+      "wcag": ["1.4.2", "2.2.2"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "autoplay-media-review",
+      "classification": "review",
+      "severity": "Moderate",
+      "wcag": ["1.4.2", "2.2.2"],
+      "urls": ["https://carlashub.github.io/buggyland/page2.html"],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-color-contrast",
+      "classification": "review",
+      "severity": "Advisory",
+      "wcag": ["1.4.3"],
+      "urls": [
+        "https://carlashub.github.io/buggyland/",
+        "https://carlashub.github.io/buggyland/#special",
+        "https://carlashub.github.io/buggyland/page2.html",
+        "https://carlashub.github.io/buggyland/page2.html#special"
+      ],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-landmark-main-is-top-level",
+      "classification": "review",
+      "severity": "Moderate",
+      "wcag": ["Best Practice"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-landmark-no-duplicate-main",
+      "classification": "review",
+      "severity": "Moderate",
+      "wcag": ["Best Practice"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-landmark-unique",
+      "classification": "review",
+      "severity": "Moderate",
+      "wcag": ["Best Practice"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 4
+    },
+    {
+      "ruleId": "axe-tabindex",
+      "classification": "review",
+      "severity": "Serious",
+      "wcag": ["Best Practice"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "axe-video-caption",
+      "classification": "review",
+      "severity": "Critical",
+      "wcag": ["1.2.2"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 4
+    },
+    {
+      "ruleId": "axe-video-caption",
+      "classification": "review",
+      "severity": "Critical",
+      "wcag": ["1.2.2"],
+      "urls": ["https://carlashub.github.io/buggyland/page2.html"],
+      "count": 3
+    },
+    {
+      "ruleId": "keyboard-journey-custom-tabs-keyboard",
+      "classification": "review",
+      "severity": "Serious",
+      "wcag": ["2.1.1", "2.4.3", "4.1.2"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "keyboard-journey-custom-tabs-keyboard",
+      "classification": "review",
+      "severity": "Serious",
+      "wcag": ["2.1.1", "2.4.3", "4.1.2"],
+      "urls": ["https://carlashub.github.io/buggyland/page2.html"],
+      "count": 1
+    },
+    {
+      "ruleId": "keyboard-journey-form-error-announcement",
+      "classification": "review",
+      "severity": "Serious",
+      "wcag": ["2.1.1", "2.4.3", "3.3.1", "3.3.2", "4.1.3"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "keyboard-journey-form-error-announcement",
+      "classification": "review",
+      "severity": "Serious",
+      "wcag": ["2.1.1", "2.4.3", "3.3.1", "3.3.2", "4.1.3"],
+      "urls": ["https://carlashub.github.io/buggyland/page2.html"],
+      "count": 1
+    },
+    {
+      "ruleId": "keyboard-journey-modal-escape-key",
+      "classification": "review",
+      "severity": "Serious",
+      "wcag": ["2.1.1", "2.4.3", "4.1.2"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "keyboard-journey-modal-escape-key",
+      "classification": "review",
+      "severity": "Serious",
+      "wcag": ["2.1.1", "2.4.3", "4.1.2"],
+      "urls": ["https://carlashub.github.io/buggyland/page2.html"],
+      "count": 1
+    },
+    {
+      "ruleId": "keyboard-journey-modal-initial-focus",
+      "classification": "review",
+      "severity": "Serious",
+      "wcag": ["2.1.1", "2.4.3", "4.1.2"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "keyboard-journey-modal-initial-focus",
+      "classification": "review",
+      "severity": "Serious",
+      "wcag": ["2.1.1", "2.4.3", "4.1.2"],
+      "urls": ["https://carlashub.github.io/buggyland/page2.html"],
+      "count": 1
+    },
+    {
+      "ruleId": "keyboard-journey-toast-announcement",
+      "classification": "review",
+      "severity": "Serious",
+      "wcag": ["2.1.1", "2.4.3", "4.1.3"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 1
+    },
+    {
+      "ruleId": "keyboard-journey-toast-announcement",
+      "classification": "review",
+      "severity": "Serious",
+      "wcag": ["2.1.1", "2.4.3", "4.1.3"],
+      "urls": ["https://carlashub.github.io/buggyland/page2.html"],
+      "count": 1
+    },
+    {
+      "ruleId": "link-broken-destination",
+      "classification": "review",
+      "severity": "Advisory",
+      "wcag": ["Best Practice"],
+      "urls": ["https://carlashub.github.io/buggyland/page2.html"],
+      "count": 1
+    },
+    {
+      "ruleId": "target-size-review",
+      "classification": "review",
+      "severity": "Minor",
+      "wcag": ["2.5.8"],
+      "urls": ["https://carlashub.github.io/buggyland/"],
+      "count": 2
+    }
+  ]
 }

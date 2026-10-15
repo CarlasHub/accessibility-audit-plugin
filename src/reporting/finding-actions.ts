@@ -1,5 +1,6 @@
 import type { AuditSummary, Finding } from '../types.js';
 import { findingId } from './finding-id.js';
+import { isCoreScopeFinding } from './finding-scope.js';
 
 const SEVERITY_PRIORITY: Record<Finding['severity'], number> = {
   Critical: 0,
@@ -99,6 +100,7 @@ export function buildTopActions(summary: AuditSummary, limit = 3): TopAction[] {
   const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0;
   return summary.findings
     .map((finding, sourceIndex) => ({ finding, sourceIndex }))
+    .filter(({ finding }) => isCoreScopeFinding(finding))
     .sort((left, right) => (
       CLASSIFICATION_PRIORITY[left.finding.classification] - CLASSIFICATION_PRIORITY[right.finding.classification]
       || SEVERITY_PRIORITY[left.finding.severity] - SEVERITY_PRIORITY[right.finding.severity]

@@ -129,7 +129,7 @@ describe('finding classification contract', () => {
     }));
   });
 
-  it('retains incomplete axe evidence only as an inconclusive JSON/coverage result', () => {
+  it('reports incomplete axe evidence for review while keeping coverage inconclusive', () => {
     const audit = viewport({
       axe: [{
         id: 'aria-valid-attr-value',
@@ -148,7 +148,11 @@ describe('finding classification contract', () => {
       .find((item) => item.area === 'automated-axe');
 
     expect(audit.axe).toHaveLength(1);
-    expect(findings).toEqual([]);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toEqual(expect.objectContaining({
+      ruleId: 'axe-aria-valid-attr-value',
+      classification: 'review'
+    }));
     expect(axeCoverage?.status).toBe('tested-inconclusive');
   });
 

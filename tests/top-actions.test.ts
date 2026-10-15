@@ -110,4 +110,26 @@ describe('top actions', () => {
     expect(buildTopActions(summary(findings), Number.NaN)).toEqual([]);
     expect(buildTopActions(summary([]))).toEqual([]);
   });
+
+  it('excludes AAA-only advisory findings from AA remediation priorities', () => {
+    const standard = finding('confirmed', 'Moderate', 1);
+    const advisory = finding('confirmed', 'Critical', 2);
+    advisory.wcag = ['1.4.6'];
+
+    expect(buildTopActions(summary([advisory, standard]), 5).map((action) => action.finding.key)).toEqual([
+      standard.key
+    ]);
+  });
+
+  it('keeps non-WCAG supporting checks in core remediation priorities', () => {
+    const bestPractice = finding('confirmed', 'Serious', 1);
+    bestPractice.wcag = ['Best Practice'];
+    const unmapped = finding('review', 'Moderate', 2);
+    unmapped.wcag = [];
+
+    expect(buildTopActions(summary([bestPractice, unmapped]), 5).map((action) => action.finding.key)).toEqual([
+      bestPractice.key,
+      unmapped.key
+    ]);
+  });
 });

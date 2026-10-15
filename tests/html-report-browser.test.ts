@@ -38,6 +38,10 @@ function finding(classification: FindingClassification, index: number): Finding 
 }
 
 function reportFixture(): AuditSummary {
+  const advisoryFinding = finding('review', 2);
+  advisoryFinding.ruleId = 'color-contrast-enhanced';
+  advisoryFinding.wcag = ['1.4.6'];
+  advisoryFinding.summary = 'Enhanced contrast needs AAA advisory review';
   return {
     status: 'completed',
     generatedAt: '2026-09-10T12:00:00.000Z',
@@ -50,7 +54,7 @@ function reportFixture(): AuditSummary {
     skippedUrls: [],
     pages: [],
     coverage: [],
-    findings: [finding('confirmed', 1), finding('review', 2)],
+    findings: [finding('confirmed', 1), advisoryFinding],
     manualChecks: [{
       id: 'MAN-SR-001',
       classification: 'manual',
@@ -104,7 +108,7 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('rendered HTML repo
       const topActionLinks = await page.locator('#top-actions .top-action h3 a').evaluateAll((links) => (
         links.map((link) => link.getAttribute('href'))
       ));
-      expect(topActionLinks).toEqual(['#finding-A11Y001', '#finding-A11Y002']);
+      expect(topActionLinks).toEqual(['#finding-A11Y001']);
       await page.locator('#top-actions .top-action h3 a').first().click();
       expect(new URL(page.url()).hash).toBe('#finding-A11Y001');
       expect(await page.locator('#finding-A11Y001').count()).toBe(1);
@@ -127,6 +131,12 @@ describe.skipIf(process.env.RUN_BROWSER_INTEGRATION !== '1')('rendered HTML repo
       expect(await resultCount.textContent()).toBe('1 of 2 findings');
       expect(await page.locator('#finding-rows tr[hidden]').count()).toBe(1);
       await page.locator('#classification-filter').selectOption('');
+      await page.locator('#scope-filter').selectOption('advisory');
+      expect(await resultCount.textContent()).toBe('1 of 2 findings');
+      expect(await page.locator('#finding-rows tr:not([hidden])').getAttribute('data-scope')).toBe('advisory');
+      await page.locator('#scope-filter').selectOption('standard');
+      expect(await page.locator('#finding-rows tr:not([hidden])').getAttribute('data-scope')).toBe('standard');
+      await page.locator('#scope-filter').selectOption('');
 
       await page.evaluate(() => {
         Object.defineProperty(navigator, 'clipboard', {

@@ -26,7 +26,7 @@ import type {
   ViewportAudit
 } from '../types.js';
 import { REQUIRED_MANUAL_CHECKS } from './manual-checks.js';
-import { runDisclosureChecks, runDomChecks, runKeyboardChecks, runLinkChecks, runResponsiveChecks, runTabChecks } from './browser-checks.js';
+import { collectDisclosureChecks, collectTabChecks, runDomChecks, runKeyboardChecks, runLinkChecks, runResponsiveChecks } from './browser-checks.js';
 import { runConfiguredJourneyChecks } from './journey-checks.js';
 import { collectElementContexts, detectInteractionBlocker, dismissConsentBanner } from './page-preparation.js';
 import type { AuthenticationPreflightResult, VerifiedStorageState } from '../auth-preflight.js';
@@ -478,8 +478,8 @@ export interface AuditViewportDependencies {
   runDomChecks: typeof runDomChecks;
   runKeyboardChecks: typeof runKeyboardChecks;
   runConfiguredJourneyChecks: typeof runConfiguredJourneyChecks;
-  runDisclosureChecks: typeof runDisclosureChecks;
-  runTabChecks: typeof runTabChecks;
+  runDisclosureChecks: typeof collectDisclosureChecks;
+  runTabChecks: typeof collectTabChecks;
   runResponsiveChecks: typeof runResponsiveChecks;
   runLinkChecks: typeof runLinkChecks;
   collectElementContexts: typeof collectElementContexts;
@@ -494,8 +494,8 @@ const defaultAuditViewportDependencies: AuditViewportDependencies = {
   runDomChecks,
   runKeyboardChecks,
   runConfiguredJourneyChecks,
-  runDisclosureChecks,
-  runTabChecks,
+  runDisclosureChecks: collectDisclosureChecks,
+  runTabChecks: collectTabChecks,
   runResponsiveChecks,
   runLinkChecks,
   collectElementContexts,
@@ -511,7 +511,7 @@ const defaultAuditViewportDependencies: AuditViewportDependencies = {
 function isPartialAudit(errors: string[], axeRun: AxeRunMetadata, blocker: InteractionBlocker | null): boolean {
   return Boolean(blocker)
     || !axeRun.completed
-    || errors.some((message) => /^(?:DOM|Keyboard|Configured journey|Disclosure|Tab|Responsive|Link|Element context|Screenshot) checks? error:/i.test(message));
+    || errors.some((message) => /^(?:DOM|Keyboard|Configured journey|Disclosure|Tab|Responsive|Link|Element context|Screenshot) checks? (?:error|incomplete):/i.test(message));
 }
 
 export async function auditViewport(
@@ -741,8 +741,27 @@ export async function auditViewport(
     }
     if (!interactionBlocker) {
       try {
-        disclosures = await dependencies.runDisclosureChecks(page);
-        recordOutcome('disclosures', { status: 'completed', observationCount: disclosures.length });
+        const disclosureOutput = await dependencies.runDisclosureChecks(page);
+        disclosures = disclosureOutput.results;
+        const disclosureTruncated = disclosureOutput.truncated
+          || disclosureOutput.checkedCount < disclosureOutput.candidateCount;
+        const disclosureCompleted = disclosureOutput.completed && !disclosureTruncated;
+        const disclosureError = disclosureCompleted ? undefined : disclosureOutput.error
+          ?? `The disclosure collector checked ${disclosureOutput.checkedCount} of ${disclosureOutput.candidateCount} eligible controls.`;
+        const disclosureRetainsEvidence = disclosures.length > 0;
+        recordOutcome('disclosures', {
+          status: disclosureCompleted ? 'completed' : disclosureRetainsEvidence ? 'partial' : 'failed',
+          observationCount: disclosures.length,
+          ...(disclosureCompleted || disclosureRetainsEvidence ? {
+            candidateCount: disclosureOutput.candidateCount,
+            checkedCount: disclosureOutput.checkedCount,
+            truncated: disclosureTruncated
+          } : {}),
+          ...(disclosureError ? { error: disclosureError } : {})
+        });
+        if (!disclosureCompleted) {
+          errors.push(`Disclosure checks incomplete: ${disclosureError}`);
+        }
       } catch (error) {
         const message = errorMessage(error);
         errors.push(`Disclosure checks error: ${message}`);
@@ -750,12 +769,30 @@ export async function auditViewport(
       }
     }
     for (const disclosure of disclosures.filter((item) => item.error)) {
-      errors.push(`Disclosure interaction check incomplete for “${disclosure.name || disclosure.selector}”: ${disclosure.error}`);
+      errors.push(`Disclosure evidence incomplete for “${disclosure.name || disclosure.selector}”: ${disclosure.error}`);
     }
     if (!interactionBlocker) {
       try {
-        tabs = await dependencies.runTabChecks(page);
-        recordOutcome('tabs', { status: 'completed', observationCount: tabs.length });
+        const tabOutput = await dependencies.runTabChecks(page);
+        tabs = tabOutput.results;
+        const tabTruncated = tabOutput.truncated || tabOutput.checkedCount < tabOutput.candidateCount;
+        const tabCompleted = tabOutput.completed && !tabTruncated;
+        const tabError = tabCompleted ? undefined : tabOutput.error
+          ?? `The tab collector checked ${tabOutput.checkedCount} of ${tabOutput.candidateCount} eligible tablists.`;
+        const tabRetainsEvidence = tabs.length > 0;
+        recordOutcome('tabs', {
+          status: tabCompleted ? 'completed' : tabRetainsEvidence ? 'partial' : 'failed',
+          observationCount: tabs.length,
+          ...(tabCompleted || tabRetainsEvidence ? {
+            candidateCount: tabOutput.candidateCount,
+            checkedCount: tabOutput.checkedCount,
+            truncated: tabTruncated
+          } : {}),
+          ...(tabError ? { error: tabError } : {})
+        });
+        if (!tabCompleted) {
+          errors.push(`Tab checks incomplete: ${tabError}`);
+        }
       } catch (error) {
         const message = errorMessage(error);
         errors.push(`Tab checks error: ${message}`);

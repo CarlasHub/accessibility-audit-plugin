@@ -1,6 +1,6 @@
 # Audit Quality Contract
 
-**Contract version:** 1.2.0
+**Contract version:** 1.3.0
 **Conformance target:** WCAG 2.2 Level A and AA  
 **Authority:** This document is the normative quality and release contract for CarlasHub Accessibility Audit. If product copy, implementation, tests, examples, or release notes conflict with this contract, this contract takes precedence.
 
@@ -39,7 +39,7 @@ No renderer may invent, suppress, reclassify, or materially reinterpret audit da
 | Layer | Technology | Contracted responsibility |
 | --- | --- | --- |
 | Browser execution | Playwright and Chromium | Load each requested public page, exercise declared states and journeys, collect viewport-specific evidence, and report incomplete execution honestly. |
-| Standards-based rules | axe-core | Run applicable deterministic rules using WCAG tags. An axe pass is a rule-level result, never an automatic success-criterion pass. Axe `incomplete` outcomes remain unresolved. |
+| Standards-based rules | axe-core | Run applicable deterministic rules using WCAG tags. An axe pass is a rule-level result, never an automatic success-criterion pass. Node-level axe `incomplete` outcomes become actionable Needs review findings and remain unresolved in the criterion ledger. |
 | Product checks | Typed Playwright/DOM evaluators | Test observable keyboard, focus, landmark, link, responsive, resize, spacing, target-size, disclosure, tabs, media and interaction conditions with explicit assertions. |
 | Assistive technology | Guidepup with native VoiceOver/WebKit and NVDA/Firefox workflows | Retain bounded spoken-output transcripts and environment metadata as supporting evidence. These journeys do not represent every screen reader, state, task, device or human understanding. |
 | Data contract | TypeScript types and runtime validation | Preserve stable identifiers, classification, WCAG mapping, URLs, viewports, selectors, observed evidence, expected result, remediation and limitations. |
@@ -64,6 +64,18 @@ No renderer may invent, suppress, reclassify, or materially reinterpret audit da
 - **Passed**: reserved for a criterion only when all applicable requirements, pages, states and complete processes have sufficient retained evidence. Rule-level automation alone cannot assign this outcome.
 
 Unexecuted, incomplete, unavailable and uncertain work must never become a pass.
+
+### 4.3 Reporting scopes
+
+- **Standard**: the finding maps to at least one WCAG 2.2 Level A or AA criterion. A mixed A/AA and AAA mapping remains standard.
+- **Supplemental**: the finding is an unmapped or best-practice observation outside the requested WCAG conformance target.
+- **Advisory**: every mapped criterion is Level AAA.
+
+The canonical model, HTML and XLSX must expose these scopes as filters. AA headline barriers and priority actions use standard findings only; supplemental and advisory work remain visible but cannot inflate the AA result.
+
+### 4.4 Findings and occurrences
+
+A finding is one consolidated remediation unit for a shared implementation and root cause. An occurrence is one retained observation for a URL, viewport, state, selector or tool result. Reports must label and count them separately, while retaining every occurrence needed to reproduce the finding.
 
 ## 5. Confirmed-finding confidence gate
 
@@ -113,6 +125,13 @@ The implementation must reject or downgrade any purported confirmed failure that
 - Stable IDs are based on root cause and stable target identity, not changing row order.
 - Consolidation retains all affected URLs, viewports, selectors, evidence and screenshots.
 - Review candidates are not allowed to inflate confirmed severity totals.
+
+### Collector completeness
+
+- Bounded collectors record `candidateCount`, `checkedCount` and `truncated` metadata.
+- A collector that checks fewer candidates than it found must be `partial` with `truncated: true`; it cannot report `completed` or supply an implicit empty pass.
+- Collector errors, blockers and dependencies remain explicit while independent collectors continue when safe.
+- Current disclosure and tab collection limits are 30 and 20 candidates per page and viewport. Changing a limit requires regression evidence and release review.
 
 ## 7. Required accessibility coverage
 
@@ -179,16 +198,17 @@ Every release must satisfy all gates below. A skipped mandatory gate is a failed
 | AQ-11 | XLSX opens successfully, has no formula errors, uses professional layout/print settings and communicates severity without colour alone. | ExcelJS validation and template-fidelity tests |
 | AQ-12 | Two equivalent runs produce stable IDs and stable consolidated counts while retaining all affected scope and evidence. | Determinism and consolidation tests |
 | AQ-13 | The packaged GitHub Action runs from a fresh consumer fixture using only documented inputs and uploads the complete report. | Packaged Action smoke test |
-| AQ-14 | Live Buggyland runs twice and satisfies maintained exact baseline, classification, blocker-isolation, deduplication and stability checks. | Buggyland regression workflow |
+| AQ-14 | Live Buggyland runs twice and satisfies its human-readable structural expected-result manifest, exact classification totals, page/viewport completion, blocker isolation, journey outcomes, deduplication and stability checks. | Buggyland regression workflow |
 | AQ-15 | Type checking, linting, unit, browser, integration, documentation, packaging and build checks pass from a clean install. | CI and release workflow |
-| AQ-16 | Every page collector records a completed, failed, blocked, not-applicable or not-run outcome. A collector failure never supplies a fabricated empty, null or false observation to downstream classification. Independent collectors continue when safe; dependent collectors name their blocker. | Fault-injection and canonical-result validation tests |
+| AQ-16 | Every page collector records a completed, partial, failed, blocked, not-applicable or not-run outcome. Bounded work records candidate, checked and truncation metadata; `checkedCount < candidateCount` requires a partial truncated outcome. A collector failure never supplies a fabricated empty, null or false observation to downstream classification. Independent collectors continue when safe; dependent collectors name their blocker. | Fault-injection and canonical-result validation tests |
 | AQ-17 | Every retained finding is traceable to a raw observation through check ID, rule ID, URL, state, viewport, target, observed result and expected result. Impossible states, missing provenance and evidence/collector contradictions are rejected before JSON, HTML or XLSX rendering. | Provenance, schema-integrity and renderer rejection tests |
 | AQ-18 | Consolidation is lossless and order-independent: exact supporting occurrences survive deduplication, a controlled defect yields its exact normalized finding set, removing it removes only that set, and neutral DOM changes do not alter it. | Adversarial deduplication, mutation and metamorphic tests |
 | AQ-19 | Two semantically equivalent runs produce identical semantic results and stable identities. The machine-readable regression summary is explicitly labelled a software-quality metric with `conformanceEvidence: false`; it is never presented as WCAG conformance evidence. | Determinism tests and retained quality-regression summary artifact |
+| AQ-20 | Standard, supplemental and advisory scopes remain equivalent across JSON, HTML and XLSX; only standard findings drive the AA headline and priority actions. Node-level incomplete evidence remains actionable review work. | Scope, incomplete-evidence and report-parity tests |
 
 ## 10. Buggyland and adversarial fixtures
 
-Buggyland is a maintained regression fixture, not proof that every real-world defect is detectable. Its expected pages, states, findings and classifications must be versioned. The release gate must run the public target twice, compare stable identities and counts, reject unexpected blockers, and retain the reports used for the decision.
+Buggyland is a maintained regression fixture, not proof that every real-world defect is detectable. Its expected pages, states, structural finding groups, classifications, blocker selectors and journey outcomes must be versioned in a human-readable manifest. An opaque digest or aggregate total alone is not an acceptance oracle. The release gate must run the public target twice, compare stable identities and exact expected results, reject unexpected blockers or completion changes, and retain the reports used for the decision.
 
 Small adversarial fixtures must isolate contrast uncertainty, clipped/off-screen geometry, intentional overlays, hidden elements, sticky controls, text-spacing changes, keyboard traps, focus obscuration, failed journeys, redirects, rate limiting, missing resources and duplicate root causes. Each fixture must state the expected Confirmed, Needs review or Blocker outcome.
 
@@ -233,7 +253,7 @@ This plan is part of the contract. A phase is complete only when its output exis
 | 7. Canonical reporting | Generate JSON once as the decision source; derive accessible HTML and professional XLSX without reclassifying data; package portable relative evidence. | Report parity, HTML accessibility/reflow, workbook structure/render/formula and archive tests. |
 | 8. Product delivery | Build CLI, MCP/plugin packages and a self-contained GitHub Action; validate documented inputs from a fresh consumer fixture; keep the target repository read-only except for the user's committed workflow and generated Actions artifacts. | Built-product, marketplace compatibility, package dry-run and consumer-action tests. |
 | 9. Public regression | Run the public Buggyland fixture twice, compare exact maintained classifications and stable IDs, reject unexpected blockers and retain both reports. | `npm run test:buggyland:live` locally and the Buggyland/release workflow artifacts. |
-| 10. Release decision | Run all AQ-01 through AQ-19 gates from a clean install, record platform limitations, publish no stronger claim than the evidence supports and require qualified human sign-off for conformance. | Green Verify, native evidence where supported, release-smoke and release evidence artifacts. |
+| 10. Release decision | Run all AQ-01 through AQ-20 gates from a clean install, record platform limitations, publish no stronger claim than the evidence supports and require qualified human sign-off for conformance. | Green Verify, native evidence where supported, release-smoke and release evidence artifacts. |
 
 ### Implementation ownership map
 
